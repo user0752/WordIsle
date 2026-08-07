@@ -647,13 +647,13 @@ async def parse_words(req: Request):
     words = normalize_words(text)
     conn = get_db()
     existing = set(r["word"] for r in conn.execute("SELECT word FROM words").fetchall())
-    conn.close()
-    # 查找熟词生意
+    # 查找熟词生意（在关闭连接前完成所有查询）
     polysemy_words = []
     for w in words:
         r = conn.execute("SELECT word FROM polysemy WHERE word=?", (w,)).fetchone()
         if r:
             polysemy_words.append(w)
+    conn.close()
     duplicate_count = sum(1 for w in words if w in existing)
     invalid_count = 0
     return {
@@ -1049,7 +1049,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           </div>
           <el-card shadow="never" class="mb-md">
             <div class="flex-between">
-              <el-input v-model="wordSearch" placeholder="搜索单词..." :prefix-icon="Search" clearable style="width:300px" @clear="loadWords" @keyup.enter="loadWords" />
+              <el-input v-model="wordSearch" placeholder="搜索单词..." :prefix-icon="Search" clearable style="width:300px" @clear="loadWords" @keyup.enter="loadWords"></el-input>
               <div class="flex gap-sm">
                 <el-tag v-if="selectedWords.length>0" type="primary" size="large">已选 {{ selectedWords.length }} 个单词</el-tag>
                 <el-button v-if="selectedWords.length>0" type="primary" :icon="MagicStick" @click="goCompile">发起编译</el-button>
@@ -1058,7 +1058,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           </el-card>
           <el-card shadow="never">
             <el-table :data="wordsData" v-loading="wordsLoading" @selection-change="s=>selectedWords=s" row-key="id" stripe>
-              <el-table-column type="selection" width="50" />
+              <el-table-column type="selection" width="50"></el-table-column>
               <el-table-column label="单词" min-width="140">
                 <template #default="{row}">
                   <div class="flex gap-sm" style="align-items:center">
@@ -1073,9 +1073,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <el-table-column label="难度" width="100">
                 <template #default="{row}">
                   <el-select v-model="row.difficulty" size="small" @change="v=>updateWord(row,'difficulty',v)">
-                    <el-option label="初级" value="beginner" />
-                    <el-option label="中级" value="intermediate" />
-                    <el-option label="高级" value="advanced" />
+                    <el-option label="初级" value="beginner"></el-option>
+                    <el-option label="中级" value="intermediate"></el-option>
+                    <el-option label="高级" value="advanced"></el-option>
                   </el-select>
                 </template>
               </el-table-column>
@@ -1087,10 +1087,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <el-table-column label="状态" width="120">
                 <template #default="{row}">
                   <el-select v-model="row.status" size="small" @change="v=>updateWord(row,'status',v)">
-                    <el-option label="新词" value="new" />
-                    <el-option label="学习中" value="learning" />
-                    <el-option label="已掌握" value="mastered" />
-                    <el-option label="已放弃" value="abandoned" />
+                    <el-option label="新词" value="new"></el-option>
+                    <el-option label="学习中" value="learning"></el-option>
+                    <el-option label="已掌握" value="mastered"></el-option>
+                    <el-option label="已放弃" value="abandoned"></el-option>
                   </el-select>
                 </template>
               </el-table-column>
@@ -1105,7 +1105,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               </el-table-column>
             </el-table>
             <div class="pagination-wrapper">
-              <el-pagination v-model:current-page="wordPage" v-model:page-size="wordPageSize" :total="wordTotal" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @size-change="loadWords" @current-change="loadWords" />
+              <el-pagination v-model:current-page="wordPage" v-model:page-size="wordPageSize" :total="wordTotal" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @size-change="loadWords" @current-change="loadWords"></el-pagination>
             </div>
           </el-card>
         </div>
@@ -1129,7 +1129,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
                     <input ref="fileInputRef" type="file" accept=".txt,.csv" style="display:none" @change="handleFileChange" />
                   </div>
                 </template>
-                <el-input v-model="importText" type="textarea" :rows="12" placeholder="请输入单词，支持换行分隔或逗号分隔，例如：&#10;accommodate&#10;negotiate, delegate&#10;procurement" />
+                <el-input v-model="importText" type="textarea" :rows="12" placeholder="请输入单词，支持换行分隔或逗号分隔，例如：&#10;accommodate&#10;negotiate, delegate&#10;procurement"></el-input>
                 <div class="flex gap-sm mt-md">
                   <el-button type="primary" :icon="Search" :loading="parsing" @click="handleParse">预览解析</el-button>
                   <el-button :icon="RefreshLeft" @click="importText=''">清空</el-button>
@@ -1216,7 +1216,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               </el-form-item>
               <el-form-item label="场景类型">
                 <el-select v-model="compileForm.scene_type" placeholder="选择场景" style="width:240px">
-                  <el-option v-for="st in SCENE_TYPES" :key="st.value" :label="st.label" :value="st.value" />
+                  <el-option v-for="st in SCENE_TYPES" :key="st.value" :label="st.label" :value="st.value"></el-option>
                 </el-select>
               </el-form-item>
               <el-form-item label="难度等级">
@@ -1230,12 +1230,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 </el-radio-group>
               </el-form-item>
               <el-form-item label="中文翻译">
-                <el-switch v-model="compileForm.include_translation" active-text="包含中文翻译" />
+                <el-switch v-model="compileForm.include_translation" active-text="包含中文翻译"></el-switch>
               </el-form-item>
               <el-form-item label="立即生成音频">
-                <el-switch v-model="compileForm.generate_audio" active-text="编译完成后自动生成 TTS 听力音频" />
+                <el-switch v-model="compileForm.generate_audio" active-text="编译完成后自动生成 TTS 听力音频"></el-switch>
               </el-form-item>
-              <el-divider />
+              <el-divider></el-divider>
               <el-form-item>
                 <el-button type="primary" size="large" :icon="MagicStick" :loading="compiling" @click="handleCompile">开始 AI 编译</el-button>
                 <span class="ml-md text-secondary" style="font-size:13px">编译过程约需 10-30 秒，请耐心等待</span>
@@ -1255,7 +1255,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <el-card shadow="never" class="mb-md">
             <div class="flex gap-md" style="flex-wrap:wrap">
               <el-select v-model="historyFilter" placeholder="内容形式" clearable style="width:160px">
-                <el-option v-for="cf in CONTENT_FORMS" :key="cf.value" :label="cf.label" :value="cf.value" />
+                <el-option v-for="cf in CONTENT_FORMS" :key="cf.value" :label="cf.label" :value="cf.value"></el-option>
               </el-select>
               <el-button :icon="Search" @click="loadHistory">查询</el-button>
             </div>
@@ -1286,7 +1286,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               </div>
             </div>
             <div class="pagination-wrapper">
-              <el-pagination v-model:current-page="historyPage" :page-size="20" :total="historyTotal" layout="total, prev, pager, next" @current-change="loadHistory" />
+              <el-pagination v-model:current-page="historyPage" :page-size="20" :total="historyTotal" layout="total, prev, pager, next" @current-change="loadHistory"></el-pagination>
             </div>
           </el-card>
         </div>
@@ -1301,7 +1301,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           </div>
           <el-card shadow="never" class="mb-md">
             <div class="flex gap-md">
-              <el-input v-model="polysemySearch" placeholder="搜索单词，如：accommodate, address" :prefix-icon="Search" clearable style="width:360px" @keyup.enter="searchPolysemy" />
+              <el-input v-model="polysemySearch" placeholder="搜索单词，如：accommodate, address" :prefix-icon="Search" clearable style="width:360px" @keyup.enter="searchPolysemy"></el-input>
               <el-button type="primary" :icon="Search" @click="searchPolysemy">搜索</el-button>
             </div>
           </el-card>
@@ -1381,7 +1381,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 </el-col>
               </el-row>
               <div class="pagination-wrapper">
-                <el-pagination v-model:current-page="polysemyPage" :page-size="20" :total="polysemyTotal" layout="total, prev, pager, next" @current-change="loadPolysemyHot" />
+                <el-pagination v-model:current-page="polysemyPage" :page-size="20" :total="polysemyTotal" layout="total, prev, pager, next" @current-change="loadPolysemyHot"></el-pagination>
               </div>
             </div>
           </el-card>
@@ -1476,10 +1476,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <el-dialog v-model="showAddWordDialog" title="添加单词" width="480px" @close="addWordForm.word='';addWordForm.source=''">
     <el-form label-width="80px">
       <el-form-item label="单词">
-        <el-input v-model="addWordForm.word" placeholder="请输入英文单词" clearable @keyup.enter="submitAddWord" />
+        <el-input v-model="addWordForm.word" placeholder="请输入英文单词" clearable @keyup.enter="submitAddWord"></el-input>
       </el-form-item>
       <el-form-item label="来源">
-        <el-input v-model="addWordForm.source" placeholder="可选，如：真题、教材" />
+        <el-input v-model="addWordForm.source" placeholder="可选，如：真题、教材"></el-input>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -1493,7 +1493,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <el-form label-width="60px">
       <el-form-item label="单词"><span style="font-weight:600">{{ noteWord?.word }}</span></el-form-item>
       <el-form-item label="备注">
-        <el-input v-model="noteText" type="textarea" :rows="4" placeholder="输入备注信息，如记忆技巧、易混淆点等" />
+        <el-input v-model="noteText" type="textarea" :rows="4" placeholder="输入备注信息，如记忆技巧、易混淆点等"></el-input>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -1841,6 +1841,24 @@ const app = createApp({
       loadHistory()
     })
 
+    // ====== 图标组件（必须返回，否则模板中 :icon="Search" 等绑定会报错） ======
+    const Icons = {
+      Search: ElIcons.Search,
+      Upload: ElIcons.Upload,
+      Plus: ElIcons.Plus,
+      MagicStick: ElIcons.MagicStick,
+      Back: ElIcons.Back,
+      UploadFilled: ElIcons.UploadFilled,
+      RefreshLeft: ElIcons.RefreshLeft,
+      EditPen: ElIcons.EditPen,
+      Delete: ElIcons.Delete,
+      Refresh: ElIcons.Refresh,
+      ArrowUp: ElIcons.ArrowUp,
+      ArrowDown: ElIcons.ArrowDown,
+      StarFilled: ElIcons.StarFilled,
+      Star: ElIcons.Star,
+    }
+
     return {
       currentPage, dailyUsage, dailyLimit,
       CONTENT_FORMS, SCENE_TYPES, DIFFICULTY_LEVELS, LENGTH_LEVELS,
@@ -1859,6 +1877,8 @@ const app = createApp({
       searchPolysemy, loadPolysemyHot,
       toggleFavorite, regenerateAudio, handleMenuSelect,
       highlightedResult,
+      // 图标组件
+      ...Icons,
     }
   }
 })
