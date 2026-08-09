@@ -540,6 +540,7 @@ class ManagerApp:
     def _log_system(self, msg: str):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_lines.append((ts, "INFO", msg))
+        self._render_logs()
 
     def clear_logs(self):
         self.log_lines.clear()
