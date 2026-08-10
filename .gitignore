@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .env
 .workbuddy/
+mvp/venv/
+logs/
+mvp/data/
+*.log

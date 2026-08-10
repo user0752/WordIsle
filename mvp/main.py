@@ -39,7 +39,9 @@ BASE_DIR    = Path(__file__).resolve().parent
 DATA_DIR    = BASE_DIR / "data"
 DB_PATH     = DATA_DIR / "words.db"
 AUDIOS_DIR  = DATA_DIR / "audios"
+IMAGES_DIR  = DATA_DIR / "images"
 AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE    = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
@@ -50,8 +52,43 @@ TTS_ENDPOINT  = os.getenv("TTS_ENDPOINT", "https://dashscope.aliyuncs.com/api/v1
 TTS_VOICE     = os.getenv("TTS_VOICE", "loongandy_v3")
 TTS_MODEL     = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
 
-DAILY_AI_LIMIT  = int(os.getenv("DAILY_AI_LIMIT", "20"))
-DAILY_TTS_LIMIT = int(os.getenv("DAILY_TTS_LIMIT", "50"))
+# 文生图（阿里云百炼，复用 TTS_API_KEY）
+IMAGE_API_KEY    = os.getenv("IMAGE_API_KEY", TTS_API_KEY)
+IMAGE_BASE_URL   = os.getenv("IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
+IMAGE_MODEL      = os.getenv("IMAGE_MODEL", "wan2.7-image")  # 默认均衡档（角色一致性，适合连环画）
+
+# 文生图模型三档（依据《文生图文档.txt》推荐配置，用户可在前端自由选择）
+# 文档推荐：高质量=qwen-image-3.0-pro/wan2.7-image-pro；平衡=qwen-image-3.0/wan2.7-image；快速低成本=z-image-turbo
+IMAGE_MODELS = [
+    {
+        "value": "qwen-image-3.0-pro",
+        "label": "旗舰 · Qwen-Image 3.0 Pro (画质最佳·文本渲染强)",
+        "tier": "旗舰",
+        "price": "0.50 元/张",
+        "note": "千问3.0旗舰版，支持agent prompt智能改写，擅长中英文文本渲染；复杂版面首选",
+        "endpoint": "multimodal",  # 同步调用端点（multimodal-generation/generation）
+    },
+    {
+        "value": "wan2.7-image",
+        "label": "均衡 · Wan 2.7 Image (角色一致·适合连环画)",
+        "tier": "均衡",
+        "price": "0.20 元/张",
+        "note": "角色一致性多图生成，连环画人物统一；50张免费额度，2K分辨率",
+        "endpoint": "t2i",  # 异步轮询端点（text2image/image-synthesis）
+    },
+    {
+        "value": "z-image-turbo",
+        "label": "性价比 · Z-Image Turbo (最快·约0.04元/张)",
+        "tier": "性价比",
+        "price": "0.04 元/张",
+        "note": "快速低成本，速度比wan2.7快10倍；写实人像和产品照片；仅文生图不支持编辑",
+        "endpoint": "multimodal",  # z-image-turbo 走同步 multimodal-generation 端点（与 qwen-image 相同）
+    },
+]
+
+DAILY_AI_LIMIT    = int(os.getenv("DAILY_AI_LIMIT", "20"))
+DAILY_TTS_LIMIT   = int(os.getenv("DAILY_TTS_LIMIT", "50"))
+DAILY_IMAGE_LIMIT = int(os.getenv("DAILY_IMAGE_LIMIT", "50"))
 
 # ========================================================================
 # SQLite 数据库
@@ -83,20 +120,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS generations (
             id TEXT PRIMARY KEY,
             words TEXT NOT NULL,
-            content_form TEXT DEFAULT 'dialogue',
-            scene_type   TEXT DEFAULT 'meeting',
-            difficulty TEXT DEFAULT 'intermediate',
-            length_level TEXT DEFAULT 'medium',
-            title        TEXT DEFAULT '',
-            body_en      TEXT NOT NULL,
-            body_zh      TEXT DEFAULT '',
+            panel_count INTEGER DEFAULT 4,
+            theme_hint  TEXT DEFAULT '',
+            story_title TEXT DEFAULT '',
+            theme       TEXT DEFAULT '',
+            story_synopsis TEXT DEFAULT '',
+            body_en      TEXT DEFAULT '',
             model        TEXT DEFAULT '',
-            word_forms   TEXT DEFAULT '{}',
-            collocations TEXT DEFAULT '[]',
+            image_model  TEXT DEFAULT '',
+            panels       TEXT DEFAULT '[]',
             polysemy_notes  TEXT DEFAULT '{}',
             included_words  TEXT DEFAULT '[]',
             missing_words   TEXT DEFAULT '[]',
-            toc_part_tags TEXT DEFAULT '[]',
+            ending_moral TEXT DEFAULT '',
             is_favorited INTEGER DEFAULT 0,
             created_at   TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -114,7 +150,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS daily_usage (
             day TEXT PRIMARY KEY,
             ai_count  INTEGER DEFAULT 0,
-            tts_count INTEGER DEFAULT 0
+            tts_count INTEGER DEFAULT 0,
+            image_count INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS polysemy (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,6 +173,26 @@ def init_db():
         conn.execute("ALTER TABLE audios ADD COLUMN tts_model TEXT DEFAULT ''")
     except Exception:
         pass  # 列已存在则忽略
+    # 迁移：为已有 generations 表添加新字段（panels 模式）
+    for col, decl in [
+        ("panel_count", "INTEGER DEFAULT 4"),
+        ("theme_hint", "TEXT DEFAULT ''"),
+        ("story_title", "TEXT DEFAULT ''"),
+        ("theme", "TEXT DEFAULT ''"),
+        ("story_synopsis", "TEXT DEFAULT ''"),
+        ("image_model", "TEXT DEFAULT ''"),
+        ("panels", "TEXT DEFAULT '[]'"),
+        ("ending_moral", "TEXT DEFAULT ''"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE generations ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
+    # 迁移：为 daily_usage 添加 image_count 列
+    try:
+        conn.execute("ALTER TABLE daily_usage ADD COLUMN image_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -151,11 +208,13 @@ def normalize_words(raw: str) -> list[str]:
             clean.append(w)
     return clean
 
-def consume_daily_quota(category: str) -> bool:
+def consume_daily_quota(category: str, count: int = 1) -> bool:
     """原子地检查并占用一次当日配额（BEGIN IMMEDIATE 事务，超限返回 False）。"""
     today = date.today().isoformat()
-    col = "ai_count" if category == "ai" else "tts_count"
-    limit = DAILY_AI_LIMIT if category == "ai" else DAILY_TTS_LIMIT
+    col_map = {"ai": "ai_count", "tts": "tts_count", "image": "image_count"}
+    limit_map = {"ai": DAILY_AI_LIMIT, "tts": DAILY_TTS_LIMIT, "image": DAILY_IMAGE_LIMIT}
+    col = col_map.get(category, "ai_count")
+    limit = limit_map.get(category, DAILY_AI_LIMIT)
     conn = sqlite3.connect(str(DB_PATH), timeout=10.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
@@ -164,13 +223,13 @@ def consume_daily_quota(category: str) -> bool:
         row = conn.execute("SELECT * FROM daily_usage WHERE day=?", (today,)).fetchone()
         if row is None:
             conn.execute("INSERT INTO daily_usage(day) VALUES(?)", (today,))
-            count = 0
+            used = 0
         else:
-            count = row[col]
-        if count >= limit:
+            used = row[col]
+        if used + count > limit:
             conn.execute("ROLLBACK")
             return False
-        conn.execute(f"UPDATE daily_usage SET {col}={col}+1 WHERE day=?", (today,))
+        conn.execute(f"UPDATE daily_usage SET {col}={col}+? WHERE day=?", (count, today))
         conn.execute("COMMIT")
         return True
     finally:
@@ -194,87 +253,78 @@ def validate_tts_params(voice, speed):
 # DeepSeek / 百炼 TTS 调用
 # ========================================================================
 
-# ---- Prompt（复用原始项目的系统 Prompt，精简保留核心约束） ----
+# ---- Prompt（剧情连环画模式：把目标词编进一条有起承转合的剧情线，拆成 N 个画面）----
 
-SYSTEM_PROMPT = """You are a TOEIC Business English content writer. Your audience is TOEIC test-takers who need to master stubborn vocabulary through real workplace scenarios.
+SYSTEM_PROMPT = """You are a TOEIC Business English storyboard writer. Your audience is TOEIC test-takers who need to master stubborn vocabulary through a CINEMATIC STORY split into visual panels.
+
+CORE IDEA: Pack the MOST target words into the SHORTEST possible sentences, tied together by ONE coherent story arc (setup → development → climax → resolution). Each panel = 1 high-density English sentence + 1 cinematic image description.
 
 RULES:
-1. Content must be natural, professional, and business-realistic (meetings, emails, travel, procurement, HR, finance, customer service, project management, marketing).
-2. Include ALL target words naturally; use common inflections if needed (reimburse->reimbursement). If a word truly cannot fit, list it in missing_words—never force it.
-3. Highlight "polysemy" words (words with special business meanings) in polysemy_notes.
-4. Difficulty and length must match the user's request.
-5. Output ONLY a valid JSON object. No markdown, no extra text.
+1. Story must have a clear arc (e.g. friends pool money → debate a stock → invest → lose everything). Theme can be any business/workplace scenario (investment, negotiation, project failure, procurement, HR conflict, etc.).
+2. Distribute ALL target words across the panels. Each panel packs 2-4 target words naturally via the scene (use common inflections if needed: reimburse→reimbursement). Never force-fit; if a word truly can't fit, list it in missing_words.
+3. Each English sentence is SHORT and HIGH-DENSITY: 12-25 words, focused, memorable. Do NOT write long paragraphs.
+4. Each panel's image_prompt must describe a CINEMATIC STORYBOARD frame (camera angle, lighting, composition, mood, 16:9). Keep visual continuity across panels (same characters, consistent style). image_prompt MUST be in English, 1-3 sentences.
+5. Each panel gets a scene_role: setup|development|climax|resolution (distribute roles across panels).
+6. Include word_notes (business meaning), collocations (business chunks), and polysemy_notes (words with special business meanings).
+7. Output ONLY a valid JSON object. No markdown, no extra text.
 
 JSON STRUCTURE:
 {
-  "title": "English title",
-  "content_form": "dialogue|email|memo|report",
-  "scene": "brief Chinese scene description",
-  "body_en": "full English text",
-  "body_zh": "Chinese translation",
-  "target_words": ["word1","word2"],
+  "story_title": "English title (3-8 words)",
+  "theme": "Chinese theme description (e.g. 投资失败)",
+  "story_synopsis": "Chinese one-sentence story summary",
+  "panels": [
+    {
+      "scene_index": 1,
+      "scene_role": "setup",
+      "sentence_en": "One short high-density English sentence with 2-4 target words.",
+      "sentence_zh": "Chinese translation of the sentence.",
+      "target_words_in_scene": ["word1","word2"],
+      "word_notes": {"word1": "中文商务释义", "word2": "中文商务释义"},
+      "collocations": ["business collocation 1","business collocation 2"],
+      "image_prompt": "Cinematic storyboard: [scene description in English]. [camera angle, lighting]. [mood]. 16:9, film grain."
+    }
+  ],
   "included_words": ["word1","word2"],
   "missing_words": [],
-  "word_forms": {"original":"form used in text"},
-  "collocations": ["business collocation 1","business collocation 2"],
-  "polysemy_notes": {"word":"explanation of its business meaning here"},
-  "difficulty": "intermediate",
-  "toc_part_tags": ["part3","part7"],
-  "naturalness_score": 8,
-  "warnings": []
+  "polysemy_notes": {"word": "explanation of its business meaning here"},
+  "ending_moral": "Chinese one-sentence takeaway or lesson from the story."
 }
 """
 
-def build_user_prompt(words: list[str], content_form="dialogue", scene_type="meeting", include_translation=True):
-    content_desc = {
-        "dialogue": "Business dialogue (2-4 people, e.g. meeting discussion, phone call, client chat)",
-        "email": "Business email (formal professional email)",
-        "memo": "Internal memo (concise official notice)",
-        "report": "Business report (report summary or brief)",
-        "short_narrative": "Short narrative passage (a brief story describing a workplace scenario)",
-    }.get(content_form, content_form)
-
-    scene_desc = {
-        "meeting": "Company meeting",
-        "email": "Email correspondence",
-        "travel": "Business travel",
-        "procurement": "Procurement/Supplier negotiation",
-        "hr": "Human Resources",
-        "finance": "Finance/Accounting",
-        "customer_service": "Customer Service",
-        "project_management": "Project Management",
-        "marketing": "Marketing/Promotion",
-    }.get(scene_type, scene_type)
-
+def build_user_prompt(words: list[str], panel_count: int = 4, theme_hint: str = ""):
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
+    theme_line = f"\nTHEME HINT (optional, you may follow or override): {theme_hint}" if theme_hint else "\nTHEME: Choose any business/workplace scenario with a clear arc (investment, negotiation, project, procurement, HR, etc.). Be creative."
 
-    return f"""Please write TOEIC business English study material:
+    return f"""Please write a TOEIC business English CINEMATIC STORY split into {panel_count} visual panels.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
 
-CONTENT FORM: {content_desc}
+PANEL COUNT: {panel_count} (must be exactly {panel_count} panels)
+{theme_line}
 
-SCENE TYPE: {scene_desc}
+CONSTRAINTS:
+- Each panel's English sentence: 12-25 words, containing 2-4 target words.
+- Distribute ALL {len(words)} target words across the {panel_count} panels as evenly as possible.
+- Story must have a clear arc with setup/development/climax/resolution roles.
+- image_prompt: cinematic storyboard style, 16:9, film grain, visual continuity across panels.
+- All target words must appear naturally in business context.
 
-DIFFICULTY: Intermediate (TOEIC level)
-LENGTH: ~200-350 words
-INCLUDE CHINESE TRANSLATION: {'Yes' if include_translation else 'No'}
+Output only the JSON object."""
 
-Make sure all target words appear naturally in the business context. Output only the JSON object."""
-
-async def call_deepseek(words: list[str], content_form="dialogue", scene_type="meeting", include_translation=True):
+async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = ""):
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
-    user_prompt = build_user_prompt(words, content_form, scene_type, include_translation)
+    user_prompt = build_user_prompt(words, panel_count, theme_hint)
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.7,
+        "temperature": 0.8,
         "max_tokens": 4096,
         "response_format": {"type": "json_object"},
     }
@@ -343,6 +393,151 @@ async def call_tts(text: str, voice=None, speed=1.0, model=None):
         raise HTTPException(500, "TTS 合成失败: 返回空音频")
 
 # ========================================================================
+# 百炼文生图（支持三档模型：旗舰/均衡/性价比）
+# ========================================================================
+
+def _get_image_model_config(model_name: str) -> dict:
+    """根据模型名返回其配置（端点类型等），默认走 t2i 异步端点。"""
+    for m in IMAGE_MODELS:
+        if m["value"] == model_name:
+            return m
+    return {"endpoint": "t2i", "price": "未知"}
+
+async def _generate_image_qwen_multimodal(prompt: str, model: str) -> bytes:
+    """旗舰档：qwen-image-3.0-pro / z-image-turbo，走 multimodal-generation/generation 同步端点。
+    文档：POST /services/aigc/multimodal-generation/generation，messages 结构。
+    尺寸：qwen-image 系列支持 1664*928（16:9）；z-image-turbo 推荐方图 1024*1024（也支持 16:9 但方图质量最佳）。
+    """
+    # z-image-turbo 用方图质量最佳；qwen-image 用 16:9 电影分镜
+    size = "1024*1024" if model == "z-image-turbo" else "1664*928"
+    url = f"{IMAGE_BASE_URL}/services/aigc/multimodal-generation/generation"
+    payload = {
+        "model": model,
+        "input": {
+            "messages": [
+                {"role": "user", "content": [{"text": prompt}]}
+            ]
+        },
+        "parameters": {
+            "size": size,
+            "n": 1,
+            "prompt_extend": True,
+        }
+    }
+    headers = {
+        "Authorization": f"Bearer {IMAGE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    # 同步端点：output.choices[0].message.content[0].image 或 image_url
+    output = data.get("output", {})
+    choices = output.get("choices", [])
+    if not choices:
+        raise RuntimeError(f"文生图返回无 choices: {data.get('message', '')}")
+    content = choices[0].get("message", {}).get("content", [])
+    image_url = None
+    for c in content:
+        if c.get("image"):
+            image_url = c["image"]
+            break
+        if c.get("image_url"):
+            image_url = c["image_url"]
+            break
+    if not image_url:
+        raise RuntimeError("文生图返回无 image_url")
+    # 下载图片
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        img_resp = await client.get(image_url)
+        img_resp.raise_for_status()
+        return img_resp.content
+
+async def _generate_image_wan_t2i(prompt: str, model: str) -> bytes:
+    """均衡档：wan2.7-image，走 text2image/image-synthesis 异步端点。
+    流程：提交任务拿 task_id → 轮询 task 状态 → 拿到 image_url → 下载。
+    尺寸：wan2.7-image 支持 16:9 横版 1280*720。
+    """
+    size = "1280*720"  # wan2.7-image 16:9 横版
+    submit_url = f"{IMAGE_BASE_URL}/services/aigc/text2image/image-synthesis"
+    payload = {
+        "model": model,
+        "input": {"prompt": prompt},
+        "parameters": {"size": size, "n": 1},
+    }
+    headers = {
+        "Authorization": f"Bearer {IMAGE_API_KEY}",
+        "Content-Type": "application/json",
+        "X-DashScope-Async": "enable",
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(submit_url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    task_id = data.get("output", {}).get("task_id")
+    if not task_id:
+        raise RuntimeError(f"文生图提交任务失败: {data.get('message', '')}")
+    # 轮询任务状态（最多等 120 秒）
+    task_url = f"{IMAGE_BASE_URL}/tasks/{task_id}"
+    headers_poll = {"Authorization": f"Bearer {IMAGE_API_KEY}"}
+    for _ in range(40):
+        await asyncio.sleep(3)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(task_url, headers=headers_poll)
+            resp.raise_for_status()
+            tdata = resp.json()
+        status = tdata.get("output", {}).get("task_status", "")
+        if status == "SUCCEEDED":
+            results = tdata.get("output", {}).get("results", [])
+            if not results:
+                raise RuntimeError("文生图任务成功但无结果")
+            image_url = results[0].get("url") or results[0].get("b64_image")
+            if not image_url:
+                raise RuntimeError("文生图结果无 url")
+            break
+        elif status == "FAILED":
+            msg = tdata.get("output", {}).get("message", "未知错误")
+            raise RuntimeError(f"文生图任务失败: {msg}")
+        # PENDING / RUNNING 继续轮询
+    else:
+        raise RuntimeError("文生图任务超时（120秒未完成）")
+    # 下载图片
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        img_resp = await client.get(image_url)
+        img_resp.raise_for_status()
+        return img_resp.content
+
+async def call_image_generation(prompt: str, model: str = None) -> bytes:
+    """文生图统一入口，按模型分派到同步或异步端点。返回图片二进制。"""
+    if not IMAGE_API_KEY:
+        raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
+    model_name = model or IMAGE_MODEL
+    cfg = _get_image_model_config(model_name)
+    try:
+        if cfg.get("endpoint") == "multimodal":
+            return await _generate_image_qwen_multimodal(prompt, model_name)
+        else:
+            return await _generate_image_wan_t2i(prompt, model_name)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"文生图失败 ({model_name}): {e}")
+
+async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int) -> dict:
+    """为单个画面生成图片，返回 {url, file_name, error}。失败时降级（不阻塞整体）。"""
+    # 统一风格前缀，保证电影分镜质感与连贯性
+    full_prompt = f"cinematic storyboard, film grain, dramatic lighting, {prompt}, 16:9"
+    try:
+        img_bytes = await call_image_generation(full_prompt, model)
+        file_name = f"{gen_id}_panel{scene_index}.png"
+        file_path = IMAGES_DIR / file_name
+        file_path.write_bytes(img_bytes)
+        return {"url": f"/images/{file_name}", "file_name": file_name, "error": None}
+    except Exception as e:
+        return {"url": None, "file_name": None, "error": str(e.detail if hasattr(e, 'detail') else e)}
+
+# ========================================================================
 # FastAPI 应用
 # ========================================================================
 
@@ -356,8 +551,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TOEIC MVP", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# 静态文件：音频目录
+# 静态文件：音频 + 图片目录
 app.mount("/audios", StaticFiles(directory=str(AUDIOS_DIR)), name="audios")
+app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 
 # ========================================================================
 # API 路由
@@ -366,53 +562,86 @@ app.mount("/audios", StaticFiles(directory=str(AUDIOS_DIR)), name="audios")
 @app.post("/api/generate")
 async def generate(req: Request):
     body = await req.json()
-    raw_words = body.get("words", "")
-    content_form = body.get("content_form", "dialogue")
-    scene_type   = body.get("scene_type", "meeting")
-    difficulty   = body.get("difficulty", "intermediate")
-    length_level = body.get("length_level", "medium")
-    include_translation = body.get("include_translation", True)
+    raw_words    = body.get("words", "")
+    panel_count  = int(body.get("panel_count", 4))
+    theme_hint   = body.get("theme_hint", "")
+    image_model  = body.get("image_model", IMAGE_MODEL)
     generate_audio = body.get("generate_audio_immediately", False)
-    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
+    tts_model    = body.get("tts_model", TTS_MODEL) if generate_audio else None
 
     words = normalize_words(raw_words)
     if not words:
         raise HTTPException(400, "请至少输入一个有效单词")
     if len(words) > 30:
         raise HTTPException(400, f"单次最多 30 个单词，当前 {len(words)} 个")
+    if panel_count not in (3, 4, 5):
+        raise HTTPException(400, "画面数量只能是 3、4 或 5")
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
-    gen_id   = str(uuid.uuid4())[:8]
-    result, usage = await call_deepseek(words, content_form, scene_type, include_translation)
+    gen_id = str(uuid.uuid4())[:8]
+    result, usage = await call_deepseek(words, panel_count, theme_hint)
 
-    length_map = {"short": "~80 words", "medium": "~150 words", "long": "~250 words"}
+    panels = result.get("panels", [])
+    # 并发生成每个画面的图片
+    image_tasks = [
+        generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, p.get("scene_index", idx + 1))
+        for idx, p in enumerate(panels)
+    ]
+    if image_tasks:
+        # 旗舰档 RPM=2，并发会触发限流；均衡/性价比档可并发。这里统一串行，避免限流。
+        # 但为了速度，均衡/性价比档可以并发。根据模型端点决定。
+        cfg = _get_image_model_config(image_model)
+        if cfg.get("endpoint") == "multimodal":
+            # 旗舰档：串行（RPM=2，且每次耗时较长）
+            image_results = []
+            for t in image_tasks:
+                image_results.append(await t)
+        else:
+            # 均衡/性价比档：并发
+            image_results = await asyncio.gather(*image_tasks)
+    else:
+        image_results = []
+
+    # 把图片 URL 写回 panels
+    for p, ir in zip(panels, image_results):
+        p["image_url"] = ir["url"]
+        p["image_error"] = ir["error"]
+
+    # 统计图片成功数量，扣减配额
+    image_ok_count = sum(1 for ir in image_results if ir["url"])
+    if image_ok_count > 0:
+        if not consume_daily_quota("image", image_ok_count):
+            # 配额超限：图片已生成但未扣配额，仍返回（宽松处理）
+            pass
+
+    # 拼接完整英文正文（供 TTS 和历史预览用）
+    full_body_en = " ".join(p.get("sentence_en", "") for p in panels)
 
     # 入库
     conn = get_db()
     conn.execute("""
-        INSERT INTO generations (id,words,content_form,scene_type,difficulty,length_level,
-                                 title,body_en,body_zh,model,
-                                 word_forms,collocations,polysemy_notes,included_words,missing_words,toc_part_tags)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO generations (id,words,panel_count,theme_hint,
+                                 story_title,theme,story_synopsis,body_en,model,image_model,panels,
+                                 polysemy_notes,included_words,missing_words,ending_moral)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         gen_id,
         json.dumps(words),
-        content_form,
-        scene_type,
-        difficulty,
-        length_level,
-        result.get("title",""),
-        result.get("body_en",""),
-        result.get("body_zh","") if include_translation else "",
+        panel_count,
+        theme_hint,
+        result.get("story_title", ""),
+        result.get("theme", ""),
+        result.get("story_synopsis", ""),
+        full_body_en,
         DEEPSEEK_MODEL,
-        json.dumps(result.get("word_forms",{})),
-        json.dumps(result.get("collocations",[])),
-        json.dumps(result.get("polysemy_notes",{})),
-        json.dumps(result.get("included_words",[])),
-        json.dumps(result.get("missing_words",[])),
-        json.dumps(result.get("toc_part_tags",[])),
+        image_model,
+        json.dumps(panels),
+        json.dumps(result.get("polysemy_notes", {})),
+        json.dumps(result.get("included_words", [])),
+        json.dumps(result.get("missing_words", [])),
+        result.get("ending_moral", ""),
     ))
     for w in words:
         conn.execute("INSERT OR IGNORE INTO words(word,original_input) VALUES(?,?)", (w, w))
@@ -422,31 +651,29 @@ async def generate(req: Request):
     resp = {
         "id": gen_id,
         "status": "success",
-        "title": result.get("title"),
-        "body_en": result.get("body_en"),
-        "body_zh": result.get("body_zh") if include_translation else "",
+        "story_title": result.get("story_title", ""),
+        "theme": result.get("theme", ""),
+        "story_synopsis": result.get("story_synopsis", ""),
+        "ending_moral": result.get("ending_moral", ""),
+        "panels": panels,
         "words": words,
         "included_words": result.get("included_words", []),
         "missing_words": result.get("missing_words", []),
-        "collocations": result.get("collocations", []),
         "polysemy_notes": result.get("polysemy_notes", {}),
-        "word_forms": result.get("word_forms", {}),
-        "toc_part_tags": result.get("toc_part_tags", []),
-        "content_form": content_form,
-        "scene_type": scene_type,
-        "difficulty": difficulty,
-        "scene": result.get("scene", ""),
+        "panel_count": panel_count,
+        "image_model": image_model,
+        "image_success_count": image_ok_count,
         "has_audio": False,
         "audio_id": None,
     }
 
-    # 如果需要立即生成音频
-    if generate_audio and result.get("body_en"):
+    # 可选：为整条剧情串联生成 TTS 音频
+    if generate_audio and full_body_en:
         if not consume_daily_quota("tts"):
             resp["audio_error"] = f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)，未生成音频"
         else:
             try:
-                audio_bytes = await call_tts(result["body_en"], TTS_VOICE, 1.0, tts_model)
+                audio_bytes = await call_tts(full_body_en, TTS_VOICE, 1.0, tts_model)
                 file_name = f"{gen_id}_{TTS_VOICE}_100.mp3"
                 file_path = AUDIOS_DIR / file_name
                 file_path.write_bytes(audio_bytes)
@@ -532,17 +759,19 @@ async def list_generations():
     conn.close()
     return [{
         "id": r["id"],
-        "title": r["title"],
+        "story_title": r["story_title"],
+        "theme": r["theme"],
+        "story_synopsis": r["story_synopsis"],
         "words": json.loads(r["words"] or "[]"),
-        "content_form": r["content_form"],
-        "scene_type": r["scene_type"],
-        "difficulty": r["difficulty"],
+        "panel_count": r["panel_count"],
+        "image_model": r["image_model"],
         "created_at": r["created_at"],
         "body_en": (r["body_en"][:100] + "...") if r["body_en"] and len(r["body_en"]) > 100 else (r["body_en"] or ""),
         "has_audio": bool(r["audio_file"]),
         "is_favorited": bool(r["is_favorited"]),
         "included_words": json.loads(r["included_words"] or "[]"),
         "missing_words": json.loads(r["missing_words"] or "[]"),
+        "first_image_url": (json.loads(r["panels"] or "[]")[0:1] or [{}])[0].get("image_url") if r["panels"] else None,
     } for r in rows]
 
 
@@ -556,20 +785,18 @@ async def get_generation(gen_id: str):
         raise HTTPException(404, "记录不存在")
     return {
         "id": gen["id"],
-        "title": gen["title"],
+        "story_title": gen["story_title"],
+        "theme": gen["theme"],
+        "story_synopsis": gen["story_synopsis"],
+        "ending_moral": gen["ending_moral"],
+        "panels": json.loads(gen["panels"] or "[]"),
         "body_en": gen["body_en"],
-        "body_zh": gen["body_zh"],
         "words": json.loads(gen["words"] or "[]"),
-        "content_form": gen["content_form"],
-        "scene_type": gen["scene_type"],
-        "difficulty": gen["difficulty"],
-        "length_level": gen["length_level"],
+        "panel_count": gen["panel_count"],
+        "image_model": gen["image_model"],
         "included_words": json.loads(gen["included_words"] or "[]"),
         "missing_words": json.loads(gen["missing_words"] or "[]"),
-        "collocations": json.loads(gen["collocations"] or "[]"),
         "polysemy_notes": json.loads(gen["polysemy_notes"] or "{}"),
-        "word_forms": json.loads(gen["word_forms"] or "{}"),
-        "toc_part_tags": json.loads(gen["toc_part_tags"] or "[]"),
         "is_favorited": bool(gen["is_favorited"]),
         "created_at": gen["created_at"],
         "audio_url": f"/audios/{aud['file_name']}" if aud else None,
@@ -589,6 +816,12 @@ async def delete_generation(gen_id: str):
     auds = conn.execute("SELECT file_name FROM audios WHERE generation_id=?", (gen_id,)).fetchall()
     for a in auds:
         (AUDIOS_DIR / a["file_name"]).unlink(missing_ok=True)
+    # 删除该生成记录的所有图片文件
+    panels = json.loads(gen["panels"] or "[]")
+    for p in panels:
+        if p.get("image_url"):
+            fname = p["image_url"].split("/")[-1]
+            (IMAGES_DIR / fname).unlink(missing_ok=True)
     conn.execute("DELETE FROM generations WHERE id=?", (gen_id,))
     conn.commit()
     conn.close()
@@ -601,16 +834,23 @@ async def health():
     conn = get_db()
     row = conn.execute("SELECT * FROM daily_usage WHERE day=?", (today,)).fetchone()
     conn.close()
-    usage = {"ai": 0, "tts": 0}
+    usage = {"ai": 0, "tts": 0, "image": 0}
     if row:
-        usage = {"ai": row["ai_count"], "tts": row["tts_count"]}
+        usage = {"ai": row["ai_count"], "tts": row["tts_count"], "image": row["image_count"]}
     return {
         "status": "ok",
         "db": DB_PATH.exists(),
         "deepseek_key": bool(DEEPSEEK_API_KEY),
         "tts_key": bool(TTS_API_KEY),
-        "daily_usage": {**usage, "ai_limit": DAILY_AI_LIMIT, "tts_limit": DAILY_TTS_LIMIT},
+        "image_key": bool(IMAGE_API_KEY),
+        "daily_usage": {**usage, "ai_limit": DAILY_AI_LIMIT, "tts_limit": DAILY_TTS_LIMIT, "image_limit": DAILY_IMAGE_LIMIT},
     }
+
+
+@app.get("/api/image-models")
+async def list_image_models():
+    """返回文生图模型三档列表，供前端下拉选择。"""
+    return {"models": IMAGE_MODELS}
 
 # ========================================================================
 # 音频 API
@@ -757,25 +997,20 @@ async def import_words(req: Request):
 async def list_texts(page: int = 1, content_form: str = ""):
     conn = get_db()
     offset = (page - 1) * 20
-    where = ""
-    params: list[Any] = []
-    if content_form:
-        where = "WHERE content_form=?"
-        params.append(content_form)
     rows = conn.execute(
-        f"SELECT * FROM generations {where} ORDER BY created_at DESC LIMIT 20 OFFSET ?",
-        params + [offset],
+        "SELECT * FROM generations ORDER BY created_at DESC LIMIT 20 OFFSET ?",
+        [offset],
     ).fetchall()
-    total = conn.execute(f"SELECT COUNT(*) FROM generations {where}", params).fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM generations").fetchone()[0]
     conn.close()
     items = []
     for r in rows:
         d = dict(r)
+        panels = json.loads(d.get("panels", "[]"))
         d["words"] = json.loads(d.get("words", "[]"))
         d["included_words"] = json.loads(d.get("included_words", "[]"))
         d["missing_words"] = json.loads(d.get("missing_words", "[]"))
-        d["toc_part_tags"] = json.loads(d.get("toc_part_tags", "[]"))
-        d["collocations"] = json.loads(d.get("collocations", "[]"))
+        d["first_image_url"] = panels[0].get("image_url") if panels else None
         items.append(d)
     return {"items": items, "total": total, "page": page, "page_size": 20}
 
@@ -788,12 +1023,10 @@ async def get_text(text_id: str):
         raise HTTPException(404, "文本不存在")
     d = dict(gen)
     d["words"] = json.loads(d.get("words", "[]"))
+    d["panels"] = json.loads(d.get("panels", "[]"))
     d["included_words"] = json.loads(d.get("included_words", "[]"))
     d["missing_words"] = json.loads(d.get("missing_words", "[]"))
-    d["collocations"] = json.loads(d.get("collocations", "[]"))
     d["polysemy_notes"] = json.loads(d.get("polysemy_notes", "{}"))
-    d["word_forms"] = json.loads(d.get("word_forms", "{}"))
-    d["toc_part_tags"] = json.loads(d.get("toc_part_tags", "[]"))
     return d
 
 @app.post("/api/texts/{text_id}/favorite")
@@ -815,6 +1048,12 @@ async def delete_text(text_id: str):
     auds = conn.execute("SELECT file_name FROM audios WHERE generation_id=?", (text_id,)).fetchall()
     for a in auds:
         (AUDIOS_DIR / a["file_name"]).unlink(missing_ok=True)
+    # 删除图片文件
+    panels = json.loads(gen["panels"] or "[]")
+    for p in panels:
+        if p.get("image_url"):
+            fname = p["image_url"].split("/")[-1]
+            (IMAGES_DIR / fname).unlink(missing_ok=True)
     conn.execute("DELETE FROM generations WHERE id=?", (text_id,))
     conn.commit()
     conn.close()
@@ -1655,12 +1894,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
           </el-row>
         </div>
 
-        <!-- 编译配置 -->
+        <!-- 编译配置（剧情连环画模式） -->
         <div v-if="currentPage==='compile'" class="page-container">
           <div class="page-header">
             <div>
               <h2 class="page-title"><span class="title-accent"></span>编译配置</h2>
-              <p class="page-subtitle">设置 AI 编译参数，将单词编译为商务语境文本</p>
+              <p class="page-subtitle">把单词编进一条有起承转合的剧情线，生成电影分镜连环画</p>
             </div>
             <el-button :icon="Back" @click="currentPage='words'">返回单词库</el-button>
           </div>
@@ -1682,31 +1921,34 @@ INDEX_HTML = r"""<!DOCTYPE html>
           </el-card>
           <el-card shadow="never" v-if="compileWords.length>0">
             <el-form label-width="120px" label-position="right">
-              <el-form-item label="内容形式">
-                <el-radio-group v-model="compileForm.content_form">
-                  <el-radio-button v-for="cf in CONTENT_FORMS" :key="cf.value" :value="cf.value">{{ cf.label }}</el-radio-button>
+              <el-form-item label="画面数量">
+                <el-radio-group v-model="compileForm.panel_count">
+                  <el-radio-button :value="3">3 画面 (短)</el-radio-button>
+                  <el-radio-button :value="4">4 画面 (标准)</el-radio-button>
+                  <el-radio-button :value="5">5 画面 (完整)</el-radio-button>
                 </el-radio-group>
+                <span class="ml-md text-secondary" style="font-size:12px">每画面塞 2-4 个目标词，单句聚焦记忆</span>
               </el-form-item>
-              <el-form-item label="场景类型">
-                <el-select v-model="compileForm.scene_type" placeholder="选择场景" style="width:240px">
-                  <el-option v-for="st in SCENE_TYPES" :key="st.value" :label="st.label" :value="st.value"></el-option>
+              <el-form-item label="主题方向">
+                <el-input v-model="compileForm.theme_hint" placeholder="可选，如：投资失败 / 项目危机 / 采购谈判。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
+              </el-form-item>
+              <el-form-item label="文生图模型">
+                <el-select v-model="compileForm.image_model" placeholder="选择文生图模型" style="width:560px">
+                  <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
+                    <div style="padding:4px 0">
+                      <div style="font-size:13px;font-weight:600">{{ m.label }}</div>
+                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }} · 价格: {{ m.price }}</div>
+                    </div>
+                  </el-option>
                 </el-select>
-              </el-form-item>
-              <el-form-item label="难度等级">
-                <el-radio-group v-model="compileForm.difficulty">
-                  <el-radio-button v-for="d in DIFFICULTY_LEVELS" :key="d.value" :value="d.value">{{ d.label }}</el-radio-button>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item label="文本长度">
-                <el-radio-group v-model="compileForm.length_level">
-                  <el-radio v-for="l in LENGTH_LEVELS" :key="l.value" :value="l.value">{{ l.label }}</el-radio>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item label="中文翻译">
-                <el-switch v-model="compileForm.include_translation" active-text="包含中文翻译"></el-switch>
+                <div v-if="compileForm.image_model" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
+                  <span>{{ getImageModelNote(compileForm.image_model) }}</span>
+                  <span class="ml-md" style="color:var(--warning-color)">价格: {{ getImageModelPrice(compileForm.image_model) }}</span>
+                  <span class="ml-md">预计生成 {{ compileForm.panel_count }} 张图</span>
+                </div>
               </el-form-item>
               <el-form-item label="立即生成音频">
-                <el-switch v-model="compileForm.generate_audio" active-text="编译完成后自动生成 TTS 听力音频"></el-switch>
+                <el-switch v-model="compileForm.generate_audio" active-text="编译完成后为整条剧情串联生成 TTS 听力音频"></el-switch>
               </el-form-item>
               <el-form-item v-if="compileForm.generate_audio" label="TTS 模型">
                 <el-select v-model="compileForm.tts_model" placeholder="选择语音合成模型" style="width:460px">
@@ -1724,7 +1966,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <el-divider></el-divider>
               <el-form-item>
                 <el-button type="primary" size="large" :icon="MagicStick" :loading="compiling" @click="handleCompile">开始 AI 编译</el-button>
-                <span class="ml-md text-secondary" style="font-size:13px">编译过程约需 10-30 秒，请耐心等待</span>
+                <span class="ml-md text-secondary" style="font-size:13px">剧情生成 + 文生图约需 20-90 秒（取决于画面数与模型），请耐心等待</span>
               </el-form-item>
             </el-form>
           </el-card>
@@ -1735,39 +1977,38 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <div class="page-header">
             <div>
               <h2 class="page-title"><span class="title-accent"></span>历史记录</h2>
-              <p class="page-subtitle">查看所有编译生成的文本</p>
+              <p class="page-subtitle">查看所有编译生成的剧情连环画</p>
             </div>
           </div>
-          <el-card shadow="never" class="mb-md">
-            <div class="flex gap-md" style="flex-wrap:wrap">
-              <el-select v-model="historyFilter" placeholder="内容形式" clearable style="width:160px">
-                <el-option v-for="cf in CONTENT_FORMS" :key="cf.value" :label="cf.label" :value="cf.value"></el-option>
-              </el-select>
-              <el-button :icon="Search" @click="loadHistory">查询</el-button>
-            </div>
-          </el-card>
           <el-card shadow="never" v-loading="historyLoading">
             <div v-if="historyData.length===0 && !historyLoading" class="empty-state">
               <el-icon><DocumentRemove /></el-icon>
               <p>暂无历史记录</p>
             </div>
-            <div v-else class="text-list">
-              <div v-for="h in historyData" :key="h.id" class="text-item" @click="viewResult(h)">
-                <div class="text-item-header">
-                  <span class="text-item-title">{{ h.title || 'Untitled' }}</span>
-                  <div class="text-item-tags">
-                    <el-tag size="small">{{ contentFormText(h.content_form) }}</el-tag>
-                    <el-tag size="small" type="info">{{ sceneTypeText(h.scene_type) }}</el-tag>
-                    <el-tag v-if="h.is_favorited" size="small" type="warning" :icon="StarFilled">已收藏</el-tag>
-                  </div>
+            <div v-else class="story-list">
+              <div v-for="h in historyData" :key="h.id" class="story-card" @click="viewResult(h)">
+                <div class="story-card-cover">
+                  <img v-if="h.first_image_url" :src="h.first_image_url" alt="cover" />
+                  <div v-else class="story-cover-placeholder"><el-icon :size="28"><Picture /></el-icon></div>
                 </div>
-                <p class="text-item-preview">{{ (h.body_en||'').slice(0,150) }}{{ (h.body_en||'').length>150?'...':'' }}</p>
-                <div class="text-item-footer">
-                  <div class="word-stats flex gap-sm">
-                    <el-tag size="small" type="success" effect="plain">命中 {{ (h.included_words||[]).length }}</el-tag>
-                    <el-tag v-if="(h.missing_words||[]).length>0" size="small" type="danger" effect="plain">未命中 {{ (h.missing_words||[]).length }}</el-tag>
+                <div class="story-card-body">
+                  <div class="story-card-header">
+                    <span class="story-card-title">{{ h.story_title || 'Untitled' }}</span>
+                    <div class="story-card-tags">
+                      <el-tag size="small" type="info">{{ h.panel_count }} 画面</el-tag>
+                      <el-tag v-if="h.theme" size="small">{{ h.theme }}</el-tag>
+                      <el-tag v-if="h.is_favorited" size="small" type="warning" :icon="StarFilled">已收藏</el-tag>
+                    </div>
                   </div>
-                  <span class="text-secondary">{{ formatDate(h.created_at) }}</span>
+                  <p class="story-card-synopsis">{{ h.story_synopsis || (h.body_en||'').slice(0,100) }}</p>
+                  <div class="story-card-footer">
+                    <div class="word-stats flex gap-sm">
+                      <el-tag size="small" type="success" effect="plain">命中 {{ (h.included_words||[]).length }}</el-tag>
+                      <el-tag v-if="(h.missing_words||[]).length>0" size="small" type="danger" effect="plain">未命中 {{ (h.missing_words||[]).length }}</el-tag>
+                      <el-tag v-if="h.has_audio" size="small" type="primary" effect="plain" :icon="Headset">音频</el-tag>
+                    </div>
+                    <span class="text-secondary">{{ formatDate(h.created_at) }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1873,77 +2114,94 @@ INDEX_HTML = r"""<!DOCTYPE html>
           </el-card>
         </div>
 
-        <!-- 结果详情页 -->
+        <!-- 结果详情页（剧情连环画） -->
         <div v-if="currentPage==='result'" class="page-container">
           <div class="page-header">
             <div>
-              <h2 class="page-title"><span class="title-accent"></span>编译结果</h2>
-              <p class="page-subtitle">AI 生成的商务语境文本与听力音频</p>
+              <h2 class="page-title"><span class="title-accent"></span>剧情连环画</h2>
+              <p class="page-subtitle">电影分镜记忆卡片 · 单句聚焦，剧情串联</p>
             </div>
             <el-button :icon="Back" @click="currentPage='history'">返回历史记录</el-button>
           </div>
           <div v-if="resultLoading" class="flex-center" style="padding:100px 0">
             <el-icon class="rotating" :size="32" color="var(--primary-color)"><Loading /></el-icon>
-            <span class="ml-sm text-secondary">正在加载任务信息...</span>
+            <span class="ml-sm text-secondary">正在加载剧情...</span>
           </div>
           <template v-else-if="resultData">
-            <el-card shadow="never" class="mb-md">
-              <div class="text-header">
-                <h3 class="text-title">{{ resultData.title || 'Untitled' }}</h3>
-                <div class="text-meta">
-                  <el-tag size="small">{{ contentFormText(resultData.content_form) }}</el-tag>
-                  <el-tag size="small" type="info">{{ sceneTypeText(resultData.scene_type) }}</el-tag>
-                  <el-tag size="small" type="warning">{{ difficultyText(resultData.difficulty) }}</el-tag>
-                  <el-tag v-for="tag in (resultData.toc_part_tags||[])" :key="tag" size="small" type="success" effect="plain">{{ tag }}</el-tag>
+            <!-- 故事概览 -->
+            <el-card shadow="never" class="mb-md story-overview">
+              <div class="story-overview-header">
+                <h3 class="story-overview-title">{{ resultData.story_title || 'Untitled' }}</h3>
+                <div class="story-overview-meta">
+                  <el-tag size="small" type="info">{{ resultData.panel_count }} 画面</el-tag>
+                  <el-tag v-if="resultData.theme" size="small">{{ resultData.theme }}</el-tag>
+                  <el-tag v-if="resultData.image_model" size="small" type="warning" effect="plain">{{ resultData.image_model }}</el-tag>
+                </div>
+              </div>
+              <p v-if="resultData.story_synopsis" class="story-overview-synopsis">{{ resultData.story_synopsis }}</p>
+              <div class="story-overview-words">
+                <el-tag v-for="w in (resultData.included_words||[])" :key="w" type="success" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
+                <el-tag v-for="w in (resultData.missing_words||[])" :key="'m'+w" type="danger" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
+              </div>
+            </el-card>
+
+            <!-- 连环画画面列表 -->
+            <div class="panels-container">
+              <div v-for="(panel, idx) in (resultData.panels||[])" :key="idx" class="panel-card">
+                <div class="panel-index">
+                  <span class="panel-index-num">{{ idx + 1 }}</span>
+                  <span class="panel-index-role">{{ sceneRoleText(panel.scene_role) }}</span>
+                </div>
+                <div class="panel-image-wrap">
+                  <img v-if="panel.image_url" :src="panel.image_url" :alt="'panel ' + (idx+1)" class="panel-image" />
+                  <div v-else class="panel-image-fallback">
+                    <el-icon :size="40"><Picture /></el-icon>
+                    <span class="mt-sm text-secondary" style="font-size:12px">图片生成失败</span>
+                    <span v-if="panel.image_error" class="text-tertiary" style="font-size:11px;max-width:300px;text-align:center;word-break:break-all">{{ panel.image_error }}</span>
+                  </div>
+                </div>
+                <div class="panel-content">
+                  <div class="panel-sentence-en" v-html="highlightPanelWords(panel.sentence_en, panel.target_words_in_scene)"></div>
+                  <div class="panel-sentence-zh">{{ panel.sentence_zh }}</div>
+                  <div v-if="panel.target_words_in_scene && panel.target_words_in_scene.length" class="panel-words">
+                    <el-tag v-for="w in panel.target_words_in_scene" :key="w" size="small" type="primary" effect="plain" class="word-list-tag">{{ w }}</el-tag>
+                  </div>
+                  <div v-if="panel.word_notes && Object.keys(panel.word_notes).length" class="panel-word-notes">
+                    <div v-for="(note, w) in panel.word_notes" :key="w" class="word-note-item">
+                      <span class="word-note-word">{{ w }}</span>
+                      <span class="word-note-text">{{ note }}</span>
+                    </div>
+                  </div>
+                  <div v-if="panel.collocations && panel.collocations.length" class="panel-collocations">
+                    <el-icon color="var(--gold)"><Connection /></el-icon>
+                    <el-tag v-for="c in panel.collocations" :key="c" size="small" type="warning" effect="plain">{{ c }}</el-tag>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 故事寓意 -->
+            <el-card v-if="resultData.ending_moral" shadow="never" class="mb-md story-moral">
+              <template #header><span class="card-title"><el-icon><MagicStick /></el-icon> 故事寓意</span></template>
+              <p class="story-moral-text">{{ resultData.ending_moral }}</p>
+            </el-card>
+
+            <!-- 熟词生意注释 -->
+            <el-card v-if="resultData.polysemy_notes && Object.keys(resultData.polysemy_notes).length" shadow="never" class="mb-md">
+              <template #header><span class="card-title">熟词生意</span></template>
+              <div class="polysemy-notes-list">
+                <div v-for="(note, w) in resultData.polysemy_notes" :key="w" class="polysemy-note-item">
+                  <span class="polysemy-note-word">{{ w }}</span>
+                  <span class="polysemy-note-text">{{ note }}</span>
                 </div>
               </div>
             </el-card>
-            <el-card shadow="never" class="mb-md">
-              <template #header><span class="card-title">英文正文</span></template>
-              <div class="english-body" v-html="highlightedResult"></div>
-            </el-card>
-            <el-card v-if="resultData.body_zh" shadow="never" class="mb-md">
-              <template #header>
-                <div class="flex-between">
-                  <span class="card-title">中文翻译</span>
-                  <el-button link :icon="showZh?ArrowUp:ArrowDown" @click="showZh=!showZh">{{ showZh?'收起':'展开' }}</el-button>
-                </div>
-              </template>
-              <div v-show="showZh" class="chinese-body">{{ resultData.body_zh }}</div>
-            </el-card>
-            <el-row :gutter="16" class="mb-md">
-              <el-col :span="12">
-                <el-card shadow="never">
-                  <template #header><span class="card-title text-success"><el-icon><CircleCheckFilled /></el-icon> 命中单词 ({{ (resultData.included_words||[]).length }})</span></template>
-                  <div class="word-list">
-                    <el-tag v-for="w in (resultData.included_words||[])" :key="w" type="success" effect="plain" class="word-list-tag">{{ w }}</el-tag>
-                    <span v-if="!resultData.included_words||resultData.included_words.length===0" class="text-secondary">无</span>
-                  </div>
-                </el-card>
-              </el-col>
-              <el-col :span="12">
-                <el-card shadow="never">
-                  <template #header><span class="card-title text-danger"><el-icon><CircleCloseFilled /></el-icon> 未命中单词 ({{ (resultData.missing_words||[]).length }})</span></template>
-                  <div class="word-list">
-                    <el-tag v-for="w in (resultData.missing_words||[])" :key="w" type="danger" effect="plain" class="word-list-tag">{{ w }}</el-tag>
-                    <span v-if="!resultData.missing_words||resultData.missing_words.length===0" class="text-secondary">全部命中</span>
-                  </div>
-                </el-card>
-              </el-col>
-            </el-row>
-            <el-card v-if="resultData.collocations&&resultData.collocations.length>0" shadow="never" class="mb-md">
-              <template #header><span class="card-title">词伙搭配</span></template>
-              <div class="collocations-grid">
-                <div v-for="c in resultData.collocations" :key="c" class="collocation-item">
-                  <el-icon color="var(--secondary-color)"><Connection /></el-icon>
-                  <span>{{ c }}</span>
-                </div>
-              </div>
-            </el-card>
+
+            <!-- 听力音频 -->
             <el-card shadow="never" class="mb-md">
               <template #header>
                 <div class="flex-between">
-                  <span class="card-title"><el-icon><Headset /></el-icon> 听力音频</span>
+                  <span class="card-title"><el-icon><Headset /></el-icon> 整条剧情听力音频</span>
                   <span v-if="resultData.tts_model" class="text-secondary" style="font-size:12px">模型: {{ resultData.tts_model }}</span>
                 </div>
               </template>
@@ -1968,6 +2226,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 <el-button type="primary" :icon="Headset" :loading="audioLoading" @click="regenerateAudio">{{ resultData.audio_url ? '重新生成' : '生成音频' }}</el-button>
               </div>
             </el-card>
+
             <el-card shadow="never">
               <div class="action-buttons">
                 <el-button :type="resultData.is_favorited?'warning':'default'" :icon="resultData.is_favorited?StarFilled:Star" @click="toggleFavorite">{{ resultData.is_favorited?'已收藏':'收藏' }}</el-button>
@@ -2025,28 +2284,9 @@ const app = createApp({
     }
 
     const currentPage = ref('words')
-    const dailyUsage = ref({ai:0, tts:0, ai_limit:20, tts_limit:50})
+    const dailyUsage = ref({ai:0, tts:0, image:0, ai_limit:20, tts_limit:50, image_limit:50})
 
     // 常量
-    const CONTENT_FORMS = [
-      {value:'dialogue',label:'商务对话'},
-      {value:'email',label:'邮件'},
-      {value:'memo',label:'备忘录'},
-      {value:'report',label:'报告摘要'},
-      {value:'short_narrative',label:'短叙述'},
-    ]
-    const SCENE_TYPES = [
-      {value:'meeting',label:'会议'},{value:'travel',label:'差旅'},
-      {value:'procurement',label:'采购'},{value:'hr',label:'HR'},
-      {value:'finance',label:'财务'},{value:'customer_service',label:'客户服务'},
-      {value:'project_management',label:'项目管理'},{value:'marketing',label:'市场推广'},
-    ]
-    const DIFFICULTY_LEVELS = [
-      {value:'beginner',label:'初级'},{value:'intermediate',label:'中级'},{value:'advanced',label:'高级'},
-    ]
-    const LENGTH_LEVELS = [
-      {value:'short',label:'短篇 (约80词)'},{value:'medium',label:'中篇 (约150词)'},{value:'long',label:'长篇 (约250词)'},
-    ]
     const TTS_MODELS = [
       {value:'qwen-audio-3.0-tts-plus',label:'Qwen-Audio TTS Plus (最佳音质·48kHz·指令控制)',group:'Qwen-Audio-TTS 系列',voices:'loongmary(英音女), loongeva_v3.6(美音女), loongjohn(美音男)'},
       {value:'cosyvoice-v3-plus',label:'CosyVoice v3 Plus (高清音质·音色最丰富)',group:'CosyVoice 系列',voices:'loongandy_v3(美式男), loongbeth_v3(美式女), loongemily_v3(英式女), loongeric_v3(英式男)'},
@@ -2060,6 +2300,19 @@ const app = createApp({
       }
       return groups
     })
+
+    // 文生图模型三档（从后端 /api/image-models 加载）
+    const imageModels = ref([])
+    async function loadImageModels() {
+      try {
+        const res = await api('/api/image-models')
+        imageModels.value = res.models || []
+        // 若当前选中的模型不在列表中，则重置为第一个
+        if (imageModels.value.length && !imageModels.value.find(m => m.value === compileForm.image_model)) {
+          compileForm.image_model = imageModels.value[0].value
+        }
+      } catch(e) { /* 静默失败，下拉为空时用户可见 */ }
+    }
 
     // 单词库
     const wordsData = ref([])
@@ -2084,12 +2337,11 @@ const app = createApp({
     const importing = ref(false)
     const fileInputRef = ref(null)
 
-    // 编译
+    // 编译（剧情连环画）
     const compileWords = ref([])
     const compileForm = reactive({
-      content_form:'dialogue',scene_type:'meeting',difficulty:'intermediate',
-      length_level:'medium',include_translation:true,generate_audio:true,
-      tts_model:'qwen-audio-3.0-tts-plus',
+      panel_count:4, theme_hint:'', image_model:'wan2.7-image',
+      generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
     })
     const compiling = ref(false)
 
@@ -2098,7 +2350,6 @@ const app = createApp({
     const historyTotal = ref(0)
     const historyPage = ref(1)
     const historyLoading = ref(false)
-    const historyFilter = ref('')
 
     // 熟词生意
     const polysemySearch = ref('')
@@ -2111,7 +2362,6 @@ const app = createApp({
     // 结果
     const resultData = ref(null)
     const resultLoading = ref(false)
-    const showZh = ref(true)
     const audioLoading = ref(false)
     const regenerateTtsModel = ref('qwen-audio-3.0-tts-plus')
 
@@ -2122,17 +2372,9 @@ const app = createApp({
       if (isNaN(dt)) return '-'
       return dt.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
     }
-    function contentFormText(v) {
-      const m = {dialogue:'商务对话',email:'邮件',memo:'备忘录',report:'报告摘要',short_narrative:'短叙述'}
-      return m[v]||v
-    }
-    function sceneTypeText(v) {
-      const m = {meeting:'会议',travel:'差旅',procurement:'采购',hr:'HR',finance:'财务',customer_service:'客户服务',project_management:'项目管理',marketing:'市场推广'}
-      return m[v]||v
-    }
-    function difficultyText(v) {
-      const m = {beginner:'初级',intermediate:'中级',advanced:'高级'}
-      return m[v]||v
+    function sceneRoleText(v) {
+      const m = {setup:'起',development:'承',climax:'转',resolution:'合'}
+      return m[v] || v || ''
     }
     function getModelDefaultVoice(model) {
       const map = {
@@ -2141,6 +2383,25 @@ const app = createApp({
         'cosyvoice-v3-flash':'loongandy_v3 (美式英文男)',
       }
       return map[model] || 'loongandy_v3 (美式英文男)'
+    }
+    function getImageModelNote(model) {
+      const m = imageModels.value.find(x => x.value === model)
+      return m ? m.note : ''
+    }
+    function getImageModelPrice(model) {
+      const m = imageModels.value.find(x => x.value === model)
+      return m ? m.price : ''
+    }
+    function highlightPanelWords(sentence, words) {
+      if (!sentence) return ''
+      let text = sentence.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      if (!words || !words.length) return text
+      const sorted = [...words].sort((a,b)=>b.length-a.length)
+      for (const w of sorted) {
+        const re = new RegExp('\\b('+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[a-z]*)\\b','gi')
+        text = text.replace(re, '<span class="word-hit">$1</span>')
+      }
+      return text
     }
 
     // ====== API 请求 ======
@@ -2262,20 +2523,19 @@ const app = createApp({
     // ====== 编译 ======
     async function handleCompile() {
       if (compileWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       compiling.value = true
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
         const res = await api('/api/generate', {method:'POST', body:JSON.stringify({
           words,
-          content_form: compileForm.content_form,
-          scene_type: compileForm.scene_type,
-          difficulty: compileForm.difficulty,
-          length_level: compileForm.length_level,
-          include_translation: compileForm.include_translation,
+          panel_count: compileForm.panel_count,
+          theme_hint: compileForm.theme_hint,
+          image_model: compileForm.image_model,
           generate_audio_immediately: compileForm.generate_audio,
           tts_model: compileForm.tts_model,
         })})
-        ElementPlus.ElMessage.success('编译完成')
+        ElementPlus.ElMessage.success(`编译完成${res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
         resultData.value = res
         regenerateTtsModel.value = res.tts_model || compileForm.tts_model
         currentPage.value = 'result'
@@ -2287,7 +2547,7 @@ const app = createApp({
     async function loadHistory() {
       historyLoading.value = true
       try {
-        const textsRes = await api(`/api/texts?page=${historyPage.value}&content_form=${historyFilter.value||''}`)
+        const textsRes = await api(`/api/texts?page=${historyPage.value}`)
         historyData.value = textsRes.items
         historyTotal.value = textsRes.total
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
@@ -2360,32 +2620,21 @@ const app = createApp({
       if (idx==='polysemy') loadPolysemyHot()
     }
 
-    // ====== 高亮 ======
-    const highlightedResult = computed(() => {
-      if (!resultData.value || !resultData.value.body_en) return ''
-      let text = resultData.value.body_en.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      const allWords = [...(resultData.value.included_words||[]), ...(resultData.value.missing_words||[])]
-      allWords.sort((a,b)=>b.length-a.length)
-      for (const w of allWords) {
-        const re = new RegExp('\\b('+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[a-z]*)\\b','gi')
-        const isHit = (resultData.value.included_words||[]).includes(w)
-        text = text.replace(re, isHit ? '<span class="word-hit">$1</span>' : '<span class="word-miss">$1</span>')
-      }
-      return text
-    })
-
     // ====== 初始化 ======
     onMounted(() => {
       loadWords()
       loadPolysemyHot()
+      loadImageModels()
       // 加载每日用量
       api('/api/health').then(r => {
         if (r && r.daily_usage) {
           dailyUsage.value = {
             ai: r.daily_usage.ai,
             tts: r.daily_usage.tts,
+            image: r.daily_usage.image,
             ai_limit: r.daily_usage.ai_limit,
             tts_limit: r.daily_usage.tts_limit,
+            image_limit: r.daily_usage.image_limit,
           }
         }
       }).catch(()=>{})
@@ -2395,11 +2644,6 @@ const app = createApp({
     watch(wordSearch, () => {
       wordPage.value = 1
       loadWords()
-    })
-
-    watch(historyFilter, () => {
-      historyPage.value = 1
-      loadHistory()
     })
 
     // ====== 图标组件（必须返回，否则模板中 :icon="Search" 等绑定会报错） ======
@@ -2423,22 +2667,21 @@ const app = createApp({
 
     return {
       currentPage, dailyUsage,
-      CONTENT_FORMS, SCENE_TYPES, DIFFICULTY_LEVELS, LENGTH_LEVELS, TTS_MODELS, groupedTtsModels,
+      TTS_MODELS, groupedTtsModels, imageModels,
       wordsData, wordsLoading, wordTotal, wordPage, wordPageSize, wordSearch, selectedWords,
       showAddWordDialog, addWordForm, addWordLoading,
       showNoteDialog, noteWord, noteText, noteLoading,
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
-      historyData, historyTotal, historyPage, historyLoading, historyFilter,
+      historyData, historyTotal, historyPage, historyLoading,
       polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
-      resultData, resultLoading, showZh, audioLoading, regenerateTtsModel,
-      formatDate, contentFormText, sceneTypeText, difficultyText, getModelDefaultVoice,
+      resultData, resultLoading, audioLoading, regenerateTtsModel,
+      formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, editNote, saveNote, submitAddWord, goCompile,
       handleParse, doImport, triggerFileInput, handleFileChange,
       handleCompile, loadHistory, viewResult,
       searchPolysemy, loadPolysemyHot,
       toggleFavorite, regenerateAudio, handleMenuSelect,
-      highlightedResult,
       // 图标组件
       ...Icons,
     }
