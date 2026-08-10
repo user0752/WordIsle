@@ -1,8 +1,11 @@
 @echo off
 cd /d "%~dp0"
 
+set "MODE=cli"
+if /i "%~1"=="gui" set "MODE=gui"
+
 echo ====================================
-echo   TOEIC Start Manager
+echo   TOEIC Start Manager   [%MODE%]
 echo ====================================
 echo.
 
@@ -14,15 +17,6 @@ if not exist "%VENV_PY%" (
     echo Run: py -3.13 -m venv mvp\venv
     echo Then: "%VENV_PY%" -m pip install -r mvp\requirements.txt
     echo.
-    pause
-    exit /b 1
-)
-
-REM check tkinter
-"%VENV_PY%" -c "import tkinter" 2>nul
-if errorlevel 1 (
-    echo [ERROR] venv missing tkinter
-    echo Rebuild: rmdir /s /q mvp\venv ^&^& py -3.13 -m venv mvp\venv
     pause
     exit /b 1
 )
@@ -40,20 +34,19 @@ if errorlevel 1 (
     )
 )
 
-REM check manager deps
-"%VENV_PY%" -c "import tkinter,json,queue,re,subprocess,threading,time,urllib.request,webbrowser,pathlib; from tkinter import filedialog,messagebox,scrolledtext,ttk" 2>nul
-if errorlevel 1 (
-    echo [ERROR] manager missing stdlib modules, check Python installation
-    pause
-    exit /b 1
+if "%MODE%"=="gui" (
+    REM check tkinter
+    "%VENV_PY%" -c "import tkinter" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] venv missing tkinter
+        echo Rebuild: rmdir /s /q mvp\venv ^&^& py -3.13 -m venv mvp\venv
+        pause
+        exit /b 1
+    )
+    "%VENV_PY%" manager.py
+) else (
+    "%VENV_PY%" manager.py --cli
 )
-
-echo Venv: %VENV_PY%
-echo Starting manager GUI...
-echo Close the GUI window, then press any key to exit.
-echo.
-
-"%VENV_PY%" manager.py
 
 echo.
 echo [INFO] Manager exited (code: %ERRORLEVEL%)

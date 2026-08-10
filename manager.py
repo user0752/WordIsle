@@ -6,7 +6,9 @@ TOEIC 启动管理器
 - 周期性健康检查，监控前端 + 后端 API 状态
 - 日志搜索、过滤、清空、保存到文件
 
-启动: python manager.py   （或双击 manager.bat）
+启动:
+  终端模式 (默认) : python manager.py --cli   （或双击 manager.bat）
+  GUI 模式        : python manager.py          （或运行 manager.bat gui）
 """
 
 import json
@@ -168,6 +170,106 @@ def check_health():
         return None
 
 
+def read_env_keys():
+    """读取 .env 中的关键密钥是否已设置（不泄露值）。"""
+    values = {}
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    values[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return [
+        ("DeepSeek", bool(values.get("DEEPSEEK_API_KEY"))),
+        ("TTS", bool(values.get("TTS_API_KEY"))),
+        ("文生图", bool(values.get("IMAGE_API_KEY") or values.get("TTS_API_KEY"))),
+    ]
+
+
+def build_self_check_report(svc) -> list[tuple[str, str]]:
+    """执行一次性自检，返回 [(level, message), ...] 报告（GUI / CLI 共用）。"""
+    report: list[tuple[str, str]] = []
+
+    def add(level, msg):
+        report.append((level, msg))
+
+    add("INFO", f"Python 解释器: {svc.python_exe}")
+    try:
+        r = subprocess.run(
+            [svc.python_exe, "-c", "import sys; print(sys.version.split()[0])"],
+            capture_output=True, text=True, timeout=5,
+        )
+        add("INFO", f"Python 版本: {r.stdout.strip() or '未知'}")
+    except Exception as e:
+        add("WARNING", f"Python 版本读取失败: {e}")
+
+    code = ("import importlib.util; "
+            "mods=['fastapi','uvicorn','httpx','dotenv','dashscope']; "
+            "print(','.join(m for m in mods if importlib.util.find_spec(m) is None))")
+    try:
+        r = subprocess.run([svc.python_exe, "-c", code],
+                           capture_output=True, text=True, timeout=5)
+        missing = [m for m in r.stdout.strip().split(",") if m]
+        if missing:
+            add("ERROR", f"缺少依赖模块: {', '.join(missing)}")
+        else:
+            add("INFO", "依赖模块: fastapi / uvicorn / httpx / dotenv / dashscope 全部可用")
+    except Exception as e:
+        add("ERROR", f"依赖检测失败: {e}")
+
+    if MAIN_PY.exists():
+        add("INFO", f"主程序 main.py: 存在 ({MAIN_PY.name})")
+    else:
+        add("ERROR", f"主程序 main.py: 不存在 ({MAIN_PY})")
+
+    if ENV_FILE.exists():
+        add("INFO", f".env 配置文件: 存在 ({ENV_FILE.name})")
+        for label, ok in read_env_keys():
+            add("INFO" if ok else "WARNING", f"{label} 密钥: {'已配置' if ok else '未配置'}")
+    else:
+        add("WARNING", f".env 配置文件: 不存在（可点击「编辑 .env」从示例复制）")
+
+    db_path = MVP_DIR / "data" / "words.db"
+    if db_path.exists():
+        add("INFO", f"数据库 words.db: 存在 ({db_path.name})")
+    else:
+        add("WARNING", "数据库 words.db: 不存在（首次启动服务时自动创建）")
+
+    if svc.is_running:
+        add("INFO", f"服务进程: 运行中 (PID={svc.pid})")
+    else:
+        add("WARNING", "服务进程: 未运行（请点击「启动」）")
+
+    fe_ok = check_url(BASE_URL, timeout=1.0)
+    add("INFO" if fe_ok else "ERROR",
+        f"前端 {BASE_URL}: {'可访问' if fe_ok else '不可访问'}")
+
+    health = check_health() if fe_ok else None
+    if health:
+        add("INFO", "后端 /api/health: 正常")
+        add("INFO" if health.get("db") else "WARNING",
+            f"数据库: {'正常' if health.get('db') else '缺失'}")
+        add("INFO" if health.get("deepseek_key") else "WARNING",
+            f"DeepSeek: {'已配置' if health.get('deepseek_key') else '未配置'}")
+        add("INFO" if health.get("tts_key") else "WARNING",
+            f"TTS: {'已配置' if health.get('tts_key') else '未配置'}")
+        add("INFO" if health.get("image_key") else "WARNING",
+            f"文生图: {'已配置' if health.get('image_key') else '未配置'}")
+        usage = health.get("daily_usage", {})
+        if usage:
+            add("INFO",
+                f"今日用量: AI {usage.get('ai', 0)}/{usage.get('ai_limit', 0)} · "
+                f"TTS {usage.get('tts', 0)}/{usage.get('tts_limit', 0)} · "
+                f"图片 {usage.get('image', 0)}/{usage.get('image_limit', 0)}")
+    else:
+        add("ERROR", "后端 /api/health: 不可访问（服务未启动或端口异常）")
+
+    return report
+
+
 # ========================================================================
 # 服务管理
 # ========================================================================
@@ -306,12 +408,14 @@ class ManagerApp:
         self._rendered_count = 0
         self._full_rebuild = True   # 首次完整重绘
 
-        # 健康检查开关
-        self._health_check_enabled = False
+        # 手动自检进行中标记
+        self._self_checking = False
 
         self._setup_style()
         self._build_ui()
         self._poll_log_queue()
+        # 前后端状态常驻监测（自检按钮只做日志诊断，不影响状态显示）
+        self._schedule_health_check()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------- 样式 ----------
@@ -430,14 +534,14 @@ class ManagerApp:
         self.lbl_be = tk.Label(be, text="●  离线", bg=C["card"],
                                fg=C["muted"], font=FONT_UI)
         self.lbl_be.pack(anchor="w")
-        self.lbl_keys = tk.Label(be, text="DeepSeek: ?    TTS: ?",
+        self.lbl_keys = tk.Label(be, text="DeepSeek: ?    TTS: ?    Image: ?",
                                  bg=C["card"], fg=C["muted"], font=FONT_UI)
         self.lbl_keys.pack(anchor="w")
 
-        # 自检开关按钮
+        # 自检按钮（一次性诊断，结果写入下方日志）
         self.btn_health = ttk.Button(
             svc_row, text="▶  自检", style="Primary.TButton",
-            command=self._toggle_health_check, width=12,
+            command=self._run_self_check, width=12,
         )
         self.btn_health.pack(side="right", padx=(10, 0))
 
@@ -538,8 +642,11 @@ class ManagerApp:
             self.btn_stop.state(["disabled"])
 
     def _log_system(self, msg: str):
+        self._log_line("INFO", msg)
+
+    def _log_line(self, level: str, msg: str):
         ts = datetime.now().strftime("%H:%M:%S")
-        self.log_lines.append((ts, "INFO", msg))
+        self.log_lines.append((ts, level, msg))
         self._render_logs()
 
     def clear_logs(self):
@@ -648,27 +755,30 @@ class ManagerApp:
         except Exception as e:
             messagebox.showerror("保存失败", str(e), parent=self.root)
 
-    # ---------- 健康检查开关（后台线程，不阻塞 UI） ----------
-    def _toggle_health_check(self):
-        """切换自检开关。"""
-        self._health_check_enabled = not self._health_check_enabled
-        if self._health_check_enabled:
-            self.btn_health.config(text="■  自检", style="Danger.TButton")
-            self._log_system("健康检查已开启")
-            self._schedule_health_check()
-        else:
-            self.btn_health.config(text="▶  自检", style="Primary.TButton")
-            self._log_system("健康检查已关闭")
-            self.fe_ok = False
-            self.be_ok = False
-            self.health_data = None
-            self._update_service_status()
+    # ---------- 手动自检（仅输出到下方日志，不影响常驻状态显示） ----------
+    def _run_self_check(self):
+        """执行一次手动自检：环境 + 服务连通性，结果写入日志面板。"""
+        if self._self_checking:
+            return
+        self._self_checking = True
+        self.btn_health.config(state="disabled")
+        self._log_line("INFO", "--- 自检开始 ---")
+        threading.Thread(target=self._self_check_worker, daemon=True).start()
+
+    def _self_check_worker(self):
+        """后台线程执行各项检查，结果收集后推回主线程写入日志。"""
+        report = build_self_check_report(self.svc)
+        self.root.after(0, self._apply_self_check_result, report)
+
+    def _apply_self_check_result(self, report):
+        """主线程：把自检报告逐行写入日志面板。"""
+        for level, msg in report:
+            self._log_line(level, msg)
+        self.btn_health.config(state="normal")
+        self._self_checking = False
 
     def _schedule_health_check(self):
-        """调度一次健康检查。开关关闭时不执行。"""
-        if not self._health_check_enabled:
-            return
-
+        """调度一次健康检查（常驻运行，前后端状态始终显示）。"""
         # 主线程快速处理进程状态变化
         if self.svc.process is not None and self.svc.process.poll() is not None:
             self.svc.process = None
@@ -703,16 +813,9 @@ class ManagerApp:
         self.be_ok = be_ok
         self.health_data = health_data
         self._update_service_status()
-        if self._health_check_enabled:
-            self.root.after(2000, self._schedule_health_check)
+        self.root.after(2000, self._schedule_health_check)
 
     def _update_service_status(self):
-        if not self._health_check_enabled:
-            self.lbl_fe.config(text="●  未检测", fg=C["muted"])
-            self.lbl_be.config(text="●  未检测", fg=C["muted"])
-            self.lbl_keys.config(text="DeepSeek: ?    TTS: ?")
-            return
-
         if self.fe_ok:
             self.lbl_fe.config(text="●  已就绪", fg=C["green"])
         else:
@@ -722,13 +825,15 @@ class ManagerApp:
             self.lbl_be.config(text="●  已就绪", fg=C["green"])
             ds  = self.health_data.get("deepseek_key", False)
             tts = self.health_data.get("tts_key", False)
+            img = self.health_data.get("image_key", False)
             self.lbl_keys.config(
                 text=f"DeepSeek: {'✓ 已配置' if ds else '✗ 未配置'}    "
-                     f"TTS: {'✓ 已配置' if tts else '✗ 未配置'}"
+                     f"TTS: {'✓ 已配置' if tts else '✗ 未配置'}    "
+                     f"Image: {'✓ 已配置' if img else '✗ 未配置'}"
             )
         else:
             self.lbl_be.config(text="●  离线", fg=C["muted"])
-            self.lbl_keys.config(text="DeepSeek: ?    TTS: ?")
+            self.lbl_keys.config(text="DeepSeek: ?    TTS: ?    Image: ?")
 
     # ---------- 工具按钮 ----------
     def open_browser(self):
@@ -777,10 +882,206 @@ class ManagerApp:
 
 
 # ========================================================================
+# 终端交互模式 (--cli)
+# ========================================================================
+
+ANSI = {
+    "RESET":   "\033[0m",
+    "DIM":     "\033[2m",
+    "TIME":    "\033[2m\033[37m",
+    "MUTED":   "\033[2m\033[90m",
+    "INFO":    "\033[37m",
+    "WARNING": "\033[33m",
+    "ERROR":   "\033[31m",
+    "DEBUG":   "\033[90m",
+    "GREEN":   "\033[32m",
+    "CYAN":    "\033[36m",
+}
+
+
+def _cli_emit(level: str, line: str):
+    """按级别着色输出一行日志。"""
+    color = ANSI.get(level, ANSI["INFO"])
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"{ANSI['TIME']}[{ts}]{ANSI['RESET']} {color}{level:<8s}{ANSI['RESET']} {line}",
+          flush=True)
+
+
+def _cli_drain(svc: ServiceManager):
+    """把服务日志队列中的新行全部输出。"""
+    while True:
+        try:
+            ts, level, line = svc.log_queue.get_nowait()
+        except queue.Empty:
+            return
+        _cli_emit(level, line)
+
+
+def _cli_key_listener(key_queue: queue.Queue, done: threading.Event):
+    """单键输入监听（Windows: msvcrt 无回显；其他平台: input 回车确认）。"""
+    if sys.platform == "win32":
+        import msvcrt
+        while not done.is_set():
+            try:
+                ch = msvcrt.getwch()
+            except Exception:
+                break
+            key_queue.put(ch.lower())
+    else:
+        while not done.is_set():
+            try:
+                ch = input()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if ch:
+                key_queue.put(ch[0].lower())
+
+
+def run_cli():
+    """终端交互模式：tail -f 滚动日志 + 单键命令。"""
+    if sys.platform == "win32":
+        os.system("")  # 启用 Windows 控制台 ANSI 转义序列
+
+    svc = ServiceManager()
+    key_queue: queue.Queue = queue.Queue()
+    done = threading.Event()
+    state = {"fe": False, "be": False, "health": None, "checking": False}
+    last_status = 0.0
+
+    def status_line():
+        if svc.is_running:
+            core = (f"{ANSI['GREEN']}● 运行中{ANSI['RESET']} "
+                    f"PID={svc.pid} 运行={svc.uptime}")
+        else:
+            core = f"{ANSI['MUTED']}● 未运行{ANSI['RESET']} PID=- 运行=00:00:00"
+        fe = (f"{ANSI['GREEN']}已就绪{ANSI['RESET']}" if state["fe"]
+              else f"{ANSI['MUTED']}离线{ANSI['RESET']}")
+        be = (f"{ANSI['GREEN']}已就绪{ANSI['RESET']}" if state["be"]
+              else f"{ANSI['MUTED']}离线{ANSI['RESET']}")
+        h = state["health"] or {}
+        if state["be"]:
+            keys = (f"DeepSeek={'✓' if h.get('deepseek_key') else '✗'}    "
+                    f"TTS={'✓' if h.get('tts_key') else '✗'}    "
+                    f"Image={'✓' if h.get('image_key') else '✗'}")
+        else:
+            keys = "DeepSeek: ?    TTS: ?    Image: ?"
+        print(f"{ANSI['CYAN']}── {core} | 前端={fe} 后端={be} | {keys}{ANSI['RESET']}",
+              flush=True)
+
+    def banner():
+        print()
+        print("=" * 60)
+        print("  TOEIC 启动管理器 (CLI)")
+        print("=" * 60)
+        print(f"  前端: {BASE_URL}")
+        print(f"  Python: {Path(svc.python_exe).name}")
+        print()
+        print("  按键: [s]启动  [x]停止  [r]重启  [c]自检  [b]浏览器  [q]退出")
+        print("  GUI 模式: 运行 manager.bat gui")
+        print()
+
+    def do_start():
+        ok, msg = svc.start()
+        _cli_emit("INFO", msg)
+        if ok:
+            _cli_emit("INFO", f"访问地址: {BASE_URL}")
+        status_line()
+
+    def do_stop():
+        ok, msg = svc.stop()
+        _cli_emit("INFO", msg)
+        status_line()
+
+    def do_restart():
+        ok, msg = svc.restart()
+        _cli_emit("INFO", msg)
+        if ok:
+            _cli_emit("INFO", "--- 重启完成 ---")
+        status_line()
+
+    def do_check():
+        if state["checking"]:
+            return
+        state["checking"] = True
+
+        def worker():
+            try:
+                _cli_emit("INFO", "--- 自检开始 ---")
+                for level, msg in build_self_check_report(svc):
+                    _cli_emit(level, msg)
+                _cli_emit("INFO", "--- 自检完成 ---")
+            finally:
+                state["checking"] = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def do_quit():
+        done.set()
+
+    keys = {
+        "s": do_start,
+        "x": do_stop,
+        "r": do_restart,
+        "c": do_check,
+        "b": lambda: webbrowser.open(BASE_URL),
+        "q": do_quit,
+    }
+
+    def health_loop():
+        while not done.is_set():
+            fe = check_url(BASE_URL, timeout=1.0)
+            health = check_health() if fe else None
+            state["fe"] = fe
+            state["be"] = health is not None
+            state["health"] = health
+            time.sleep(5)
+
+    banner()
+    threading.Thread(target=health_loop, daemon=True).start()
+    threading.Thread(target=_cli_key_listener, args=(key_queue, done),
+                     daemon=True).start()
+
+    try:
+        while not done.is_set():
+            try:
+                while True:
+                    ch = key_queue.get_nowait()
+                    action = keys.get(ch)
+                    if action:
+                        action()
+            except queue.Empty:
+                pass
+
+            # 服务进程意外退出时同步状态
+            if svc.process is not None and svc.process.poll() is not None:
+                svc.process = None
+                svc.start_time = None
+
+            now = time.time()
+            if now - last_status >= 5.0:
+                status_line()
+                last_status = now
+
+            _cli_drain(svc)
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        done.set()
+        if svc.is_running:
+            _cli_emit("INFO", "关闭管理器，停止服务...")
+            svc.stop()
+        print("已退出")
+
+
+# ========================================================================
 # 入口
 # ========================================================================
 
 def main():
+    if "--cli" in sys.argv:
+        run_cli()
+        return
     try:
         app = ManagerApp(tk.Tk())
         app.root.mainloop()
