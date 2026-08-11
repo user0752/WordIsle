@@ -152,10 +152,22 @@ def find_python() -> str:
     return sys.executable
 
 
+# manager 发的健康检查请求用这个特殊 query 打标，后面会把后端对应的 access log 过滤掉，不污染用户视图
+_INTERNAL_MARK = "from_manager=1"
+
+
+def _tag(url: str) -> str:
+    """给 URL 附加 from_manager=1（保留已有的 query）。"""
+    if not url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{_INTERNAL_MARK}"
+
+
 def check_url(url: str, timeout: float = 1.5) -> bool:
     try:
         with httpx.Client(timeout=timeout) as c:
-            r = c.get(url)
+            r = c.get(_tag(url))
             return r.status_code == 200
     except Exception:
         return False
@@ -164,10 +176,155 @@ def check_url(url: str, timeout: float = 1.5) -> bool:
 def check_health():
     try:
         with httpx.Client(timeout=1.5) as c:
-            r = c.get(f"{BASE_URL}/api/health")
+            r = c.get(_tag(f"{BASE_URL}/api/health"))
             return r.json() if r.status_code == 200 else None
     except Exception:
         return None
+
+
+# ========================================================================
+# 日志过滤（屏蔽 manager 自身健康检查产生的后端 access log）
+# ========================================================================
+
+# 匹配 uvicorn 默认的 access log 行，形如:
+#   INFO:     127.0.0.1:53675 - "GET /api/health?from_manager=1 HTTP/1.1" 200 OK
+#   INFO:     127.0.0.1:53675 - "GET /?from_manager=1 HTTP/1.1" 200 OK
+_UvicornAccess_RE = re.compile(
+    r'^INFO:\s+\S+\s+-\s+"(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+'
+    r'[^"]*\?' + re.escape(_INTERNAL_MARK) + r'(?:\s|&|")[^"]*"\s+\d+'
+)
+
+
+def _is_internal_access_log(line: str) -> bool:
+    """返回 True 表示这行是 manager 自己健康检查产生的噪音，应过滤不输出。"""
+    if not line:
+        return False
+    # 快速路径：不包含打标字符串就直接放行
+    if _INTERNAL_MARK not in line:
+        return False
+    return bool(_UvicornAccess_RE.search(line)) or (
+        # 兜底：只要是带 from_manager=1 的 HTTP 请求行（非标准 format 也能覆盖）
+        '"GET ' in line and _INTERNAL_MARK in line and ('" 200 OK' in line or '"HTTP/' in line)
+    )
+
+
+# ========================================================================
+# 端口占用检测与清理（Windows 优先用 netstat/taskkill）
+# ========================================================================
+
+def find_port_pids(port: int) -> list[int]:
+    """返回所有在指定端口处于 LISTENING 状态的进程 PID。"""
+    if sys.platform == "win32":
+        try:
+            # 用 -ano 输出 PID，避免 findstr 多端口复合查询的误判
+            r = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids: list[int] = []
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # 类似: TCP    0.0.0.0:8000    0.0.0.0:0    LISTENING    12345
+                parts = line.split()
+                if len(parts) < 5:
+                    continue
+                if parts[0] not in ("TCP", "UDP"):
+                    continue
+                local = parts[1]
+                # local 可能是 0.0.0.0:8000 / [::]:8000
+                if not local.endswith(f":{port}"):
+                    continue
+                state = parts[-2] if len(parts) >= 5 else ""
+                pid_str = parts[-1]
+                # UDP 没有 LISTENING 状态列；TCP 必须是 LISTENING
+                if parts[0] == "TCP" and state.upper() != "LISTENING":
+                    continue
+                try:
+                    pid = int(pid_str)
+                    if pid > 0 and pid not in pids:
+                        pids.append(pid)
+                except ValueError:
+                    continue
+            return pids
+        except Exception:
+            return []
+    else:
+        try:
+            r = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode != 0:
+                return []
+            return [int(p) for p in r.stdout.split() if p.strip()]
+        except Exception:
+            return []
+
+
+def _kill_pids_win(pids: list[int]) -> int:
+    """taskkill 一组 PID（带 /F /T），返回被成功处理的数量。"""
+    killed = 0
+    for pid in pids:
+        try:
+            r = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0 or (r.stdout and "PID" in r.stdout):
+                killed += 1
+        except Exception:
+            pass
+    return killed
+
+
+def _kill_pids_posix(pids: list[int]) -> int:
+    killed = 0
+    import signal
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed += 1
+        except Exception:
+            pass
+    return killed
+
+
+def kill_pids(pids: list[int]) -> int:
+    if not pids:
+        return 0
+    if sys.platform == "win32":
+        return _kill_pids_win(pids)
+    return _kill_pids_posix(pids)
+
+
+def free_port(port: int, exclude_pid: int | None = None) -> tuple[int, list[int]]:
+    """释放端口：查出占用 PID → 杀掉（排除 exclude_pid）。
+    返回 (杀掉数量, 被 kill 的 pid 列表)。"""
+    pids = find_port_pids(port)
+    if exclude_pid is not None and exclude_pid in pids:
+        pids = [p for p in pids if p != exclude_pid]
+    killed = kill_pids(pids)
+    # 给操作系统一点回收时间
+    if pids:
+        time.sleep(0.8)
+        # 再次确认，顽固进程再补一次
+        remaining = find_port_pids(port)
+        if exclude_pid is not None and exclude_pid in remaining:
+            remaining = [p for p in remaining if p != exclude_pid]
+        if remaining:
+            killed += kill_pids(remaining)
+            pids += remaining
+            time.sleep(0.5)
+    return killed, pids
+
+
+def is_port_occupied(port: int, exclude_pid: int | None = None) -> bool:
+    pids = find_port_pids(port)
+    if exclude_pid is not None:
+        pids = [p for p in pids if p != exclude_pid]
+    return bool(pids)
 
 
 def read_env_keys():
@@ -292,6 +449,18 @@ class ServiceManager:
         return self.process.pid if self.is_running else None
 
     @property
+    def port_occupied_externally(self) -> bool:
+        """端口是否被外部（非当前管理进程）占用。"""
+        return is_port_occupied(PORT, exclude_pid=self.pid)
+
+    @property
+    def external_port_pids(self) -> list[int]:
+        pids = find_port_pids(PORT)
+        if self.pid is not None and self.pid in pids:
+            pids = [p for p in pids if p != self.pid]
+        return pids
+
+    @property
     def uptime(self) -> str:
         if not self.start_time or not self.is_running:
             return "00:00:00"
@@ -305,6 +474,21 @@ class ServiceManager:
             return False, "服务已在运行"
         if not MAIN_PY.exists():
             return False, f"找不到主程序: {MAIN_PY}"
+        # 启动前清理端口上的外部残留进程（uvicorn 子进程常残留导致 10048）
+        messages: list[str] = []
+        if self.port_occupied_externally:
+            ext_pids = self.external_port_pids
+            killed, killed_pids = free_port(PORT, exclude_pid=self.pid)
+            if killed:
+                messages.append(
+                    f"检测到端口 {PORT} 被外部占用 (PID={','.join(map(str, ext_pids))})，"
+                    f"已清理 {killed} 个进程"
+                )
+            elif is_port_occupied(PORT, exclude_pid=self.pid):
+                return False, (
+                    f"端口 {PORT} 仍被占用 (PID="
+                    f"{','.join(map(str, self.external_port_pids))})，启动前请手动释放"
+                )
         self._stopping = False
         try:
             flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
@@ -321,11 +505,14 @@ class ServiceManager:
                 env=self._build_env(),
             )
         except Exception as e:
-            return False, f"启动失败: {e}"
+            return False, "；".join(messages + [f"启动失败: {e}"]) if messages else f"启动失败: {e}"
         self.start_time = time.time()
         self.reader = threading.Thread(target=self._read_loop, daemon=True)
         self.reader.start()
-        return True, f"服务启动中... PID={self.process.pid}"
+        msg = f"服务启动中... PID={self.process.pid}"
+        if messages:
+            msg = "；".join(messages) + "；" + msg
+        return True, msg
 
     def _build_env(self):
         env = os.environ.copy()
@@ -341,6 +528,9 @@ class ServiceManager:
                 line = line.rstrip("\r\n")
                 if not line:
                     continue
+                # 过滤 manager 自身健康检查产生的 uvicorn access log，不污染用户日志视图
+                if _is_internal_access_log(line):
+                    continue
                 ts = datetime.now().strftime("%H:%M:%S")
                 self.log_queue.put((ts, detect_level(line), line))
         except Exception as e:
@@ -352,35 +542,67 @@ class ServiceManager:
                                 "INFO", f"--- 进程退出 (code={code}) ---"))
 
     def stop(self):
-        if not self.is_running:
-            return False, "服务未运行"
         self._stopping = True
-        pid = self.process.pid
-        try:
-            if sys.platform == "win32":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
-                               capture_output=True)
-            else:
-                import signal
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except Exception as e:
-            return False, f"停止失败: {e}"
-        try:
-            self.process.wait(timeout=5)
-        except Exception:
+        messages: list[str] = []
+        our_pid: int | None = None
+
+        # 1) 先停自己管理的进程
+        if self.is_running:
+            our_pid = self.process.pid
             try:
-                self.process.kill()
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(our_pid)],
+                                   capture_output=True, timeout=6)
+                else:
+                    import signal
+                    os.killpg(os.getpgid(our_pid), signal.SIGTERM)
+            except Exception as e:
+                messages.append(f"停止主进程异常: {e}")
+            try:
+                self.process.wait(timeout=5)
             except Exception:
-                pass
-        self.process = None
-        self.start_time = None
-        return True, "服务已停止"
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+            self.start_time = None
+        else:
+            our_pid = None
+
+        # 2) 兜底：只要端口还有占用（无论是外部残留还是子进程脱离），都强制清理
+        #    这样用户按 x 时，即使显示"PID=-"但端口被占着，也能真正停掉服务
+        ext_before = find_port_pids(PORT)
+        if our_pid is not None and our_pid in ext_before:
+            ext_before = [p for p in ext_before if p != our_pid]
+        # 等待 500ms 让 taskkill /T 有机会清理子进程
+        time.sleep(0.5)
+        killed, killed_pids = free_port(PORT, exclude_pid=None)
+
+        # 组装返回信息：用户感知上，"停止"就是让 8000 不再被占，不管之前是谁的进程
+        if not messages and our_pid is None and not killed:
+            return False, "服务未运行（端口空闲）"
+        if killed:
+            messages.append(
+                f"已清理占用端口 {PORT} 的 {killed} 个残留进程 "
+                f"(PID={','.join(map(str, killed_pids))})"
+            )
+        if our_pid is not None:
+            messages.insert(0, f"已停止主进程 (PID={our_pid})")
+        return True, "；".join(messages) if messages else "服务已停止"
 
     def restart(self):
-        if self.is_running:
-            self.stop()
-            time.sleep(0.5)
-        return self.start()
+        # restart 语义等价于"强制把 8000 空出来 → 再启动"，即使 is_running=False
+        stopped_ok, stopped_msg = self.stop()
+        # stop 失败不阻塞启动流程，留给 start() 内的 free_port 兜底
+        time.sleep(0.6)
+        started_ok, started_msg = self.start()
+        # 组合 stop + start 的提示，便于用户看到全貌
+        if stopped_ok and not started_ok:
+            return False, f"{stopped_msg}；但启动失败: {started_msg}"
+        if stopped_ok and started_ok:
+            return True, f"{stopped_msg}；{started_msg}"
+        return started_ok, f"{stopped_msg}；{started_msg}"
 
 
 # ========================================================================
@@ -630,16 +852,37 @@ class ManagerApp:
         self._update_running_ui(ok)
 
     def _update_running_ui(self, running: bool):
+        """按钮点击后的临时 UI 更新（长期状态由 _refresh_overall_status 周期刷新）。"""
+        self._refresh_overall_status()
+
+    def _refresh_overall_status(self):
+        """综合进程状态 + 端口占用情况，刷新顶部圆点/按钮 enable 状态/前后端文字。"""
+        running = self.svc.is_running
+        external = (not running) and self.svc.port_occupied_externally and self.fe_ok
+
         if running:
             self.dot_status.config(fg=C["green"])
             self.lbl_status.config(text="运行中")
             self.btn_start.state(["disabled"])
             self.btn_stop.state(["!disabled"])
+            self.lbl_pid.config(text=f"PID: {self.svc.pid}")
+            self.lbl_uptime.config(text=f"运行: {self.svc.uptime}")
+        elif external:
+            ext_pids = self.svc.external_port_pids
+            pids_str = ",".join(map(str, ext_pids)) if ext_pids else "?"
+            self.dot_status.config(fg=C["yellow"])
+            self.lbl_status.config(text=f"外部占用(端口PID {pids_str})")
+            self.btn_start.state(["!disabled"])
+            self.btn_stop.state(["!disabled"])  # 允许点停止来清理外部占用
+            self.lbl_pid.config(text="PID: -")
+            self.lbl_uptime.config(text="运行: 00:00:00")
         else:
             self.dot_status.config(fg=C["muted"])
             self.lbl_status.config(text="未运行")
             self.btn_start.state(["!disabled"])
             self.btn_stop.state(["disabled"])
+            self.lbl_pid.config(text="PID: -")
+            self.lbl_uptime.config(text="运行: 00:00:00")
 
     def _log_system(self, msg: str):
         self._log_line("INFO", msg)
@@ -783,12 +1026,16 @@ class ManagerApp:
         if self.svc.process is not None and self.svc.process.poll() is not None:
             self.svc.process = None
             self.svc.start_time = None
-            self._update_running_ui(False)
 
-        if self.svc.is_running:
-            self.lbl_pid.config(text=f"PID: {self.svc.pid}")
-            self.lbl_uptime.config(text=f"运行: {self.svc.uptime}")
-            # 后台线程做 HTTP 检查
+        running = self.svc.is_running
+        # 只要自己在跑，或者外部进程可能占着端口 → 就做 HTTP 检查
+        need_http_check = running or self.svc.port_occupied_externally
+
+        self._refresh_overall_status()
+        if need_http_check:
+            if running:
+                self.lbl_pid.config(text=f"PID: {self.svc.pid}")
+                self.lbl_uptime.config(text=f"运行: {self.svc.uptime}")
             threading.Thread(target=self._health_check_worker, daemon=True).start()
         else:
             self.lbl_pid.config(text="PID: -")
@@ -797,6 +1044,7 @@ class ManagerApp:
             self.be_ok = False
             self.health_data = None
             self._update_service_status()
+            self._refresh_overall_status()
             # 服务未运行 → 5 秒后再查
             self.root.after(5000, self._schedule_health_check)
 
@@ -813,16 +1061,36 @@ class ManagerApp:
         self.be_ok = be_ok
         self.health_data = health_data
         self._update_service_status()
-        self.root.after(2000, self._schedule_health_check)
+        self._refresh_overall_status()
+        # 自己正在跑 → 2s 轮询；只是外部占用 → 5s 轮询即可
+        interval = 2000 if self.svc.is_running else 5000
+        self.root.after(interval, self._schedule_health_check)
 
     def _update_service_status(self):
-        if self.fe_ok:
+        running = self.svc.is_running
+        external = (not running) and self.svc.port_occupied_externally and self.fe_ok
+
+        # 前端状态
+        if running and self.fe_ok:
             self.lbl_fe.config(text="●  已就绪", fg=C["green"])
+        elif external and self.fe_ok:
+            self.lbl_fe.config(text="●  占用就绪(外部)", fg=C["yellow"])
         else:
             self.lbl_fe.config(text="●  离线", fg=C["muted"])
 
-        if self.be_ok and self.health_data:
+        # 后端状态 + 密钥
+        if running and self.be_ok and self.health_data:
             self.lbl_be.config(text="●  已就绪", fg=C["green"])
+            ds  = self.health_data.get("deepseek_key", False)
+            tts = self.health_data.get("tts_key", False)
+            img = self.health_data.get("image_key", False)
+            self.lbl_keys.config(
+                text=f"DeepSeek: {'✓ 已配置' if ds else '✗ 未配置'}    "
+                     f"TTS: {'✓ 已配置' if tts else '✗ 未配置'}    "
+                     f"Image: {'✓ 已配置' if img else '✗ 未配置'}"
+            )
+        elif external and self.be_ok and self.health_data:
+            self.lbl_be.config(text="●  占用就绪(外部)", fg=C["yellow"])
             ds  = self.health_data.get("deepseek_key", False)
             tts = self.health_data.get("tts_key", False)
             img = self.health_data.get("image_key", False)
@@ -946,18 +1214,67 @@ def run_cli():
     key_queue: queue.Queue = queue.Queue()
     done = threading.Event()
     state = {"fe": False, "be": False, "health": None, "checking": False}
-    last_status = 0.0
 
-    def status_line():
-        if svc.is_running:
+    # 去重：状态签名不变就不重复打印状态行（仍保留 60s 心跳兜底打印一次）
+    last_status = 0.0
+    _last_status_sig: str | None = None
+    _last_status_printed_at = 0.0
+    _FORCED_INTERVAL = 60.0  # 即使状态不变，至少每 60s 打印一次
+
+    def _make_status_sig() -> str:
+        """生成当前状态的签名（用于判断是否需要刷新状态行）。
+        uptime 只取到分钟粒度，避免每秒都变。"""
+        running = svc.is_running
+        external = (not running) and svc.port_occupied_externally and state["fe"]
+        h = state["health"] or {}
+        uptime_min = svc.uptime[:5] if running else "00:00"
+        return (
+            f"{int(running)}|{svc.pid or '-'}|{uptime_min}|"
+            f"{int(external)}|{int(state['fe'])}|{int(state['be'])}|"
+            f"{int(bool(h.get('deepseek_key')))}|{int(bool(h.get('tts_key')))}|"
+            f"{int(bool(h.get('image_key')))}"
+        )
+
+    def status_line(force: bool = False):
+        nonlocal _last_status_sig, _last_status_printed_at
+        sig = _make_status_sig()
+        now = time.time()
+        # 状态没变化，又没强制，且没到心跳时间 → 跳过，不刷屏
+        if (not force
+                and sig == _last_status_sig
+                and (now - _last_status_printed_at) < _FORCED_INTERVAL):
+            return
+
+        running = svc.is_running
+        # 外部占用：自己进程没跑，但端口有 LISTENING 进程且健康检查能通
+        external = (not running) and svc.port_occupied_externally and state["fe"]
+
+        if running:
             core = (f"{ANSI['GREEN']}● 运行中{ANSI['RESET']} "
                     f"PID={svc.pid} 运行={svc.uptime}")
+        elif external:
+            ext_pids = svc.external_port_pids
+            pids_str = ",".join(map(str, ext_pids)) if ext_pids else "?"
+            core = (f"{ANSI['WARNING']}● 外部占用{ANSI['RESET']} "
+                    f"PID=- 运行=00:00:00 端口占用PID={pids_str}")
         else:
             core = f"{ANSI['MUTED']}● 未运行{ANSI['RESET']} PID=- 运行=00:00:00"
-        fe = (f"{ANSI['GREEN']}已就绪{ANSI['RESET']}" if state["fe"]
-              else f"{ANSI['MUTED']}离线{ANSI['RESET']}")
-        be = (f"{ANSI['GREEN']}已就绪{ANSI['RESET']}" if state["be"]
-              else f"{ANSI['MUTED']}离线{ANSI['RESET']}")
+
+        # 前端/后端状态着色：区分「自己运行中就绪 / 外部进程占用 / 离线」
+        if running and state["fe"]:
+            fe = f"{ANSI['GREEN']}已就绪{ANSI['RESET']}"
+        elif external and state["fe"]:
+            fe = f"{ANSI['WARNING']}占用就绪(外部){ANSI['RESET']}"
+        else:
+            fe = f"{ANSI['MUTED']}离线{ANSI['RESET']}"
+
+        if running and state["be"]:
+            be = f"{ANSI['GREEN']}已就绪{ANSI['RESET']}"
+        elif external and state["be"]:
+            be = f"{ANSI['WARNING']}占用就绪(外部){ANSI['RESET']}"
+        else:
+            be = f"{ANSI['MUTED']}离线{ANSI['RESET']}"
+
         h = state["health"] or {}
         if state["be"]:
             keys = (f"DeepSeek={'✓' if h.get('deepseek_key') else '✗'}    "
@@ -967,6 +1284,8 @@ def run_cli():
             keys = "DeepSeek: ?    TTS: ?    Image: ?"
         print(f"{ANSI['CYAN']}── {core} | 前端={fe} 后端={be} | {keys}{ANSI['RESET']}",
               flush=True)
+        _last_status_sig = sig
+        _last_status_printed_at = now
 
     def banner():
         print()
@@ -985,19 +1304,19 @@ def run_cli():
         _cli_emit("INFO", msg)
         if ok:
             _cli_emit("INFO", f"访问地址: {BASE_URL}")
-        status_line()
+        status_line(force=True)
 
     def do_stop():
         ok, msg = svc.stop()
         _cli_emit("INFO", msg)
-        status_line()
+        status_line(force=True)
 
     def do_restart():
         ok, msg = svc.restart()
         _cli_emit("INFO", msg)
         if ok:
             _cli_emit("INFO", "--- 重启完成 ---")
-        status_line()
+        status_line(force=True)
 
     def do_check():
         if state["checking"]:
@@ -1040,6 +1359,8 @@ def run_cli():
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=_cli_key_listener, args=(key_queue, done),
                      daemon=True).start()
+    # 首屏：先强制打一条状态基线
+    status_line(force=True)
 
     try:
         while not done.is_set():
@@ -1059,7 +1380,8 @@ def run_cli():
 
             now = time.time()
             if now - last_status >= 5.0:
-                status_line()
+                # 不强制打印；仅当签名变化或心跳超时时才真正输出
+                status_line(force=False)
                 last_status = now
 
             _cli_drain(svc)

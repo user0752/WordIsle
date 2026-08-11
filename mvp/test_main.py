@@ -19,7 +19,10 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+import db as db_module
 import main
+import routes as routes_module
+import services as services_module
 
 FAKE_PANEL = {
     "scene_index": 1,
@@ -67,7 +70,7 @@ def _seed_tts_usage(tts_count=1, ai_count=0):
 def _mock_image_failure():
     """文生图 mock：全部失败（不落盘、不调外部 API）。"""
     return mock.patch.object(
-        main, "generate_panel_image",
+        routes_module, "generate_panel_image",
         new=mock.AsyncMock(return_value={"url": None, "file_name": None, "error": "mock 图片失败"}),
     )
 
@@ -77,9 +80,9 @@ class MainAppTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls._tmp_path = Path(cls._tmp.name)
-        main.DB_PATH = cls._tmp_path / "words.db"
-        main.AUDIOS_DIR = cls._tmp_path / "audios"
-        main.AUDIOS_DIR.mkdir(exist_ok=True)
+        main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "words.db"
+        main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
+        db_module.AUDIOS_DIR.mkdir(exist_ok=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -124,7 +127,7 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_tts(text, voice=None, speed=1.0, tts_model=None):
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_tts", fake_tts):
+        with mock.patch.object(routes_module, "call_tts", fake_tts):
             r = self.client.post(
                 "/api/texts/abc12345/regenerate-audio",
                 json={"voice": "loongandy_v3", "speed": 1.0},
@@ -139,8 +142,8 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_deepseek(words, panel_count=4, theme_hint=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
-        with mock.patch.object(main, "call_deepseek", fake_deepseek), \
-             mock.patch.object(main, "DAILY_AI_LIMIT", 0):
+        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
+             mock.patch.object(db_module, "DAILY_AI_LIMIT", 0):
             r = self.client.post("/api/generate", json={"words": "accommodate"})
         self.assertEqual(r.status_code, 429)
 
@@ -156,9 +159,9 @@ class MainAppTestCase(unittest.TestCase):
             tts_calls.append(1)
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_deepseek", fake_deepseek), \
-             mock.patch.object(main, "call_tts", fake_tts), \
-             mock.patch.object(main, "DAILY_TTS_LIMIT", 1), \
+        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
+             mock.patch.object(routes_module, "call_tts", fake_tts), \
+             mock.patch.object(db_module, "DAILY_TTS_LIMIT", 1), \
              _mock_image_failure():
             r = self.client.post(
                 "/api/generate",
@@ -177,8 +180,8 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_tts(text, voice=None, speed=1.0):
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_tts", fake_tts), \
-             mock.patch.object(main, "DAILY_TTS_LIMIT", 1):
+        with mock.patch.object(routes_module, "call_tts", fake_tts), \
+             mock.patch.object(db_module, "DAILY_TTS_LIMIT", 1):
             r = self.client.post("/api/texts/abc12345/regenerate-audio", json={})
         self.assertEqual(r.status_code, 429)
 
@@ -190,7 +193,7 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_tts(text, voice=None, speed=1.0):
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_tts", fake_tts):
+        with mock.patch.object(routes_module, "call_tts", fake_tts):
             r = self.client.post(
                 "/api/generations/abc12345/audio",
                 json={"voice": "../../evil", "speed": 1.0},
@@ -204,7 +207,7 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_tts(text, voice=None, speed=1.0):
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_tts", fake_tts):
+        with mock.patch.object(routes_module, "call_tts", fake_tts):
             r = self.client.post(
                 "/api/generations/abc12345/audio",
                 json={"voice": "loongandy_v3", "speed": 5.0},
@@ -217,7 +220,7 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_tts(text, voice=None, speed=1.0, tts_model=None):
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_tts", fake_tts):
+        with mock.patch.object(routes_module, "call_tts", fake_tts):
             r = self.client.post(
                 "/api/generations/abc12345/audio",
                 json={"voice": "loongandy_v3", "speed": 1.5},
@@ -281,7 +284,7 @@ class MainAppTestCase(unittest.TestCase):
         def worker():
             results.append(main.consume_daily_quota("ai"))
 
-        with mock.patch.object(main, "DAILY_AI_LIMIT", 30):
+        with mock.patch.object(db_module, "DAILY_AI_LIMIT", 30):
             threads = [threading.Thread(target=worker) for _ in range(60)]
             for t in threads:
                 t.start()
@@ -303,7 +306,7 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_tts(text, voice=None, speed=1.0, tts_model=None):
             return b"fake-mp3"
 
-        with mock.patch.object(main, "call_tts", fake_tts):
+        with mock.patch.object(routes_module, "call_tts", fake_tts):
             r1 = self.client.post(
                 "/api/texts/abc12345/regenerate-audio",
                 json={"voice": "loongandy_v3", "speed": 1.0},
@@ -347,7 +350,7 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_deepseek(words, panel_count=4, theme_hint=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
-        with mock.patch.object(main, "call_deepseek", fake_deepseek), \
+        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
              _mock_image_failure():
             r = self.client.post(
                 "/api/generate",
