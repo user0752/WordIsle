@@ -72,7 +72,7 @@ JSON STRUCTURE:
 
 
 def build_user_prompt(words: list[str], panel_count: int = 4, theme_hint: str = ""):
-    """构建 DeepSeek 用户提示词。"""
+    """构建 DeepSeek 用户提示词（旧版微电影风格，向后兼容）。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = (
         f"\nTHEME HINT (optional, you may follow or override): {theme_hint}"
@@ -98,23 +98,174 @@ Output only the JSON object."""
 
 
 # ========================================================================
+# 批量编译新风格：荒诞三连弹（absurd）
+# ========================================================================
+
+BATCH_ABSURD_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in ABSURD MEMORABLE CARDS.
+
+CORE IDEA: Pack target words into 3 INDEPENDENT absurd scenes. Each scene is self-contained, loosely linked by the same theme or characters. Absurdity = memorable.
+
+RULES:
+1. Exactly 3 panels. Each panel = one independent absurd scene.
+2. Each English sentence: 8-15 words, VERY short and punchy.
+3. Pack 3-5 target words per panel via business collocations (use common inflections if needed).
+4. Each panel's image_prompt: surreal comic, absurd juxtaposition, bold flat colors, weird objects. 16:9.
+5. Each panel has 2-4 collocations (business chunks containing target words).
+6. No scene_role, no ending_moral. Story_title is just a label for the list.
+7. Image must be ABSURD: literal meaning + business meaning forced into one frame.
+8. Output ONLY valid JSON.
+
+JSON STRUCTURE:
+{
+  "story_title": "English title (3-6 words)",
+  "theme": "Chinese theme (e.g. 财务危机)",
+  "story_synopsis": "Chinese one-line summary",
+  "panels": [
+    {
+      "scene_index": 1,
+      "sentence_en": "Short absurd English sentence with 3-5 target words.",
+      "sentence_zh": "Chinese translation.",
+      "target_words_in_scene": ["word1","word2"],
+      "word_notes": {"word1": "中文商务释义"},
+      "collocations": ["business collocation 1","business collocation 2"],
+      "image_prompt": "Surreal comic: [absurd scene]. Bold flat colors. Weird objects. 16:9."
+    }
+  ],
+  "included_words": ["word1","word2"],
+  "missing_words": [],
+  "polysemy_notes": {}
+}
+"""
+
+
+def build_batch_absurd_user_prompt(words: list[str], theme_hint: str = ""):
+    """构建荒诞三连弹用户提示词。"""
+    words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
+    theme_line = (
+        f"\nTHEME HINT (optional): {theme_hint}"
+        if theme_hint
+        else "\nTHEME: Choose any TOEIC business scenario."
+    )
+    return f"""Create 3 ABSURD MEMORABLE CARDS for the following TOEIC words.
+
+TARGET WORDS ({len(words)} total):
+{words_list}
+{theme_line}
+
+CONSTRAINTS:
+- Exactly 3 panels, each an independent absurd scene.
+- Each sentence: 8-15 words, containing 3-5 target words.
+- Distribute ALL {len(words)} words across the 3 panels.
+- Image style: surreal comic, absurd juxtaposition, bold flat colors.
+- Each panel must have 2-4 business collocations.
+
+Output only the JSON object."""
+
+
+# ========================================================================
+# 批量编译新风格：冲突连环（conflict）
+# ========================================================================
+
+BATCH_CONFLICT_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in CONFLICT COMIC STRIPS.
+
+CORE IDEA: Two opposing characters × 3 rounds of conflict escalation. Conflict → emotion → amygdala engagement → stronger memory. Aligned with TOEIC business negotiation scenarios.
+
+RULES:
+1. Exactly 3 panels, structured as rounds:
+   - Panel 1 (round_1): A方出招 (Party A makes a move)
+   - Panel 2 (round_2): B方反击 (Party B counters)
+   - Panel 3 (round_3): 荒诞结局 (Absurd resolution)
+2. Each English sentence: 10-18 words (slightly longer to convey conflict).
+3. Pack 3-5 target words per panel via business collocations.
+4. Each panel's image_prompt: comic strip style, exaggerated character expressions, focus on two-person interaction. 16:9.
+5. Each panel has a round_label: "A方出招" / "B方反击" / "荒诞结局".
+6. Each panel has 2-4 collocations.
+7. Choose a conflict type: buyer vs seller / boss vs employee / vendor vs procurement / HQ vs branch.
+8. No scene_role, no ending_moral. Story_title is just a label.
+9. Output ONLY valid JSON.
+
+JSON STRUCTURE:
+{
+  "story_title": "English title (3-6 words)",
+  "theme": "Chinese theme (e.g. 采购谈判)",
+  "story_synopsis": "Chinese one-line summary of the conflict",
+  "panels": [
+    {
+      "scene_index": 1,
+      "round_label": "A方出招",
+      "sentence_en": "English sentence showing Party A's move with 3-5 target words.",
+      "sentence_zh": "Chinese translation.",
+      "target_words_in_scene": ["word1","word2"],
+      "word_notes": {"word1": "中文商务释义"},
+      "collocations": ["business collocation 1"],
+      "image_prompt": "Comic strip: [two characters interacting, exaggerated expressions]. 16:9."
+    }
+  ],
+  "included_words": ["word1","word2"],
+  "missing_words": [],
+  "polysemy_notes": {}
+}
+"""
+
+
+def build_batch_conflict_user_prompt(words: list[str], theme_hint: str = ""):
+    """构建冲突连环用户提示词。"""
+    words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
+    theme_line = (
+        f"\nCONFLICT TYPE HINT (optional): {theme_hint}"
+        if theme_hint
+        else "\nCONFLICT TYPE: Choose one (buyer vs seller / boss vs employee / vendor vs procurement / HQ vs branch)."
+    )
+    return f"""Create a 3-ROUND CONFLICT COMIC STRIP for the following TOEIC words.
+
+TARGET WORDS ({len(words)} total):
+{words_list}
+{theme_line}
+
+CONSTRAINTS:
+- Exactly 3 panels: round_1 (A方出招) → round_2 (B方反击) → round_3 (荒诞结局).
+- Each sentence: 10-18 words, containing 3-5 target words.
+- Distribute ALL {len(words)} words across the 3 panels.
+- Image style: comic strip, exaggerated expressions, two-character interaction.
+- Each panel must have round_label and 2-4 business collocations.
+
+Output only the JSON object."""
+
+
+# ========================================================================
 # DeepSeek AI 生成
 # ========================================================================
 
-async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = ""):
-    """调用 DeepSeek API 生成剧情连环画。"""
+async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = "", style: str = ""):
+    """调用 DeepSeek API 生成剧情连环画。
+    style: '' 或 'legacy' 走旧版微电影；'absurd' 荒诞三连弹；'conflict' 冲突连环。
+    """
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
-    user_prompt = build_user_prompt(words, panel_count, theme_hint)
+    # 根据风格分派 prompt
+    if style == "absurd":
+        system_prompt = BATCH_ABSURD_SYSTEM_PROMPT
+        user_prompt = build_batch_absurd_user_prompt(words, theme_hint)
+        effective_panel_count = 3
+    elif style == "conflict":
+        system_prompt = BATCH_CONFLICT_SYSTEM_PROMPT
+        user_prompt = build_batch_conflict_user_prompt(words, theme_hint)
+        effective_panel_count = 3
+    else:
+        # 旧版微电影（向后兼容）
+        system_prompt = SYSTEM_PROMPT
+        user_prompt = build_user_prompt(words, panel_count, theme_hint)
+        effective_panel_count = panel_count
+
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.8,
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "response_format": {"type": "json_object"},
     }
 
@@ -130,11 +281,15 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
         resp.raise_for_status()
         data = resp.json()
 
-    content = data["choices"][0]["message"]["content"].strip()
-    if content.startswith("```"):
-        lines = content.split("\n")
-        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(content), data.get("usage", {})
+    content = data["choices"][0]["message"]["content"]
+    result = _extract_json(content)
+
+    # 兼容：确保 panels 数量与 effective_panel_count 一致
+    panels = result.get("panels", [])
+    if len(panels) != effective_panel_count and panels:
+        result["panels"] = panels[:effective_panel_count] if len(panels) > effective_panel_count else panels
+
+    return result, data.get("usage", {})
 
 
 # ========================================================================

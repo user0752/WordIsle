@@ -100,20 +100,25 @@ async def generate(req: Request):
     image_model  = body.get("image_model", IMAGE_MODEL)
     generate_audio = body.get("generate_audio_immediately", False)
     tts_model    = body.get("tts_model", TTS_MODEL) if generate_audio else None
+    style        = body.get("style", "")  # '' | 'absurd' | 'conflict'
 
     words = normalize_words(raw_words)
     if not words:
         raise HTTPException(400, "请至少输入一个有效单词")
     if len(words) > 30:
         raise HTTPException(400, f"单次最多 30 个单词，当前 {len(words)} 个")
-    if panel_count not in (3, 4, 5):
+    # 新风格固定 3 panel，跳过校验；旧风格校验 3/4/5
+    if style not in ("absurd", "conflict") and panel_count not in (3, 4, 5):
         raise HTTPException(400, "画面数量只能是 3、4 或 5")
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
     gen_id = str(uuid.uuid4())[:8]
-    result, usage = await call_deepseek(words, panel_count, theme_hint)
+    result, usage = await call_deepseek(words, panel_count, theme_hint, style=style)
+
+    # 实际 panel 数（新风格固定 3）
+    actual_panel_count = len(result.get("panels", [])) or panel_count
 
     panels = result.get("panels", [])
 
@@ -157,12 +162,13 @@ async def generate(req: Request):
     conn.execute("""
         INSERT INTO generations (id,words,panel_count,theme_hint,
                                  story_title,theme,story_synopsis,body_en,model,image_model,panels,
-                                 polysemy_notes,included_words,missing_words,ending_moral)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 polysemy_notes,included_words,missing_words,ending_moral,
+                                 generation_type,style)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         gen_id,
         json.dumps(words),
-        panel_count,
+        actual_panel_count,
         theme_hint,
         result.get("story_title", ""),
         result.get("theme", ""),
@@ -175,6 +181,8 @@ async def generate(req: Request):
         json.dumps(result.get("included_words", [])),
         json.dumps(result.get("missing_words", [])),
         result.get("ending_moral", ""),
+        "batch",
+        style,
     ))
     for w in words:
         conn.execute("INSERT OR IGNORE INTO words(word) VALUES(?)", (w,))
@@ -184,6 +192,8 @@ async def generate(req: Request):
     resp = {
         "id": gen_id,
         "status": "success",
+        "generation_type": "batch",
+        "style": style,
         "story_title": result.get("story_title", ""),
         "theme": result.get("theme", ""),
         "story_synopsis": result.get("story_synopsis", ""),
@@ -416,6 +426,7 @@ async def get_generation(gen_id: str):
     return {
         "id": gen["id"],
         "generation_type": gen["generation_type"] or "batch",
+        "style": gen["style"] or "",
         "story_title": gen["story_title"],
         "theme": gen["theme"],
         "story_synopsis": gen["story_synopsis"],
@@ -652,7 +663,8 @@ async def import_words(req: Request):
 # ========================================================================
 
 @router.get("/api/texts")
-async def list_texts(page: int = 1, search: str = "", favorited: int = 0, has_audio: int = 0):
+async def list_texts(page: int = 1, search: str = "", favorited: int = 0, has_audio: int = 0,
+                     generation_type: str = "", style: str = ""):
     conn = get_db()
     offset = (page - 1) * 20
     where, params = [], []
@@ -663,6 +675,12 @@ async def list_texts(page: int = 1, search: str = "", favorited: int = 0, has_au
         where.append("is_favorited = 1")
     if has_audio:
         where.append("id IN (SELECT generation_id FROM audios GROUP BY generation_id)")
+    if generation_type:
+        where.append("generation_type = ?")
+        params.append(generation_type)
+    if style:
+        where.append("style = ?")
+        params.append(style)
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     rows = conn.execute(
         f"SELECT * FROM generations{where_sql} ORDER BY created_at DESC LIMIT 20 OFFSET ?",
@@ -692,6 +710,35 @@ async def list_texts(page: int = 1, search: str = "", favorited: int = 0, has_au
         d["audio_url"] = f"/audios/{audio_map[r['id']]}" if audio_map.get(r["id"]) else None
         items.append(d)
     return {"items": items, "total": total, "page": page, "page_size": 20}
+
+
+@router.get("/api/texts/recent")
+async def list_recent_texts(limit: int = 5):
+    """首页"最近生成"列表：取最近 N 条记录（带封面图）。"""
+    limit = max(1, min(int(limit), 20))
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM generations ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        panels = json.loads(r["panels"] or "[]")
+        items.append({
+            "id": r["id"],
+            "story_title": r["story_title"] or "",
+            "theme": r["theme"] or "",
+            "story_synopsis": r["story_synopsis"] or "",
+            "generation_type": r["generation_type"] or "batch",
+            "style": r["style"] or "",
+            "panel_count": r["panel_count"],
+            "words": json.loads(r["words"] or "[]"),
+            "included_words": json.loads(r["included_words"] or "[]"),
+            "first_image_url": panels[0].get("image_url") if panels else None,
+            "created_at": r["created_at"],
+        })
+    return {"items": items}
 
 
 @router.get("/api/texts/{text_id}")
@@ -1247,6 +1294,7 @@ async def compile_scene(scene_id: int, request: Request):
     panel_count = int(body.get("panel_count", 4) or 4)
     theme_hint = str(body.get("theme_hint", "") or "")
     image_model = str(body.get("image_model", "") or "")
+    style = str(body.get("style", "absurd") or "absurd")  # 场景编译默认荒诞三连弹
 
     conn = get_db()
     s = conn.execute("SELECT * FROM scenes WHERE id = ?", (scene_id,)).fetchone()
@@ -1263,20 +1311,30 @@ async def compile_scene(scene_id: int, request: Request):
         raise HTTPException(400, "该场景下没有单词，无法编译")
 
     # 复用现有批量编译逻辑（生成深图但暂不生图，由前端按需触发生图）
-    story, usage = await call_deepseek(word_list, panel_count, theme_hint)
+    # 把场景名作为主题提示，让 LLM 知道场景上下文
+    scene_theme = theme_hint or s["name_en"]
+    story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style)
     gen_id = str(uuid.uuid4())
+    actual_panel_count = len(story.get("panels", [])) or panel_count
 
     panels_json = []
     for i, p in enumerate(story.get("panels", [])):
         panels_json.append({
-            "scene_index": i,
+            "scene_index": i + 1,
+            "round_label": p.get("round_label", ""),
+            "scene_role": p.get("scene_role", ""),
             "sentence_en": p.get("sentence_en", ""),
             "sentence_zh": p.get("sentence_zh", ""),
+            "target_words_in_scene": p.get("target_words_in_scene", []),
+            "word_notes": p.get("word_notes", {}),
             "collocations": p.get("collocations", []),
             "image_prompt": p.get("image_prompt", ""),
             "image_url": "",
             "image_error": None,
         })
+
+    # 拼接 body_en（与批量编译一致）
+    full_body_en = " ".join(p.get("sentence_en", "") for p in panels_json)
 
     conn.execute("""
         INSERT INTO generations (id,words,panel_count,theme_hint,
@@ -1287,13 +1345,13 @@ async def compile_scene(scene_id: int, request: Request):
     """, (
         gen_id,
         json.dumps(word_list, ensure_ascii=False),
-        panel_count,
+        actual_panel_count,
         theme_hint,
         story.get("story_title", ""),
         story.get("theme", ""),
         story.get("story_synopsis", ""),
-        story.get("body_en", ""),
-        "deepseek-chat",
+        full_body_en,
+        DEEPSEEK_MODEL,
         image_model,
         json.dumps(panels_json, ensure_ascii=False),
         json.dumps(story.get("polysemy_notes", {}), ensure_ascii=False),
@@ -1301,7 +1359,7 @@ async def compile_scene(scene_id: int, request: Request):
         json.dumps(story.get("missing_words", []), ensure_ascii=False),
         story.get("ending_moral", ""),
         "scene",
-        s["name_en"],
+        style,
     ))
     conn.commit()
 
@@ -1310,6 +1368,6 @@ async def compile_scene(scene_id: int, request: Request):
         "scene_id": scene_id,
         "scene_name": s["name_en"],
         "word_count": len(word_list),
-        "panel_count": panel_count,
-        "message": f"场景「{s['name_en']}」已编译 {len(word_list)} 词 → {panel_count} 画面连环画",
+        "panel_count": actual_panel_count,
+        "message": f"场景「{s['name_en']}」已编译 {len(word_list)} 词 → {actual_panel_count} 画面连环画（{style}）",
     }

@@ -139,7 +139,7 @@ class MainAppTestCase(unittest.TestCase):
     # ================= Bug #2: 每日限额必须生效 =================
 
     def test_generate_respects_ai_limit_zero(self):
-        async def fake_deepseek(words, panel_count=4, theme_hint=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
@@ -150,7 +150,7 @@ class MainAppTestCase(unittest.TestCase):
     def test_generate_immediate_audio_respects_tts_limit(self):
         _seed_tts_usage(tts_count=1)
 
-        async def fake_deepseek(words, panel_count=4, theme_hint=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         tts_calls = []
@@ -347,7 +347,7 @@ class MainAppTestCase(unittest.TestCase):
     # ================= #18: /api/generate 返回剧情连环画结构 =================
 
     def test_generate_returns_panels(self):
-        async def fake_deepseek(words, panel_count=4, theme_hint=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
