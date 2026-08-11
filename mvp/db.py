@@ -21,6 +21,7 @@ __all__ = [
     "validate_tts_params",
     "VOICE_PATTERN",
     "_migrate_words_table",
+    "SCENES_SEED",
 ]
 
 # ========================================================================
@@ -131,6 +132,35 @@ def init_db():
             frequency_level TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 场景聚汇相关表
+        CREATE TABLE IF NOT EXISTS scenes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name_en TEXT NOT NULL,
+            name_zh TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            cover_image_url TEXT DEFAULT '',
+            status TEXT DEFAULT 'active',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS word_scenes (
+            word_id INTEGER NOT NULL,
+            scene_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (word_id, scene_id),
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+            FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS scene_collocations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scene_id INTEGER NOT NULL,
+            phrase_en TEXT NOT NULL,
+            phrase_zh TEXT DEFAULT '',
+            words TEXT DEFAULT '[]',
+            example_en TEXT DEFAULT '',
+            example_zh TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+        );
     """)
     # 迁移：为已有数据库添加 tts_model 列
     try:
@@ -147,6 +177,8 @@ def init_db():
         ("image_model", "TEXT DEFAULT ''"),
         ("panels", "TEXT DEFAULT '[]'"),
         ("ending_moral", "TEXT DEFAULT ''"),
+        ("generation_type", "TEXT DEFAULT 'batch'"),
+        ("style", "TEXT DEFAULT ''"),
     ]:
         try:
             conn.execute(f"ALTER TABLE generations ADD COLUMN {col} {decl}")
@@ -159,6 +191,8 @@ def init_db():
         pass
     # 种子数据：托业高频熟词僻意（仅当表为空时插入）
     _seed_polysemy(conn)
+    # 种子数据：场景聚汇预设场景（仅当 scenes 表为空时插入）
+    _seed_scenes(conn)
     conn.commit()
     conn.close()
 
@@ -772,6 +806,34 @@ def _seed_polysemy(conn):
                 item["toc_part"],
                 item["frequency_level"],
             ),
+        )
+
+
+# ========================================================================
+# 场景聚汇预设场景种子数据
+# ========================================================================
+
+SCENES_SEED = [
+    ("HR & Personnel",         "HR/人事",     "招聘、薪酬、福利、合同等人力资源管理"),
+    ("Meeting & Events",       "会议/活动",   "会议议程、场地、纪要、休会等"),
+    ("Logistics & Procurement", "物流/采购",   "货运、供应商、库存、规格等"),
+    ("Finance & Office",       "财务/办公",   "营收、季度、报销、文具等"),
+    ("Negotiation & Contract", "谈判/合同",   "投标、合同、谈判、条款等"),
+    ("Marketing & Sales",      "营销/销售",   "营销活动、客户、佣金、产品发布等"),
+    ("Legal & Compliance",     "法务/合规",   "侵权、责任、合规、监管、专利等"),
+    ("Finance & Investment",   "金融/投资",   "股票、股息、收益率、债券、投资组合等"),
+]
+
+
+def _seed_scenes(conn):
+    """当 scenes 表为空时，填入预设商务场景。"""
+    count = conn.execute("SELECT COUNT(*) FROM scenes").fetchone()[0]
+    if count > 0:
+        return
+    for name_en, name_zh, desc in SCENES_SEED:
+        conn.execute(
+            "INSERT INTO scenes (name_en, name_zh, description, status) VALUES (?,?,?,?)",
+            (name_en, name_zh, desc, "active"),
         )
 
 

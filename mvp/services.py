@@ -17,9 +17,12 @@ from config import *
 __all__ = [
     "build_user_prompt",
     "call_deepseek",
+    "call_deepseek_single",
+    "build_single_user_prompt",
     "call_tts",
     "call_image_generation",
     "generate_panel_image",
+    "generate_single_image",
     "_get_image_model_config",
     "call_polysemy_detection",
     "call_word_enrichment",
@@ -131,6 +134,171 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
         lines = content.split("\n")
         content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     return json.loads(content), data.get("usage", {})
+
+
+# ========================================================================
+# 单点深耕 Prompt & 生成
+# ========================================================================
+
+SINGLE_SYSTEM_PROMPT = """You are a TOEIC Business English coach specialized in the "one word, one image, one hook" memorization technique.
+
+CORE IDEA: Given ONE English word, produce a single ABSURD memory-hook image that COLLIDES the word's common/literal meaning with its business meaning in the SAME frame. The image itself becomes the recall trigger — when the user sees the picture, they instantly remember both meanings of the word.
+
+## TASK
+Given one English target word, output:
+1. ONE high-frequency TOEIC collocation (e.g. submit → submit a proposal).
+2. ONE absurd/contrasting/playing-with-convention scene sentence (English + Chinese), MUST contain the target word.
+3. ONE image_prompt — the visual description MUST stuff the word's common meaning AND its business meaning into the SAME picture to create absurd contrast (NOT natural narrative).
+4. The word's derivative family (noun/verb/adjective/adverb forms, with Chinese meanings).
+
+## IMAGE REQUIREMENT (CRITICAL)
+- image_prompt MUST create a "two-meanings collision", not natural storytelling.
+- Example: tender (gentle + bid) → "A person cradling a sealed tender document with exaggeratedly tender/gentle hand gestures, like holding a baby, in a cold corporate boardroom. The contrast between the gentleness and the rigid business setting creates absurdity."
+- Make the picture itself the recall cue: the user sees the image and is reminded of both meanings.
+
+## RULES
+1. scene_sentence.en: 10-20 words, contains the target word, business context, absurd/contrasting tone.
+2. scene_sentence.mood: 2-3 Chinese tags describing the absurd tone (e.g. 荒诞 / 反差 / 黑色幽默).
+3. derivatives: 2-4 items; if no common derivatives exist, return an empty array.
+4. collocation_type: grammatical pattern (e.g. verb + noun, adj + noun, noun + noun).
+5. image_prompt MUST be in English, 1-3 sentences, surreal comic / flat illustration style (NOT cinematic, NOT realistic).
+6. Output ONLY a valid JSON object. No markdown, no extra text.
+
+## JSON STRUCTURE
+{
+  "word": "submit",
+  "collocation": {
+    "phrase_en": "submit a proposal",
+    "phrase_zh": "提交提案",
+    "collocation_type": "verb + noun"
+  },
+  "scene_sentence": {
+    "en": "He submitted a $2M budget proposal to the board while cradling it like a fragile infant.",
+    "zh": "他像抱着易碎的婴儿一样向董事会提交了一份200万美元的预算提案。",
+    "mood": "荒诞 / 反差 / 黑色幽默"
+  },
+  "image_prompt": "Surreal comic, flat colors: a nervous man in a suit tenderly cradling a massive proposal document like a baby in a cold corporate boardroom. Bold flat colors, exaggerated tender expression, absurd juxtaposition.",
+  "derivatives": [
+    { "word": "submission", "pos": "n.", "meaning_zh": "提交物；服从" },
+    { "word": "submissive", "pos": "adj.", "meaning_zh": "服从的；顺从的" }
+  ]
+}
+"""
+
+
+def build_single_user_prompt(word: str, theme_hint: str = "") -> str:
+    """构建单点深耕的用户提示词。"""
+    theme_line = (
+        f"\nTHEME HINT (optional): {theme_hint}"
+        if theme_hint
+        else "\nTHEME: Choose any TOEIC business context that fits the word."
+    )
+    return f"""Please generate the "one word, one image, one hook" memorization card for the following TOEIC word.
+
+TARGET WORD: {word}
+{theme_line}
+
+Output ONLY the JSON object. No markdown, no explanation, no prefix text."""
+
+
+def _extract_json(content: str) -> dict:
+    """从 LLM 响应中稳健地提取 JSON 对象。
+    处理：```json ``` 包裹、带前缀说明文字、纯 JSON、多余尾随文字。
+    """
+    if not content or not content.strip():
+        raise HTTPException(500, "LLM 返回空内容，无法解析 JSON")
+    text = content.strip()
+    # 1) 剥离 ```json ... ``` 或 ``` ... ``` 包裹
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # 去掉首行 ```
+        lines = lines[1:]
+        # 如果第二行是 json/lang 标识，去掉
+        if lines and lines[0].strip().lower() in ("json", "javascript", ""):
+            lines = lines[1:]
+        # 去掉末尾 ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    # 2) 提取第一个 { 到最后一个 } 之间的内容
+    first = text.find("{")
+    last = text.rfind("}")
+    if first == -1 or last == -1 or last <= first:
+        raise HTTPException(
+            500,
+            f"LLM 响应未找到有效 JSON 对象。响应前 200 字符: {content[:200]}",
+        )
+    json_str = text[first:last + 1]
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            500,
+            f"LLM 响应 JSON 解析失败: {e}。响应前 200 字符: {content[:200]}",
+        )
+
+
+async def call_deepseek_single(word: str, theme_hint: str = ""):
+    """调用 DeepSeek 生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。"""
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
+
+    user_prompt = build_single_user_prompt(word, theme_hint)
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": SINGLE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.85,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{DEEPSEEK_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    content = data["choices"][0]["message"]["content"]
+    result = _extract_json(content)
+
+    # 容错：保证关键字段存在
+    result.setdefault("word", word)
+    result.setdefault("collocation", {"phrase_en": "", "phrase_zh": "", "collocation_type": ""})
+    result.setdefault("scene_sentence", {"en": "", "zh": "", "mood": ""})
+    result.setdefault("image_prompt", "")
+    result.setdefault("derivatives", [])
+    return result, data.get("usage", {})
+
+
+# ========================================================================
+# 单点深耕图片生成
+# ========================================================================
+
+async def generate_single_image(prompt: str, model: str, gen_id: str) -> dict:
+    """为单点深耕生成 1 张图片，存盘并返回 dict(url, error)。"""
+    if not prompt:
+        return {"url": None, "error": "无 image_prompt"}
+    try:
+        img_bytes = await call_image_generation(prompt, model)
+    except HTTPException as e:
+        return {"url": None, "error": e.detail}
+    except Exception as e:
+        return {"url": None, "error": f"图片生成失败: {e}"}
+    if not img_bytes:
+        return {"url": None, "error": "图片生成返回空数据"}
+
+    file_name = f"{gen_id}_single.png"
+    (IMAGES_DIR / file_name).write_bytes(img_bytes)
+    return {"url": f"/images/{file_name}", "error": None}
 
 
 # ========================================================================

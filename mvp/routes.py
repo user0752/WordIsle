@@ -239,6 +239,143 @@ async def generate_audio(gen_id: str, req: Request):
     return await _generate_audio(gen_id, voice, speed, tts_model, "生成记录不存在")
 
 
+# ========================================================================
+# 单点深耕 API
+# ========================================================================
+
+@router.post("/api/single/compile")
+async def single_compile(req: Request):
+    """单点深耕：给定 1 个单词 → 生成词伙 + 场景句 + 派生词 + 1 张记忆钩子图。"""
+    body = await req.json()
+    word_raw = (body.get("word") or "").strip().lower()
+    theme_hint = body.get("theme_hint", "")
+    image_model = body.get("image_model", IMAGE_MODEL)
+    generate_audio_immediately = body.get("generate_audio_immediately", False)
+    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio_immediately else None
+
+    # 单词清洗：只允许字母、连字符、撇号
+    import re as _re
+    word_clean = _re.sub(r"[^a-zA-Z\-']", "", word_raw).lower()
+    if not word_clean or len(word_clean) < 2:
+        raise HTTPException(400, "请输入一个有效英文单词")
+
+    if not consume_daily_quota("ai"):
+        raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+
+    gen_id = str(uuid.uuid4())[:8]
+    result, usage = await call_deepseek_single(word_clean, theme_hint)
+
+    # 生成 1 张图（先检查配额）
+    image_url = None
+    image_error = None
+    if not consume_daily_quota("image", 1):
+        image_error = f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)"
+    else:
+        ir = await generate_single_image(result.get("image_prompt", ""), image_model, gen_id)
+        image_url = ir["url"]
+        image_error = ir["error"]
+
+    # scene_sentence.en 用于 TTS 和 body_en
+    scene_sentence = result.get("scene_sentence", {}) or {}
+    body_en = scene_sentence.get("en", "") or ""
+
+    # 入库：generation_type='single'，复用 panels 字段存 JSON 整体（schemaless 扩展，PRD 6.2 方案A）
+    panels_payload = [{
+        "scene_index": 1,
+        "collocation": result.get("collocation", {}),
+        "scene_sentence": scene_sentence,
+        "image_prompt": result.get("image_prompt", ""),
+        "image_url": image_url,
+        "image_error": image_error,
+        "derivatives": result.get("derivatives", []),
+    }]
+
+    conn = get_db()
+    conn.execute("""
+        INSERT INTO generations (id,words,panel_count,theme_hint,
+                                 story_title,theme,story_synopsis,body_en,model,image_model,panels,
+                                 polysemy_notes,included_words,missing_words,ending_moral,
+                                 generation_type,style)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        gen_id,
+        json.dumps([word_clean]),
+        1,
+        theme_hint,
+        f"{word_clean} · 单点深耕",
+        "单点深耕",
+        scene_sentence.get("zh", ""),
+        body_en,
+        DEEPSEEK_MODEL,
+        image_model,
+        json.dumps(panels_payload, ensure_ascii=False),
+        json.dumps({}, ensure_ascii=False),
+        json.dumps([word_clean], ensure_ascii=False),
+        json.dumps([], ensure_ascii=False),
+        "",
+        "single",
+        "",
+    ))
+    # 若词库无该词，自动加入（与批量编译一致）
+    conn.execute("INSERT OR IGNORE INTO words(word) VALUES(?)", (word_clean,))
+    conn.commit()
+    conn.close()
+
+    resp = {
+        "id": gen_id,
+        "generation_type": "single",
+        "status": "success",
+        "word": word_clean,
+        "collocation": result.get("collocation", {}),
+        "scene_sentence": scene_sentence,
+        "image_prompt": result.get("image_prompt", ""),
+        "image_url": image_url,
+        "image_error": image_error,
+        "derivatives": result.get("derivatives", []),
+        "image_model": image_model,
+        "has_audio": False,
+        "audio_id": None,
+    }
+
+    # 可选：即时合成场景句朗读音频
+    if generate_audio_immediately and body_en:
+        if not consume_daily_quota("tts"):
+            resp["audio_error"] = f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)，未生成音频"
+        else:
+            try:
+                audio_bytes = await call_tts(body_en, TTS_VOICE, 1.0, tts_model)
+                file_name = f"{gen_id}_{TTS_VOICE}_100.mp3"
+                (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
+                conn = get_db()
+                cur = conn.execute(
+                    "INSERT INTO audios (generation_id,file_name,voice,speed,tts_model) VALUES (?,?,?,?,?)",
+                    (gen_id, file_name, TTS_VOICE, 1.0, tts_model),
+                )
+                conn.commit()
+                conn.close()
+                resp["has_audio"] = True
+                resp["audio_id"] = cur.lastrowid
+                resp["audio_url"] = f"/audios/{file_name}"
+                resp["tts_model"] = tts_model
+            except HTTPException as e:
+                resp["audio_error"] = e.detail
+            except Exception as e:
+                resp["audio_error"] = f"音频生成失败: {e}"
+
+    return resp
+
+
+@router.post("/api/single/{gen_id}/audio")
+async def single_generate_audio(gen_id: str, req: Request):
+    """为单点深耕场景句生成朗读音频（后置生成）。"""
+    body = await req.json() if await req.body() else {}
+    voice = body.get("voice", TTS_VOICE)
+    speed = body.get("speed", 1.0)
+    tts_model = body.get("tts_model", TTS_MODEL)
+    voice, speed = validate_tts_params(voice, speed)
+    return await _generate_audio(gen_id, voice, speed, tts_model, "单点深耕记录不存在")
+
+
 @router.get("/api/generations")
 async def list_generations():
     conn = get_db()
@@ -278,6 +415,7 @@ async def get_generation(gen_id: str):
         raise HTTPException(404, "记录不存在")
     return {
         "id": gen["id"],
+        "generation_type": gen["generation_type"] or "batch",
         "story_title": gen["story_title"],
         "theme": gen["theme"],
         "story_synopsis": gen["story_synopsis"],
