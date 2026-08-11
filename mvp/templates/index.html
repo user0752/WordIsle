@@ -1,0 +1,1885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TOEIC 顽固词深度加工系统</title>
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+<style>
+  /* ================================================
+     沉浸式记单词 · 设计系统
+     浅色 · 静谧 · 专注
+     ================================================ */
+  :root {
+    /* 底色 — 静谧白，像自习室的光线 */
+    --bg: #f5f5f7;
+    --bg-soft: #fafbfc;
+    --bg-card: #ffffff;
+    --bg-surface: #f0f1f3;
+    --bg-elevated: #ffffff;
+
+    /* 谧绿 — 主色：安静、专注、像窗外的绿植 */
+    --accent: #3a7d6a;
+    --accent-light: #4a9a82;
+    --accent-dark: #2a6654;
+    --accent-bg: rgba(58, 125, 106, 0.06);
+    --accent-border: rgba(58, 125, 106, 0.14);
+    --accent-glow: rgba(58, 125, 106, 0.12);
+    --accent-soft: #e8f3ee;
+
+    /* 暖金 — 点缀色，像书签上的铜色 */
+    --gold: #b8953a;
+    --gold-light: #d4aa4a;
+    --gold-bg: rgba(184, 149, 58, 0.07);
+    --gold-border: rgba(184, 149, 58, 0.18);
+
+    /* 文字 — 温润深灰，长时间阅读不累 */
+    --text-primary: #1d1d1f;
+    --text-secondary: #5b5b6b;
+    --text-tertiary: #8e8e9e;
+    --text-muted: #aeaec0;
+
+    /* 语义色 */
+    --success: #2d7a5a;
+    --success-bg: rgba(45, 122, 90, 0.07);
+    --success-border: rgba(45, 122, 90, 0.18);
+    --warning: #b8860b;
+    --warning-bg: rgba(184, 134, 11, 0.07);
+    --warning-border: rgba(184, 134, 11, 0.18);
+    --danger: #c24a3a;
+    --danger-bg: rgba(194, 74, 58, 0.07);
+    --danger-border: rgba(194, 74, 58, 0.18);
+
+    /* 边框 */
+    --border-subtle: rgba(0, 0, 0, 0.04);
+    --border-default: rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.12);
+
+    /* 阴影 — 极淡，几乎不可见 */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
+    --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.06);
+    --shadow-xl: 0 16px 40px rgba(0, 0, 0, 0.08);
+
+    /* 圆角 */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 18px;
+
+    /* 过渡 */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: 0.15s var(--ease-out);
+    --transition-base: 0.25s var(--ease-out);
+    --transition-slow: 0.4s var(--ease-out);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #app { height: 100%; width: 100%; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ===== 滚动条 ===== */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.08); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.15); }
+
+  /* ===== 布局 ===== */
+  .app-layout { height: 100vh; display: flex; flex-direction: column; }
+
+  /* ===== 头部 — 极简白 ===== */
+  .app-header {
+    height: 56px; position: relative; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 28px;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .app-header .logo {
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    color: var(--text-primary);
+  }
+  .app-header .logo .logo-icon {
+    width: 30px; height: 30px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-size: 15px;
+    transition: var(--transition-base);
+  }
+  .app-header .logo:hover .logo-icon {
+    background: var(--accent-soft);
+    transform: scale(1.05);
+  }
+  .app-header .logo-text {
+    font-size: 15px; font-weight: 600; letter-spacing: 0.3px;
+    color: var(--text-primary);
+  }
+  .app-header .header-right {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .app-header .usage-tag {
+    background: var(--bg-surface);
+    color: var(--text-tertiary);
+    font-size: 11px; padding: 4px 12px;
+    border-radius: 20px; letter-spacing: 0.2px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  /* ===== 主体 ===== */
+  .app-body { flex: 1; display: flex; overflow: hidden; }
+
+  /* ===== 侧边栏 — 极简书签 ===== */
+  .app-sidebar {
+    width: 200px; flex-shrink: 0;
+    background: var(--bg-soft);
+    border-right: 1px solid var(--border-subtle);
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+  .app-sidebar .el-menu { border-right: none; background: transparent; }
+  .app-sidebar .el-menu-item {
+    margin: 1px 10px; border-radius: 8px; height: 40px; line-height: 40px;
+    font-size: 13px; color: var(--text-secondary);
+    transition: all var(--transition-fast);
+    font-weight: 400;
+  }
+  .app-sidebar .el-menu-item:hover {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+  .app-sidebar .el-menu-item.is-active {
+    background: var(--accent-soft);
+    color: var(--accent); font-weight: 500;
+    border-right: none;
+  }
+  .app-sidebar .el-menu-item .el-icon {
+    color: var(--text-tertiary);
+    font-size: 16px;
+  }
+  .app-sidebar .el-menu-item.is-active .el-icon {
+    color: var(--accent);
+  }
+
+  /* ===== 主内容区 ===== */
+  .app-main { flex: 1; overflow-y: auto; }
+
+  .page-container {
+    padding: 28px 32px;
+    max-width: 1440px;
+    margin: 0 auto;
+    animation: fadeSlideIn 0.35s var(--ease-out);
+  }
+
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .page-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .page-title {
+    font-size: 22px; font-weight: 600; color: var(--text-primary);
+    line-height: 1.3; display: flex; align-items: center; gap: 12px;
+  }
+  .page-title .title-accent {
+    display: inline-block; width: 3px; height: 22px;
+    background: var(--accent);
+    border-radius: 2px; flex-shrink: 0;
+  }
+  .page-subtitle {
+    font-size: 13px; color: var(--text-tertiary);
+    margin-top: 3px;
+  }
+
+  /* ===== Element Plus 覆盖 ===== */
+
+  /* 卡片 — 极简白 */
+  .el-card {
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-default);
+    background: var(--bg-card);
+    transition: all var(--transition-base);
+    box-shadow: var(--shadow-xs);
+  }
+  .el-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-strong);
+  }
+  .el-card .el-card__header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-weight: 500; font-size: 14px; color: var(--text-primary);
+  }
+  .el-card .el-card__body { padding: 20px; }
+
+  /* 按钮 */
+  .el-button--primary {
+    --el-button-bg-color: var(--accent);
+    --el-button-border-color: var(--accent);
+    --el-button-hover-bg-color: var(--accent-dark);
+    --el-button-hover-border-color: var(--accent-dark);
+    --el-button-active-bg-color: #1a5a48;
+    --el-button-text-color: #ffffff;
+    font-weight: 500;
+    border-radius: 8px;
+  }
+  .el-button--primary:hover {
+    box-shadow: 0 4px 12px var(--accent-glow);
+    transform: translateY(-1px);
+  }
+  .el-button--primary:active { transform: translateY(0); }
+  .el-button {
+    border-radius: 8px; transition: all var(--transition-fast);
+    font-weight: 500;
+  }
+  .el-button:active { transform: scale(0.97); }
+  .el-button--default {
+    --el-button-bg-color: transparent;
+    --el-button-border-color: var(--border-strong);
+    --el-button-text-color: var(--text-secondary);
+    --el-button-hover-bg-color: var(--accent-bg);
+    --el-button-hover-border-color: var(--accent-border);
+    --el-button-hover-text-color: var(--accent);
+  }
+
+  /* 表格 - 干净简约 */
+  .el-table {
+    border-radius: var(--radius-md); overflow: hidden;
+    background: transparent; color: var(--text-primary);
+    font-size: 13px;
+  }
+  .el-table th.el-table__cell {
+    background-color: var(--bg-soft);
+    color: var(--text-tertiary);
+    font-weight: 500; font-size: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 10px 0;
+  }
+  .el-table .el-table__body tr.el-table__row td {
+    border-bottom: 1px solid var(--border-subtle);
+    background: transparent;
+    padding: 8px 0;
+  }
+  .el-table .el-table__body tr:hover > td {
+    background-color: var(--accent-bg);
+  }
+  .el-table--striped .el-table__body tr.el-table__row--striped td {
+    background-color: rgba(0, 0, 0, 0.015);
+  }
+  .el-table .el-table__inner-wrapper::before { display: none; }
+  .el-table__body-wrapper { border-radius: 0 0 var(--radius-md) var(--radius-md); }
+  .el-table .cell { line-height: 1.6; }
+  .el-table__empty-text { color: var(--text-tertiary); }
+
+  /* 菜单 */
+  .el-menu { border-right: none; }
+  .el-menu-item { font-size: 13px; }
+
+  /* 分页 */
+  .el-pagination { font-size: 13px; }
+  .el-pagination button, .el-pagination .el-pager li {
+    background: transparent; color: var(--text-secondary);
+    border-radius: 6px;
+  }
+  .el-pagination .el-pager li.active {
+    color: var(--accent); font-weight: 500;
+    background: var(--accent-soft);
+  }
+  .el-pagination .el-pager li:hover { color: var(--accent); }
+  .el-pagination button:hover { color: var(--accent); }
+  .el-pagination .el-pagination__total { color: var(--text-tertiary); }
+  .el-pagination .el-select .el-input__wrapper { background: var(--bg-surface); }
+
+  /* 标签 */
+  .el-tag { border-radius: 6px; font-weight: 400; border: 1px solid transparent; }
+  .el-tag--plain { background: transparent; }
+  .el-tag--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+  .el-tag--warning { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning); }
+  .el-tag--danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
+  .el-tag--info { background: var(--bg-surface); border-color: var(--border-subtle); color: var(--text-secondary); }
+  .el-tag--primary { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent); }
+
+  /* 弹窗 */
+  .el-dialog {
+    border-radius: var(--radius-xl);
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-xl);
+  }
+  .el-dialog .el-dialog__header { padding: 20px 24px 0; }
+  .el-dialog .el-dialog__title { color: var(--text-primary); font-weight: 600; }
+  .el-dialog .el-dialog__body { padding: 20px 24px; color: var(--text-secondary); }
+  .el-dialog .el-dialog__footer { padding: 0 24px 20px; }
+  .el-dialog .el-dialog__close { color: var(--text-tertiary); }
+  .el-dialog .el-dialog__close:hover { color: var(--text-primary); }
+
+  /* 输入框 */
+  .el-input__wrapper {
+    border-radius: 8px; box-shadow: 0 0 0 1px var(--border-default) inset;
+    background: var(--bg-soft);
+    transition: all var(--transition-fast);
+  }
+  .el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--accent-border) inset; }
+  .el-input__wrapper.is-focus {
+    box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-bg);
+  }
+  .el-input__inner { color: var(--text-primary); background: transparent; }
+  .el-input__inner::placeholder { color: var(--text-muted); }
+  .el-input__prefix, .el-input__suffix { color: var(--text-tertiary); }
+
+  /* 选择器 */
+  .el-select .el-input__wrapper { border-radius: 8px; }
+  .el-select-dropdown {
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+  }
+  .el-select-dropdown__item { color: var(--text-secondary); }
+  .el-select-dropdown__item.hover { background: var(--accent-bg); color: var(--accent); }
+  .el-select-dropdown__item.selected { color: var(--accent); background: var(--accent-bg); }
+
+  /* Radio 按钮 */
+  .el-radio-button__inner {
+    background: transparent; border-color: var(--border-strong); color: var(--text-secondary);
+  }
+  .el-radio-button__original-radio:checked + .el-radio-button__inner {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    box-shadow: -1px 0 0 0 var(--accent);
+  }
+  .el-radio-button__inner:hover { color: var(--accent); }
+
+  /* Radio */
+  .el-radio { color: var(--text-secondary); }
+  .el-radio__input.is-checked .el-radio__inner { background: var(--accent); border-color: var(--accent); }
+  .el-radio__input.is-checked + .el-radio__label { color: var(--accent); }
+
+  /* Switch */
+  .el-switch__core { background: rgba(0, 0, 0, 0.12); border-color: transparent; }
+  .el-switch.is-checked .el-switch__core { background-color: var(--accent); border-color: var(--accent); }
+
+  /* Progress */
+  .el-progress-bar__outer { background: var(--bg-surface); border-radius: 0; }
+  .el-progress-bar__inner { transition: width 0.6s var(--ease-out); border-radius: 0 2px 2px 0; }
+  .el-progress__text { color: var(--text-secondary); font-size: 12px; }
+
+  /* Alert */
+  .el-alert { border-radius: var(--radius-md); border: 1px solid transparent; }
+  .el-alert--success { background: var(--success-bg); border-color: var(--success-border); }
+  .el-alert--warning { background: var(--warning-bg); border-color: var(--warning-border); }
+  .el-alert--info { background: var(--bg-surface); border-color: var(--border-subtle); }
+  .el-alert__title { color: var(--text-primary); }
+
+  /* Divider */
+  .el-divider { border-top-color: var(--border-subtle); }
+
+  /* Message */
+  .el-message { border-radius: var(--radius-md); border-width: 1px; }
+  .el-message--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+  .el-message--warning { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning); }
+  .el-message--error { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
+  .el-message .el-message__content { font-size: 14px; color: var(--text-primary); }
+
+  /* Message Box */
+  .el-message-box {
+    border-radius: var(--radius-xl);
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-xl);
+  }
+  .el-message-box__header { padding: 20px 24px 0; }
+  .el-message-box__title { color: var(--text-primary); }
+  .el-message-box__content { padding: 16px 24px; color: var(--text-secondary); }
+  .el-message-box__btns { padding: 0 24px 20px; }
+
+  /* Form */
+  .el-form-item__label { font-weight: 500; color: var(--text-secondary); font-size: 13px; }
+
+  /* Overlay */
+  .el-overlay-dialog { display: flex; align-items: center; justify-content: center; }
+  .el-overlay { background: rgba(0, 0, 0, 0.25); }
+
+  /* Loading */
+  .el-loading-spinner .path { stroke: var(--accent); }
+  .el-loading-spinner .el-loading-text { color: var(--accent); }
+
+  /* Checkbox */
+  .el-checkbox__inner { background: transparent; border-color: var(--border-strong); }
+  .el-checkbox__input.is-checked .el-checkbox__inner { background: var(--accent); border-color: var(--accent); }
+  .el-checkbox__input.is-indeterminate .el-checkbox__inner { background: var(--accent); border-color: var(--accent); }
+
+  /* ===== 单词高亮 ===== */
+  .word-hit {
+    color: var(--accent); font-weight: 600;
+    background: linear-gradient(180deg, transparent 55%, var(--accent-bg) 55%);
+    padding: 0 3px; border-radius: 2px;
+  }
+  .word-miss {
+    color: var(--danger); font-weight: 600;
+    background: linear-gradient(180deg, transparent 55%, var(--danger-bg) 55%);
+    padding: 0 3px; border-radius: 2px;
+  }
+
+  /* ===== 空状态 ===== */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 60px 20px; color: var(--text-tertiary);
+  }
+  .empty-state .el-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.35; }
+
+  /* ===== 过渡动画 ===== */
+  .fade-enter-active, .fade-leave-active {
+    transition: opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out);
+  }
+  .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(8px); }
+
+  /* ===== 工具类 ===== */
+  .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 20px; }
+  .card-title { font-weight: 500; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+  .word-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .word-tag-item { border-radius: 6px; font-size: 13px; }
+  .flex { display: flex; }
+  .flex-center { display: flex; align-items: center; justify-content: center; }
+  .flex-between { display: flex; align-items: center; justify-content: space-between; }
+  .gap-sm { gap: 8px; }
+  .gap-md { gap: 16px; }
+  .mb-sm { margin-bottom: 8px; }
+  .mb-md { margin-bottom: 16px; }
+  .mt-md { margin-top: 16px; }
+  .ml-sm { margin-left: 8px; }
+  .ml-md { margin-left: 16px; }
+  .text-secondary { color: var(--text-secondary); }
+  .text-success { color: var(--success); }
+  .text-danger { color: var(--danger); }
+  .rotating { animation: rotating 1.5s linear infinite; }
+  @keyframes rotating { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* ===== 音频播放器 ===== */
+  .audio-player {
+    display: flex; align-items: center; gap: 16px; padding: 14px 18px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-lg);
+  }
+  .audio-player .progress-section { flex: 1; min-width: 200px; }
+  .audio-player .time-display { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-tertiary); margin-top: -4px; }
+  .audio-player .control-group { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+  .audio-player .control-label { font-size: 12px; white-space: nowrap; }
+  .audio-player audio { width: 100%; border-radius: var(--radius-md); }
+
+  /* ===== 正文排版 ===== */
+  .english-body {
+    white-space: pre-wrap; line-height: 2.2; font-size: 15px; color: var(--text-primary);
+    font-family: 'Georgia', 'Noto Serif SC', 'Songti SC', serif;
+    letter-spacing: 0.02em;
+  }
+  .chinese-body {
+    white-space: pre-wrap; line-height: 2; font-size: 14px; color: var(--text-secondary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+  }
+
+  /* ===== 单词列表 ===== */
+  .word-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .word-list-tag { font-size: 13px; padding: 4px 12px; }
+
+  /* ===== 词伙搭配 ===== */
+  .collocations-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .collocation-item {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    background: var(--gold-bg); border: 1px solid var(--gold-border);
+    border-radius: var(--radius-md); font-size: 14px; transition: var(--transition-fast);
+    color: var(--text-secondary);
+  }
+  .collocation-item:hover { border-color: var(--gold); }
+
+  /* ===== 操作按钮 ===== */
+  .action-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* ===== 文本列表 ===== */
+  .text-list { display: flex; flex-direction: column; gap: 12px; }
+  .text-item {
+    padding: 18px 20px; border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+    cursor: pointer; transition: all var(--transition-base);
+    background: var(--bg-card);
+  }
+  .text-item:hover {
+    border-color: var(--accent-border);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .text-item:active { transform: translateY(0); }
+  .text-item-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .text-item-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .text-item-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .text-item-preview {
+    font-size: 13px; color: var(--text-tertiary); line-height: 1.7; margin-bottom: 12px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .text-item-footer { display: flex; align-items: center; justify-content: space-between; }
+  .text-item-footer .word-stats .el-tag--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+  .text-item-footer .word-stats .el-tag--danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
+
+  .text-header { display: flex; flex-direction: column; gap: 12px; }
+  .text-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  .text-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  /* ===== 统计卡片 ===== */
+  .stats-row { margin-bottom: 20px; }
+  .stat-item {
+    text-align: center; padding: 16px; border-radius: var(--radius-lg);
+    border: 1px solid transparent; transition: all var(--transition-base);
+  }
+  .stat-item:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+  .stat-item.success { background: var(--success-bg); border-color: var(--success-border); }
+  .stat-item.warning { background: var(--warning-bg); border-color: var(--warning-border); }
+  .stat-item.danger { background: var(--danger-bg); border-color: var(--danger-border); }
+  .stat-num { display: block; font-size: 32px; font-weight: 700; line-height: 1.2; }
+  .stat-item.success .stat-num { color: var(--success); }
+  .stat-item.warning .stat-num { color: var(--warning); }
+  .stat-item.danger .stat-num { color: var(--danger); }
+  .stat-label { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; display: block; }
+
+  .section-label { font-size: 12px; font-weight: 500; color: var(--text-tertiary); display: block; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .word-preview .word-tags { max-height: 200px; overflow-y: auto; }
+
+  /* ===== 熟词僻意 ===== */
+  .polysemy-card {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    transition: all var(--transition-base);
+    background: var(--bg-card);
+  }
+  .polysemy-card:hover {
+    border-color: var(--accent-border);
+    box-shadow: var(--shadow-sm);
+  }
+  .polysemy-card.is-selected { border-color: var(--accent); background: var(--accent-soft); }
+  .polysemy-card .card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .polysemy-card .word-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  .polysemy-card .meanings-section { display: flex; flex-direction: column; gap: 8px; }
+  .polysemy-card .meaning-row {
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+  }
+  .polysemy-card .meaning-row.common { background: var(--bg-surface); border-color: var(--border-subtle); }
+  .polysemy-card .meaning-row.business { background: var(--accent-soft); border-color: var(--accent-border); }
+  .polysemy-card .meaning-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-tertiary); margin-bottom: 6px; }
+  .polysemy-card .meaning-en { font-size: 15px; font-weight: 500; color: var(--text-primary); }
+  .polysemy-card .meaning-zh { font-size: 14px; color: var(--text-tertiary); margin-top: 2px; }
+  .polysemy-card .meaning-arrow { text-align: center; padding: 4px 0; }
+  .polysemy-card .collocations-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .polysemy-card .collocations-list .el-tag { background: var(--gold-bg); border-color: var(--gold-border); color: var(--gold); }
+  .polysemy-card .example-en { font-size: 14px; line-height: 1.8; color: var(--text-primary); }
+  .polysemy-card .example-zh { font-size: 14px; color: var(--text-tertiary); margin-top: 4px; }
+
+  /* ===== 结果页 ===== */
+  .el-card .word-list .el-tag--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+  .el-card .word-list .el-tag--danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
+
+  /* ===== 收藏按钮 ===== */
+  .el-button--warning {
+    --el-button-bg-color: var(--gold-bg);
+    --el-button-border-color: var(--gold-border);
+    --el-button-text-color: var(--gold);
+    --el-button-hover-bg-color: rgba(184, 149, 58, 0.15);
+    --el-button-hover-border-color: var(--gold);
+  }
+
+  /* ===== 表格内下拉 ===== */
+  .el-table .el-select .el-input__wrapper { background: transparent; box-shadow: none; }
+  .el-table .el-select .el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--accent-border) inset; }
+
+  /* ===== 历史记录卡片列表 ===== */
+  .story-list { display: flex; flex-direction: column; gap: 12px; }
+  .story-card {
+    display: flex; gap: 16px; padding: 16px 20px;
+    border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+    cursor: pointer; transition: all var(--transition-base);
+    background: var(--bg-card);
+  }
+  .story-card:hover {
+    border-color: var(--accent-border);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .story-card:active { transform: translateY(0); }
+  .story-card-cover {
+    width: 120px; min-height: 80px; border-radius: var(--radius-md);
+    overflow: hidden; flex-shrink: 0; background: var(--bg-surface);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .story-card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .story-cover-placeholder { display: flex; align-items: center; justify-content: center; width: 120px; height: 80px; color: var(--text-muted); }
+  .story-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .story-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .story-card-title { font-size: 14px; font-weight: 500; color: var(--text-primary); line-height: 1.4; }
+  .story-card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .story-card-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .story-card-tags .el-tag { margin: 0; }
+  .story-delete-btn { opacity: 0.5; transition: opacity var(--transition-fast); }
+  .story-card:hover .story-delete-btn { opacity: 1; }
+  .story-card-synopsis {
+    font-size: 13px; color: var(--text-tertiary); line-height: 1.6;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .story-card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+  .story-card-footer .word-stats .el-tag--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+  .story-card-footer .word-stats .el-tag--danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
+
+  /* ===== 历史页工具栏 ===== */
+  .history-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .history-total { font-size: 13px; white-space: nowrap; }
+
+  /* ===== 故事概览 ===== */
+  .story-overview { border-left: 3px solid var(--accent); }
+  .story-overview-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .story-overview-title { font-size: 18px; font-weight: 600; color: var(--text-primary); }
+  .story-overview-meta { display: flex; gap: 6px; }
+  .story-overview-synopsis { font-size: 14px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 12px; }
+  .story-overview-words { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* ===== 连环画面板 ===== */
+  .panels-container { display: flex; flex-direction: column; gap: 20px; margin-bottom: 20px; }
+  .panel-card {
+    display: flex; gap: 20px;
+    border: 1px solid var(--border-default); border-radius: var(--radius-xl);
+    padding: 20px; background: var(--bg-card);
+    transition: all var(--transition-base);
+  }
+  .panel-card:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); }
+  .panel-index {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    flex-shrink: 0; width: 48px; padding-top: 4px;
+  }
+  .panel-index-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 600;
+  }
+  .panel-index-role { font-size: 11px; color: var(--text-tertiary); }
+  .panel-image-wrap {
+    width: 240px; min-height: 160px; flex-shrink: 0;
+    border-radius: var(--radius-md); overflow: hidden;
+    background: var(--bg-surface);
+  }
+  .panel-image { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .panel-image-fallback {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 240px; height: 160px; color: var(--text-muted);
+  }
+  .panel-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .panel-sentence-en {
+    font-size: 16px; line-height: 1.8; color: var(--text-primary);
+    font-family: 'Georgia', 'Noto Serif SC', 'Songti SC', serif;
+  }
+  .panel-sentence-zh { font-size: 14px; color: var(--text-secondary); line-height: 1.6; }
+  .panel-words { display: flex; flex-wrap: wrap; gap: 6px; }
+  .panel-word-notes { display: flex; flex-direction: column; gap: 4px; }
+  .word-note-item { display: flex; gap: 8px; font-size: 13px; }
+  .word-note-word { font-weight: 500; color: var(--accent); flex-shrink: 0; }
+  .word-note-text { color: var(--text-secondary); }
+  .panel-collocations { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+  /* ===== 故事寓意 ===== */
+  .story-moral { border-left: 3px solid var(--gold); }
+  .story-moral-text { font-size: 14px; color: var(--text-secondary); line-height: 1.7; font-style: italic; }
+
+  /* ===== 熟词僻意注释 ===== */
+  .polysemy-notes-list { display: flex; flex-direction: column; gap: 8px; }
+  .polysemy-note-item { display: flex; gap: 8px; font-size: 13px; padding: 8px 12px; background: var(--gold-bg); border-radius: 6px; }
+  .polysemy-note-word { font-weight: 600; color: var(--gold); flex-shrink: 0; }
+  .polysemy-note-text { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="app-layout">
+    <!-- 顶部栏 — 极简毛玻璃 -->
+    <header class="app-header">
+      <div class="logo" @click="currentPage='words'">
+        <div class="logo-icon">
+          <el-icon :size="16"><Reading /></el-icon>
+        </div>
+        <span class="logo-text">TOEIC 顽固词</span>
+      </div>
+      <div class="header-right">
+        <span class="usage-tag">
+          AI {{ dailyUsage.ai }}/{{ dailyUsage.ai_limit }} · TTS {{ dailyUsage.tts }}/{{ dailyUsage.tts_limit }}
+        </span>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <!-- 侧边栏 — 极简书签 -->
+      <aside class="app-sidebar">
+        <el-menu :default-active="currentPage" @select="handleMenuSelect">
+          <el-menu-item index="words">
+            <el-icon><Collection /></el-icon>
+            <span>单词库</span>
+          </el-menu-item>
+          <el-menu-item index="import">
+            <el-icon><Upload /></el-icon>
+            <span>导入单词</span>
+          </el-menu-item>
+          <el-menu-item index="compile">
+            <el-icon><MagicStick /></el-icon>
+            <span>编译配置</span>
+          </el-menu-item>
+          <el-menu-item index="history">
+            <el-icon><Document /></el-icon>
+            <span>历史记录</span>
+          </el-menu-item>
+          <el-menu-item index="polysemy">
+            <el-icon><Discount /></el-icon>
+            <span>熟词僻意</span>
+          </el-menu-item>
+        </el-menu>
+      </aside>
+
+      <!-- 主内容 -->
+      <main class="app-main">
+        <!-- 单词库 -->
+        <div v-if="currentPage==='words'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>单词库</h2>
+              <p class="page-subtitle">管理你的托业顽固词汇</p>
+            </div>
+            <div class="flex gap-sm">
+              <el-button :icon="Upload" @click="currentPage='import'">导入单词</el-button>
+              <el-button type="primary" :icon="Plus" @click="showAddWordDialog=true">添加单词</el-button>
+            </div>
+          </div>
+          <el-card shadow="never" class="mb-md">
+            <div class="flex-between">
+              <el-input v-model="wordSearch" placeholder="搜索单词..." :prefix-icon="Search" clearable style="width:300px" @clear="loadWords" @keyup.enter="loadWords"></el-input>
+              <div class="flex gap-sm">
+                <el-tag v-if="selectedWords.length>0" type="primary" size="large">已选 {{ selectedWords.length }} 个单词</el-tag>
+                <el-button v-if="selectedWords.length>0" type="primary" :icon="MagicStick" @click="goCompile">发起编译</el-button>
+                <el-button v-if="selectedWords.length>0" type="danger" :icon="Delete" @click="batchDeleteWords">批量删除</el-button>
+              </div>
+            </div>
+          </el-card>
+          <el-card shadow="never">
+            <el-table :data="wordsData" v-loading="wordsLoading" @selection-change="s=>selectedWords=s" row-key="id" stripe>
+              <el-table-column type="selection" width="50"></el-table-column>
+              <el-table-column label="单词" min-width="140">
+                <template #default="{row}">
+                  <span style="font-weight:600">{{ row.word }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="词性" width="100">
+                <template #default="{row}">
+                  <el-input v-model="row.pos" size="small" placeholder="词性" style="width:90px" @change="()=>updateWord(row,'pos',row.pos)"></el-input>
+                </template>
+              </el-table-column>
+              <el-table-column label="中文释义" min-width="200">
+                <template #default="{row}">
+                  <el-input v-model="row.meaning_zh" size="small" placeholder="中文释义" @change="()=>updateWord(row,'meaning_zh',row.meaning_zh)"></el-input>
+                </template>
+              </el-table-column>
+              <el-table-column label="导入时间" width="160">
+                <template #default="{row}"><span class="text-secondary">{{ formatDate(row.created_at) }}</span></template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" fixed="right">
+                <template #default="{row}">
+                  <el-button link type="danger" :icon="Delete" @click="deleteWord(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="pagination-wrapper">
+              <el-pagination v-model:current-page="wordPage" v-model:page-size="wordPageSize" :total="wordTotal" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @size-change="loadWords" @current-change="loadWords"></el-pagination>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- 导入单词 -->
+        <div v-if="currentPage==='import'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>导入单词</h2>
+              <p class="page-subtitle">批量导入托业顽固词汇，支持换行或逗号分隔</p>
+            </div>
+            <el-button :icon="Back" @click="currentPage='words'">返回单词库</el-button>
+          </div>
+          <el-row :gutter="24">
+            <el-col :span="14">
+              <el-card shadow="never">
+                <template #header>
+                  <div class="flex-between">
+                    <span class="card-title">输入单词</span>
+                    <el-button :icon="UploadFilled" size="small" @click="triggerFileInput">从文件导入 (txt/csv)</el-button>
+                    <input ref="fileInputRef" type="file" accept=".txt,.csv" style="display:none" @change="handleFileChange" />
+                  </div>
+                </template>
+                <el-input v-model="importText" type="textarea" :rows="12" placeholder="请输入单词，支持换行分隔或逗号分隔，例如：&#10;accommodate&#10;negotiate, delegate&#10;procurement"></el-input>
+                <div class="flex gap-sm mt-md">
+                  <el-button type="primary" :icon="Search" :loading="parsing" @click="handleParse">预览解析</el-button>
+                  <el-button :icon="RefreshLeft" @click="importText=''">清空</el-button>
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="10">
+              <el-card shadow="never" style="min-height:400px">
+                <template #header><span class="card-title">解析结果</span></template>
+                <div v-if="!parseResult" class="empty-state">
+                  <el-icon><DocumentRemove /></el-icon>
+                  <p>输入单词后点击"预览解析"查看结果</p>
+                </div>
+                <div v-else class="parse-result">
+                  <el-row :gutter="16" class="stats-row">
+                    <el-col :span="8">
+                      <div class="stat-item success">
+                        <span class="stat-num">{{ parseResult.words.length }}</span>
+                        <span class="stat-label">有效单词</span>
+                      </div>
+                    </el-col>
+                    <el-col :span="8">
+                      <div class="stat-item warning">
+                        <span class="stat-num">{{ parseResult.duplicate_count }}</span>
+                        <span class="stat-label">重复单词</span>
+                      </div>
+                    </el-col>
+                    <el-col :span="8">
+                      <div class="stat-item danger">
+                        <span class="stat-num">{{ parseResult.invalid_count }}</span>
+                        <span class="stat-label">无效单词</span>
+                      </div>
+                    </el-col>
+                  </el-row>
+                  <el-alert v-if="parseResult.polysemy_matched>0" type="success" :closable="false" class="mb-md">
+                    <template #title>发现 {{ parseResult.polysemy_matched }} 个熟词僻意匹配</template>
+                  </el-alert>
+                  <div class="word-preview">
+                    <span class="section-label">有效单词预览</span>
+                    <div class="word-tags">
+                      <el-tag v-for="w in parseResult.words" :key="w" class="word-tag-item" effect="plain">{{ w }}</el-tag>
+                    </div>
+                  </div>
+                  <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="importing" :disabled="!parseResult.words.length" @click="doImport">
+                    确认导入 ({{ parseResult.words.length }} 个单词)
+                  </el-button>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- 编译配置 -->
+        <div v-if="currentPage==='compile'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>编译配置</h2>
+              <p class="page-subtitle">把单词编进一条有起承转合的剧情线，生成电影分镜连环画</p>
+            </div>
+            <el-button :icon="Back" @click="currentPage='words'">返回单词库</el-button>
+          </div>
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex-between">
+                <span class="card-title">已选单词 <el-tag type="primary" size="small" class="ml-sm">{{ compileWords.length }} 个</el-tag></span>
+                <el-button link type="primary" @click="currentPage='words'">修改选择</el-button>
+              </div>
+            </template>
+            <div v-if="compileWords.length===0" class="empty-state">
+              <el-icon><WarningFilled /></el-icon>
+              <p>未选择任何单词，请返回单词库选择</p>
+              <el-button type="primary" class="mt-md" @click="currentPage='words'">去选择单词</el-button>
+            </div>
+            <div v-else class="word-tags">
+              <el-tag v-for="w in compileWords" :key="w.id" closable @close="compileWords=compileWords.filter(x=>x.id!==w.id)" class="word-tag-item">{{ w.word }}</el-tag>
+            </div>
+          </el-card>
+          <el-card shadow="never" v-if="compileWords.length>0">
+            <el-form label-width="120px" label-position="right">
+              <el-form-item label="画面数量">
+                <el-radio-group v-model="compileForm.panel_count">
+                  <el-radio-button :value="3">3 画面 (短)</el-radio-button>
+                  <el-radio-button :value="4">4 画面 (标准)</el-radio-button>
+                  <el-radio-button :value="5">5 画面 (完整)</el-radio-button>
+                </el-radio-group>
+                <span class="ml-md text-secondary" style="font-size:12px">每画面塞 2-4 个目标词，单句聚焦记忆</span>
+              </el-form-item>
+              <el-form-item label="主题方向">
+                <el-input v-model="compileForm.theme_hint" placeholder="可选，如：投资失败 / 项目危机 / 采购谈判。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
+              </el-form-item>
+              <el-form-item label="文生图模型">
+                <el-select v-model="compileForm.image_model" placeholder="选择文生图模型" style="width:560px">
+                  <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
+                    <div style="padding:4px 0">
+                      <div style="font-size:13px;font-weight:600">{{ m.label }}</div>
+                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }} · 价格: {{ m.price }}</div>
+                    </div>
+                  </el-option>
+                </el-select>
+                <div v-if="compileForm.image_model" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
+                  <span>{{ getImageModelNote(compileForm.image_model) }}</span>
+                  <span class="ml-md" style="color:var(--warning-color)">价格: {{ getImageModelPrice(compileForm.image_model) }}</span>
+                  <span class="ml-md">预计生成 {{ compileForm.panel_count }} 张图</span>
+                </div>
+              </el-form-item>
+              <el-form-item label="立即生成音频">
+                <el-switch v-model="compileForm.generate_audio" active-text="编译完成后为整条剧情串联生成 TTS 听力音频"></el-switch>
+              </el-form-item>
+              <el-form-item v-if="compileForm.generate_audio" label="TTS 模型">
+                <el-select v-model="compileForm.tts_model" placeholder="选择语音合成模型" style="width:460px">
+                  <el-option-group v-for="(items, label) in groupedTtsModels" :key="label" :label="label">
+                    <el-option v-for="m in items" :key="m.value" :label="m.label" :value="m.value">
+                      <span style="font-size:13px">{{ m.label }}</span>
+                      <br><span style="font-size:11px;color:var(--text-tertiary)">推荐音色: {{ m.voices }}</span>
+                    </el-option>
+                  </el-option-group>
+                </el-select>
+                <span v-if="compileForm.tts_model" class="ml-sm" style="font-size:12px;color:var(--text-tertiary)">
+                  <br>当前默认音色: {{ getModelDefaultVoice(compileForm.tts_model) }}
+                </span>
+              </el-form-item>
+              <el-divider></el-divider>
+              <el-form-item>
+                <el-button type="primary" size="large" :icon="MagicStick" :loading="compiling" @click="handleCompile">开始 AI 编译</el-button>
+                <span class="ml-md text-secondary" style="font-size:13px">剧情生成 + 文生图约需 20-90 秒（取决于画面数与模型），请耐心等待</span>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </div>
+
+        <!-- 历史记录 -->
+        <div v-if="currentPage==='history'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>历史记录</h2>
+              <p class="page-subtitle">查看所有编译生成的剧情连环画，可搜索、筛选或删除</p>
+            </div>
+          </div>
+          <el-card shadow="never" class="mb-md">
+            <div class="history-toolbar">
+              <el-input v-model="historySearch" placeholder="搜索标题 / 简介 / 单词..." :prefix-icon="Search" clearable style="width:320px" @clear="onHistoryFilterChange" @keyup.enter="onHistoryFilterChange"></el-input>
+              <el-select v-model="historyFilter" style="width:130px" @change="onHistoryFilterChange">
+                <el-option label="全部" value="all"></el-option>
+                <el-option label="已收藏" value="favorited"></el-option>
+                <el-option label="有音频" value="audio"></el-option>
+              </el-select>
+              <el-button :icon="Refresh" @click="loadHistory">刷新</el-button>
+              <span v-if="historyTotal>0" class="text-secondary history-total">共 {{ historyTotal }} 条记录</span>
+            </div>
+          </el-card>
+          <el-card shadow="never" v-loading="historyLoading">
+            <div v-if="historyData.length===0 && !historyLoading" class="empty-state">
+              <el-icon><DocumentRemove /></el-icon>
+              <p>暂无历史记录</p>
+            </div>
+            <div v-else class="story-list">
+              <div v-for="h in historyData" :key="h.id" class="story-card" @click="viewResult(h)">
+                <div class="story-card-cover">
+                  <img v-if="h.first_image_url" :src="h.first_image_url" alt="cover" loading="lazy" />
+                  <div v-else class="story-cover-placeholder"><el-icon :size="28"><Picture /></el-icon></div>
+                </div>
+                <div class="story-card-body">
+                  <div class="story-card-header">
+                    <span class="story-card-title">{{ h.story_title || 'Untitled' }}</span>
+                    <div class="story-card-actions">
+                      <div class="story-card-tags">
+                        <el-tag size="small" type="info">{{ h.panel_count }} 画面</el-tag>
+                        <el-tag v-if="h.theme" size="small">{{ h.theme }}</el-tag>
+                        <el-tag v-if="h.is_favorited" size="small" type="warning" :icon="StarFilled">已收藏</el-tag>
+                      </div>
+                      <el-button link type="danger" :icon="Delete" class="story-delete-btn" @click.stop="deleteHistoryItem(h)">删除</el-button>
+                    </div>
+                  </div>
+                  <p class="story-card-synopsis">{{ h.story_synopsis || (h.body_en||'').slice(0,100) }}</p>
+                  <div class="story-card-footer">
+                    <div class="word-stats flex gap-sm">
+                      <el-tag size="small" type="success" effect="plain">命中 {{ (h.included_words||[]).length }}</el-tag>
+                      <el-tag v-if="(h.missing_words||[]).length>0" size="small" type="danger" effect="plain">未命中 {{ (h.missing_words||[]).length }}</el-tag>
+                      <el-tag v-if="h.has_audio" size="small" type="primary" effect="plain" :icon="Headset">音频</el-tag>
+                    </div>
+                    <span class="text-secondary">{{ formatDate(h.created_at) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="historyData.length>0" class="pagination-wrapper">
+              <el-pagination v-model:current-page="historyPage" :page-size="20" :total="historyTotal" layout="total, prev, pager, next" @current-change="loadHistory"></el-pagination>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- 熟词僻意 -->
+        <div v-if="currentPage==='polysemy'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>熟词僻意</h2>
+              <p class="page-subtitle">托业高频"熟词僻意"词汇，普通含义与商务含义对比
+                <el-tag v-if="candidateTotal>0" size="small" type="info" effect="plain" style="margin-left:8px">待检测 {{ candidateTotal }} 词</el-tag>
+              </p>
+            </div>
+            <div class="flex gap-sm">
+              <el-tooltip content="扫描单词库，调用AI自动识别托业高频熟词僻意并入库" placement="top">
+                <el-button type="success" :icon="MagicStick" :loading="autoDetectRunning" @click="runAutoDetect">
+                  自动检测{{ candidateTotal>0 ? ` (${candidateTotal})` : '' }}
+                </el-button>
+              </el-tooltip>
+            </div>
+          </div>
+          <el-card v-if="autoDetectResult" shadow="never" class="mb-md" :type="autoDetectResult.ok?'success':'danger'">
+            <template #header>
+              <div class="flex-between" style="width:100%">
+                <span class="card-title"><el-icon><MagicStick /></el-icon> 自动检测结果</span>
+                <el-button link @click="autoDetectResult=null; loadCandidates()"><el-icon><Close /></el-icon></el-button>
+              </div>
+            </template>
+            <p style="margin:0 0 12px" :class="autoDetectResult.ok?'text-primary':'text-danger'">
+              {{ autoDetectResult.message }}
+            </p>
+            <div v-if="autoDetectResult.added_count>0" style="margin-bottom:8px">
+              <span class="section-label">新增 {{ autoDetectResult.added_count }} 个熟词僻意</span>
+              <div class="flex gap-sm" style="flex-wrap:wrap;margin-top:6px">
+                <el-tag v-for="w in autoDetectResult.added_words" :key="'a'+w" type="success" effect="plain">{{ w }}</el-tag>
+              </div>
+            </div>
+            <div v-if="autoDetectResult.rejected_count>0">
+              <span class="section-label">判定不匹配 {{ autoDetectResult.rejected_count }} 个</span>
+              <div class="flex gap-sm" style="flex-wrap:wrap;margin-top:6px">
+                <el-tag v-for="w in autoDetectResult.rejected_words" :key="'r'+w" size="small" type="info" effect="plain">{{ w }}</el-tag>
+              </div>
+            </div>
+          </el-card>
+          <el-card shadow="never" class="mb-md">
+            <div class="flex-between" style="flex-wrap:wrap;gap:12px">
+              <div class="flex gap-md" style="align-items:center">
+                <el-input v-model="polysemySearch" placeholder="搜索单词，如：accommodate, address" :prefix-icon="Search" clearable style="width:360px" @keyup.enter="searchPolysemy"></el-input>
+                <el-button type="primary" :icon="Search" @click="searchPolysemy">搜索</el-button>
+              </div>
+              <span class="text-secondary" style="font-size:12px">
+                点击"自动检测"即可扫描单词库中 <b>{{ candidateTotal }}</b> 个未录入词条的单词，自动调用 AI 判断是否为托业高频熟词僻意
+              </span>
+            </div>
+          </el-card>
+          <el-card v-if="polysemyResult!==undefined" shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex-between" style="width:100%">
+                <span class="card-title">搜索结果</span>
+                <el-button v-if="polysemyResult" type="danger" plain size="small" :icon="Delete" @click="deletePolysemy(polysemyResult.word, 'result')">删除词条</el-button>
+              </div>
+            </template>
+            <div v-if="polysemyResult">
+              <div class="polysemy-card">
+                <div class="card-header">
+                  <span class="word-title">{{ polysemyResult.word }}</span>
+                  <div class="flex gap-sm">
+                    <el-tag v-if="polysemyResult.frequency_level" size="small" type="warning">频率: {{ polysemyResult.frequency_level }}</el-tag>
+                    <el-tag v-if="polysemyResult.toc_part" size="small">{{ polysemyResult.toc_part }}</el-tag>
+                  </div>
+                </div>
+                <div class="meanings-section" style="margin-top:12px">
+                  <div class="meaning-row common">
+                    <div class="meaning-label"><el-icon><Sunny /></el-icon> 普通含义</div>
+                    <div class="meaning-en">{{ polysemyResult.common_meaning_en }}</div>
+                    <div class="meaning-zh">{{ polysemyResult.common_meaning_zh }}</div>
+                  </div>
+                  <div class="meaning-arrow"><el-icon color="var(--accent)"><Bottom /></el-icon></div>
+                  <div class="meaning-row business">
+                    <div class="meaning-label"><el-icon color="var(--gold)"><Briefcase /></el-icon> <span style="color:var(--gold)">托业含义</span></div>
+                    <div class="meaning-en">{{ polysemyResult.business_meaning_en }}</div>
+                    <div class="meaning-zh">{{ polysemyResult.business_meaning_zh }}</div>
+                  </div>
+                </div>
+                <div v-if="polysemyResult.collocations&&polysemyResult.collocations.length" style="margin-top:12px">
+                  <span class="section-label">常用搭配</span>
+                  <div class="collocations-list">
+                    <el-tag v-for="c in polysemyResult.collocations" :key="c" effect="plain">{{ c }}</el-tag>
+                  </div>
+                </div>
+                <div v-if="polysemyResult.example_en" style="margin-top:12px">
+                  <span class="section-label">托业例句</span>
+                  <p class="example-en">{{ polysemyResult.example_en }}</p>
+                  <p class="example-zh">{{ polysemyResult.example_zh }}</p>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-state">
+              <el-icon><Search /></el-icon>
+              <p>未找到该单词的熟词僻意信息</p>
+            </div>
+          </el-card>
+          <el-card shadow="never">
+            <template #header>
+              <div class="flex-between" style="width:100%;flex-wrap:wrap;gap:12px">
+                <div class="flex gap-md" style="align-items:center">
+                  <span class="card-title">高频熟词僻意</span>
+                  <el-divider direction="vertical" v-if="polysemyHot.length>0"></el-divider>
+                  <el-checkbox v-if="polysemyHot.length>0" v-model="polysemyAllSelected" :indeterminate="polysemyIndeterminate" @change="toggleSelectAllPolysemy" size="small">全选本页</el-checkbox>
+                  <el-tag v-if="polysemySelectedCount>0" type="warning" size="small" effect="plain" style="margin-left:8px">已选 {{ polysemySelectedCount }} 个</el-tag>
+                </div>
+                <div class="flex gap-sm">
+                  <el-button v-if="polysemySelectedCount>0" type="danger" :icon="Delete" @click="batchDeletePolysemy">批量删除 ({{ polysemySelectedCount }})</el-button>
+                  <el-button v-if="polysemySelectedCount>0" link size="small" @click="clearPolysemySelection">清空选择</el-button>
+                </div>
+              </div>
+            </template>
+            <div v-loading="polysemyLoading">
+              <div v-if="polysemyHot.length===0 && !polysemyLoading" class="empty-state">
+                <el-icon><DocumentRemove /></el-icon>
+                <p>暂无数据</p>
+              </div>
+              <el-row v-else :gutter="16">
+                <el-col v-for="entry in polysemyHot" :key="entry.id" :span="12" class="mb-md">
+                  <div class="polysemy-card" :class="{'is-selected': polysemySelectedSet.has(entry.word)}">
+                    <div class="card-header">
+                      <div class="flex gap-sm" style="align-items:center">
+                        <el-checkbox :model-value="polysemySelectedSet.has(entry.word)" @change="(v)=>toggleSelectPolysemy(entry.word, v)" size="large"></el-checkbox>
+                        <span class="word-title">{{ entry.word }}</span>
+                      </div>
+                      <div class="flex gap-sm">
+                        <el-tag v-if="entry.frequency_level" size="small" type="warning">频率: {{ entry.frequency_level }}</el-tag>
+                        <el-tag v-if="entry.toc_part" size="small">{{ entry.toc_part }}</el-tag>
+                        <el-button type="danger" plain size="small" circle :icon="Delete" @click="deletePolysemy(entry.word, 'list')" title="删除此词条"></el-button>
+                      </div>
+                    </div>
+                    <div class="meanings-section" style="margin-top:12px">
+                      <div class="meaning-row common">
+                        <div class="meaning-label"><el-icon><Sunny /></el-icon> 普通含义</div>
+                        <div class="meaning-en">{{ entry.common_meaning_en }}</div>
+                        <div class="meaning-zh">{{ entry.common_meaning_zh }}</div>
+                      </div>
+                      <div class="meaning-arrow"><el-icon color="var(--accent)"><Bottom /></el-icon></div>
+                      <div class="meaning-row business">
+                        <div class="meaning-label"><el-icon color="var(--gold)"><Briefcase /></el-icon> <span style="color:var(--gold)">托业含义</span></div>
+                        <div class="meaning-en">{{ entry.business_meaning_en }}</div>
+                        <div class="meaning-zh">{{ entry.business_meaning_zh }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </el-col>
+              </el-row>
+              <div class="pagination-wrapper">
+                <el-pagination v-model:current-page="polysemyPage" :page-size="20" :total="polysemyTotal" layout="total, prev, pager, next" @current-change="loadPolysemyHot"></el-pagination>
+              </div>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- 结果详情页 -->
+        <div v-if="currentPage==='result'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>剧情连环画</h2>
+              <p class="page-subtitle">电影分镜记忆卡片 · 单句聚焦，剧情串联</p>
+            </div>
+            <el-button :icon="Back" @click="currentPage='history'; loadHistory()">返回历史记录</el-button>
+          </div>
+          <div v-if="resultLoading" class="flex-center" style="padding:100px 0">
+            <el-icon class="rotating" :size="32" color="var(--accent)"><Loading /></el-icon>
+            <span class="ml-sm text-secondary">正在加载剧情...</span>
+          </div>
+          <template v-else-if="resultData">
+            <el-card shadow="never" class="mb-md story-overview">
+              <div class="story-overview-header">
+                <h3 class="story-overview-title">{{ resultData.story_title || 'Untitled' }}</h3>
+                <div class="story-overview-meta">
+                  <el-tag size="small" type="info">{{ resultData.panel_count }} 画面</el-tag>
+                  <el-tag v-if="resultData.theme" size="small">{{ resultData.theme }}</el-tag>
+                  <el-tag v-if="resultData.image_model" size="small" type="warning" effect="plain">{{ resultData.image_model }}</el-tag>
+                </div>
+              </div>
+              <p v-if="resultData.story_synopsis" class="story-overview-synopsis">{{ resultData.story_synopsis }}</p>
+              <div class="story-overview-words">
+                <el-tag v-for="w in (resultData.included_words||[])" :key="w" type="success" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
+                <el-tag v-for="w in (resultData.missing_words||[])" :key="'m'+w" type="danger" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
+              </div>
+            </el-card>
+
+            <div class="panels-container">
+              <div v-for="(panel, idx) in (resultData.panels||[])" :key="idx" class="panel-card">
+                <div class="panel-index">
+                  <span class="panel-index-num">{{ idx + 1 }}</span>
+                  <span class="panel-index-role">{{ sceneRoleText(panel.scene_role) }}</span>
+                </div>
+                <div class="panel-image-wrap">
+                  <img v-if="panel.image_url" :src="panel.image_url" :alt="'panel ' + (idx+1)" class="panel-image" />
+                  <div v-else class="panel-image-fallback">
+                    <el-icon :size="40"><Picture /></el-icon>
+                    <span class="mt-sm text-secondary" style="font-size:12px">图片生成失败</span>
+                    <span v-if="panel.image_error" class="text-tertiary" style="font-size:11px;max-width:300px;text-align:center;word-break:break-all">{{ panel.image_error }}</span>
+                  </div>
+                </div>
+                <div class="panel-content">
+                  <div class="panel-sentence-en" v-html="highlightPanelWords(panel.sentence_en, panel.target_words_in_scene)"></div>
+                  <div class="panel-sentence-zh">{{ panel.sentence_zh }}</div>
+                  <div v-if="panel.target_words_in_scene && panel.target_words_in_scene.length" class="panel-words">
+                    <el-tag v-for="w in panel.target_words_in_scene" :key="w" size="small" type="primary" effect="plain" class="word-list-tag">{{ w }}</el-tag>
+                  </div>
+                  <div v-if="panel.word_notes && Object.keys(panel.word_notes).length" class="panel-word-notes">
+                    <div v-for="(note, w) in panel.word_notes" :key="w" class="word-note-item">
+                      <span class="word-note-word">{{ w }}</span>
+                      <span class="word-note-text">{{ note }}</span>
+                    </div>
+                  </div>
+                  <div v-if="panel.collocations && panel.collocations.length" class="panel-collocations">
+                    <el-icon color="var(--gold)"><Connection /></el-icon>
+                    <el-tag v-for="c in panel.collocations" :key="c" size="small" type="warning" effect="plain">{{ c }}</el-tag>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <el-card v-if="resultData.ending_moral" shadow="never" class="mb-md story-moral">
+              <template #header><span class="card-title"><el-icon><MagicStick /></el-icon> 故事寓意</span></template>
+              <p class="story-moral-text">{{ resultData.ending_moral }}</p>
+            </el-card>
+
+            <el-card v-if="resultData.polysemy_notes && Object.keys(resultData.polysemy_notes).length" shadow="never" class="mb-md">
+              <template #header><span class="card-title">熟词僻意</span></template>
+              <div class="polysemy-notes-list">
+                <div v-for="(note, w) in resultData.polysemy_notes" :key="w" class="polysemy-note-item">
+                  <span class="polysemy-note-word">{{ w }}</span>
+                  <span class="polysemy-note-text">{{ note }}</span>
+                </div>
+              </div>
+            </el-card>
+
+            <el-card shadow="never" class="mb-md">
+              <template #header>
+                <div class="flex-between">
+                  <span class="card-title"><el-icon><Headset /></el-icon> 整条剧情听力音频</span>
+                  <span v-if="resultData.tts_model" class="text-secondary" style="font-size:12px">模型: {{ resultData.tts_model }}</span>
+                </div>
+              </template>
+              <div v-if="resultData.audio_url" class="audio-player">
+                <audio :src="resultData.audio_url" controls style="width:100%"></audio>
+              </div>
+              <div v-else>
+                <el-alert v-if="resultData.audio_error" type="error" :closable="false" class="mb-sm" show-icon>
+                  <template #title>{{ resultData.audio_error }}</template>
+                </el-alert>
+              </div>
+              <div class="mt-md flex gap-sm" style="align-items:center;flex-wrap:wrap">
+                <el-select v-model="regenerateTtsModel" placeholder="选择模型" style="width:400px" size="small">
+                  <el-option-group v-for="(items, label) in groupedTtsModels" :key="label" :label="label">
+                    <el-option v-for="m in items" :key="m.value" :label="m.label" :value="m.value">
+                      <span style="font-size:12px">{{ m.label }}</span>
+                      <br><span style="font-size:10px;color:var(--text-tertiary)">推荐音色: {{ m.voices }}</span>
+                    </el-option>
+                  </el-option-group>
+                </el-select>
+                <el-input v-model="regenerateVoice" placeholder="音色名 (留空用默认)" style="width:180px" size="small"></el-input>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span style="font-size:12px;color:var(--text-tertiary);white-space:nowrap">语速</span>
+                  <el-slider v-model="regenerateSpeed" :min="0.5" :max="2.0" :step="0.1" style="width:100px" size="small"></el-slider>
+                  <span style="font-size:12px;color:var(--text-tertiary);min-width:30px">{{ regenerateSpeed.toFixed(1) }}x</span>
+                </div>
+                <el-button type="primary" :icon="Headset" :loading="audioLoading" @click="regenerateAudio">{{ resultData.audio_url ? '重新生成' : '生成音频' }}</el-button>
+              </div>
+            </el-card>
+
+            <el-card shadow="never">
+              <div class="action-buttons">
+                <el-button :type="resultData.is_favorited?'warning':'default'" :icon="resultData.is_favorited?StarFilled:Star" @click="toggleFavorite">{{ resultData.is_favorited?'已收藏':'收藏' }}</el-button>
+                <el-button type="danger" :icon="Delete" @click="deleteCurrentResult">删除本条记录</el-button>
+              </div>
+            </el-card>
+          </template>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- 添加单词对话框 -->
+  <el-dialog v-model="showAddWordDialog" title="添加单词" width="480px" @close="addWordForm.word='';addWordForm.pos='';addWordForm.meaning_zh=''">
+    <el-form label-width="80px">
+      <el-form-item label="单词">
+        <el-input v-model="addWordForm.word" placeholder="请输入英文单词" clearable @keyup.enter="submitAddWord"></el-input>
+      </el-form-item>
+      <el-form-item label="词性">
+        <el-input v-model="addWordForm.pos" placeholder="如：v. / n. / adj." clearable></el-input>
+      </el-form-item>
+      <el-form-item label="中文释义">
+        <el-input v-model="addWordForm.meaning_zh" type="textarea" :rows="3" placeholder="请输入中文释义"></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="showAddWordDialog=false">取消</el-button>
+      <el-button type="primary" :loading="addWordLoading" @click="submitAddWord">添加</el-button>
+    </template>
+  </el-dialog>
+
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script src="https://unpkg.com/@element-plus/icons-vue"></script>
+<script>
+const {createApp, ref, reactive, computed, watch, nextTick, onMounted} = Vue
+const ElIcons = ElementPlusIconsVue
+
+const app = createApp({
+  setup() {
+    // 图标注册
+    for (const [k,v] of Object.entries(ElIcons)) {
+      app.component(k, v)
+    }
+
+    const currentPage = ref('words')
+    const dailyUsage = ref({ai:0, tts:0, image:0, ai_limit:20, tts_limit:50, image_limit:50})
+
+    // 常量
+    const TTS_MODELS = [
+      {value:'qwen-audio-3.0-tts-plus',label:'Qwen-Audio TTS Plus (最佳音质·48kHz·指令控制)',group:'Qwen-Audio-TTS 系列',voices:'loongmary(英音女), loongeva_v3.6(美音女), loongjohn(美音男)'},
+      {value:'cosyvoice-v3-plus',label:'CosyVoice v3 Plus (高清音质·音色最丰富)',group:'CosyVoice 系列',voices:'loongandy_v3(美式男), loongbeth_v3(美式女), loongemily_v3(英式女), loongeric_v3(英式男)'},
+      {value:'cosyvoice-v3-flash',label:'CosyVoice v3 Flash (快速·性价比高·指令控制)',group:'CosyVoice 系列',voices:'loongandy_v3(美式男), loongbeth_v3(美式女), loongemily_v3(英式女), loongeric_v3(英式男)'},
+    ]
+    const groupedTtsModels = computed(() => {
+      const groups = {}
+      for (const m of TTS_MODELS) {
+        if (!groups[m.group]) groups[m.group] = []
+        groups[m.group].push(m)
+      }
+      return groups
+    })
+
+    // 文生图模型三档
+    const imageModels = ref([])
+    async function loadImageModels() {
+      try {
+        const res = await api('/api/image-models')
+        imageModels.value = res.models || []
+        if (imageModels.value.length && !imageModels.value.find(m => m.value === compileForm.image_model)) {
+          compileForm.image_model = imageModels.value[0].value
+        }
+      } catch(e) { /* silent */ }
+    }
+
+    // 单词库
+    const wordsData = ref([])
+    const wordsLoading = ref(false)
+    const wordTotal = ref(0)
+    const wordPage = ref(1)
+    const wordPageSize = ref(20)
+    const wordSearch = ref('')
+    const selectedWords = ref([])
+    const showAddWordDialog = ref(false)
+    const addWordForm = reactive({word:'',pos:'',meaning_zh:''})
+    const addWordLoading = ref(false)
+
+    // 导入
+    const importText = ref('')
+    const parsing = ref(false)
+    const parseResult = ref(null)
+    const importing = ref(false)
+    const fileInputRef = ref(null)
+
+    // 编译
+    const compileWords = ref([])
+    const compileForm = reactive({
+      panel_count:4, theme_hint:'', image_model:'wan2.7-image',
+      generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
+    })
+    const compiling = ref(false)
+
+    // 历史
+    const historyData = ref([])
+    const historyTotal = ref(0)
+    const historyPage = ref(1)
+    const historyLoading = ref(false)
+    const historySearch = ref('')
+    const historyFilter = ref('all')
+
+    // 熟词僻意
+    const polysemySearch = ref('')
+    const polysemyResult = ref(undefined)
+    const polysemyHot = ref([])
+    const polysemyTotal = ref(0)
+    const polysemyPage = ref(1)
+    const polysemyLoading = ref(false)
+    const candidateTotal = ref(0)
+    const autoDetectRunning = ref(false)
+    const autoDetectResult = ref(null)
+    const polysemySelectedSet = reactive(new Set())
+    const polysemySelectedCount = computed(() => polysemySelectedSet.size)
+    const polysemyAllSelected = computed({
+      get: () => polysemyHot.value.length > 0 && polysemyHot.value.every(e => polysemySelectedSet.has(e.word)),
+      set: v => {},
+    })
+    const polysemyIndeterminate = computed(() => {
+      if (polysemyHot.value.length === 0) return false
+      const selN = polysemyHot.value.filter(e => polysemySelectedSet.has(e.word)).length
+      return selN > 0 && selN < polysemyHot.value.length
+    })
+
+    // 结果
+    const resultData = ref(null)
+    const resultLoading = ref(false)
+    const audioLoading = ref(false)
+    const regenerateTtsModel = ref('qwen-audio-3.0-tts-plus')
+    const regenerateVoice = ref('')
+    const regenerateSpeed = ref(1.0)
+
+    // ====== 工具函数 ======
+    function formatDate(d) {
+      if (!d) return '-'
+      const dt = new Date(d)
+      if (isNaN(dt)) return '-'
+      return dt.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
+    }
+    function sceneRoleText(v) {
+      const m = {setup:'起',development:'承',climax:'转',resolution:'合'}
+      return m[v] || v || ''
+    }
+    function getModelDefaultVoice(model) {
+      const map = {
+        'qwen-audio-3.0-tts-plus':'loongmary (温暖英音·女)',
+        'cosyvoice-v3-plus':'loongandy_v3 (美式英文男)',
+        'cosyvoice-v3-flash':'loongandy_v3 (美式英文男)',
+      }
+      return map[model] || 'loongandy_v3 (美式英文男)'
+    }
+    function getImageModelNote(model) {
+      const m = imageModels.value.find(x => x.value === model)
+      return m ? m.note : ''
+    }
+    function getImageModelPrice(model) {
+      const m = imageModels.value.find(x => x.value === model)
+      return m ? m.price : ''
+    }
+    function highlightPanelWords(sentence, words) {
+      if (!sentence) return ''
+      let text = sentence.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      if (!words || !words.length) return text
+      const sorted = [...words].sort((a,b)=>b.length-a.length)
+      for (const w of sorted) {
+        const re = new RegExp('\\b('+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[a-z]*)\\b','gi')
+        text = text.replace(re, '<span class="word-hit">$1</span>')
+      }
+      return text
+    }
+
+    // ====== API 请求 ======
+    async function api(url, opts={}) {
+      const resp = await fetch(url, {
+        headers:{'Content-Type':'application/json',...opts.headers},
+        ...opts
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(()=>({detail:'请求失败'}))
+        const detail = err.detail
+        let msg = '请求失败'
+        if (Array.isArray(detail)) {
+          msg = detail.map(d => (d && d.msg) || JSON.stringify(d)).join('；')
+        } else if (typeof detail === 'string') {
+          msg = detail
+        } else if (err && err.message) {
+          msg = err.message
+        } else if (detail && typeof detail === 'object') {
+          msg = JSON.stringify(detail)
+        }
+        throw new Error(msg)
+      }
+      return resp.json()
+    }
+
+    // ====== 单词库 ======
+    async function loadWords() {
+      wordsLoading.value = true
+      try {
+        const res = await api(`/api/words?page=${wordPage.value}&page_size=${wordPageSize.value}&search=${encodeURIComponent(wordSearch.value)}`)
+        wordsData.value = res.items
+        wordTotal.value = res.total
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { wordsLoading.value = false }
+    }
+    async function updateWord(row, field, val) {
+      try {
+        await api(`/api/words/${row.id}`, {method:'PATCH', body:JSON.stringify({[field]:val})})
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+    }
+    async function deleteWord(row) {
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定删除单词 "${row.word}" 吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        await api(`/api/words/${row.id}`, {method:'DELETE'})
+        ElementPlus.ElMessage.success('删除成功')
+        loadWords()
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
+    }
+    async function submitAddWord() {
+      if (!addWordForm.word.trim()) { ElementPlus.ElMessage.warning('请输入单词'); return }
+      addWordLoading.value = true
+      try {
+        await api('/api/words', {method:'POST', body:JSON.stringify({
+          word: addWordForm.word.trim(),
+          pos: addWordForm.pos.trim(),
+          meaning_zh: addWordForm.meaning_zh.trim(),
+        })})
+        ElementPlus.ElMessage.success('单词添加成功')
+        showAddWordDialog.value = false
+        addWordForm.word = ''
+        addWordForm.pos = ''
+        addWordForm.meaning_zh = ''
+        loadWords()
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { addWordLoading.value = false }
+    }
+    function goCompile() {
+      if (selectedWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      compileWords.value = [...selectedWords.value]
+      currentPage.value = 'compile'
+    }
+    async function batchDeleteWords() {
+      if (selectedWords.value.length===0) return
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定批量删除选中的 ${selectedWords.value.length} 个单词吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        for (const w of selectedWords.value) {
+          await api(`/api/words/${w.id}`, {method:'DELETE'})
+        }
+        ElementPlus.ElMessage.success(`已删除 ${selectedWords.value.length} 个单词`)
+        selectedWords.value = []
+        loadWords()
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
+    }
+
+    // ====== 导入 ======
+    async function handleParse() {
+      if (!importText.value.trim()) { ElementPlus.ElMessage.warning('请输入单词'); return }
+      parsing.value = true
+      try {
+        parseResult.value = await api('/api/words/parse', {method:'POST', body:JSON.stringify({text:importText.value})})
+        if (parseResult.value.words.length===0) ElementPlus.ElMessage.warning('未解析到有效单词')
+        else ElementPlus.ElMessage.success(`解析到 ${parseResult.value.words.length} 个有效单词`)
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { parsing.value = false }
+    }
+    async function doImport() {
+      if (!parseResult.value || parseResult.value.words.length===0) return
+      importing.value = true
+      try {
+        const res = await api('/api/words/import', {method:'POST', body:JSON.stringify({words:parseResult.value.words})})
+        ElementPlus.ElMessage.success(`导入完成：成功 ${res.imported} 个，重复 ${res.duplicated} 个`)
+        parseResult.value = null
+        importText.value = ''
+        currentPage.value = 'words'
+        loadWords()
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { importing.value = false }
+    }
+    function triggerFileInput() { fileInputRef.value?.click() }
+    function handleFileChange(e) {
+      const file = e.target.files?.[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        importText.value = ev.target?.result || ''
+        ElementPlus.ElMessage.success('文件已读取，点击"预览解析"查看结果')
+      }
+      reader.readAsText(file)
+      e.target.value = ''
+    }
+
+    // ====== 编译 ======
+    async function handleCompile() {
+      if (compileWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
+      compiling.value = true
+      try {
+        const words = compileWords.value.map(w=>w.word).join(', ')
+        const res = await api('/api/generate', {method:'POST', body:JSON.stringify({
+          words,
+          panel_count: compileForm.panel_count,
+          theme_hint: compileForm.theme_hint,
+          image_model: compileForm.image_model,
+          generate_audio_immediately: compileForm.generate_audio,
+          tts_model: compileForm.tts_model,
+        })})
+        ElementPlus.ElMessage.success(`编译完成${res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
+        resultData.value = res
+        regenerateTtsModel.value = res.tts_model || compileForm.tts_model
+        currentPage.value = 'result'
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { compiling.value = false }
+    }
+
+    // ====== 历史 ======
+    async function loadHistory() {
+      historyLoading.value = true
+      try {
+        let url = `/api/texts?page=${historyPage.value}`
+        if (historySearch.value.trim()) url += `&search=${encodeURIComponent(historySearch.value.trim())}`
+        if (historyFilter.value === 'favorited') url += '&favorited=1'
+        if (historyFilter.value === 'audio') url += '&has_audio=1'
+        const textsRes = await api(url)
+        historyData.value = textsRes.items
+        historyTotal.value = textsRes.total
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { historyLoading.value = false }
+    }
+    function onHistoryFilterChange() {
+      historyPage.value = 1
+      loadHistory()
+    }
+    async function deleteHistoryItem(h) {
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定删除这条记录"${h.story_title || 'Untitled'}"吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        await api(`/api/texts/${h.id}`, {method:'DELETE'})
+        ElementPlus.ElMessage.success('删除成功')
+        loadHistory()
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
+    }
+    async function viewResult(h) {
+      resultLoading.value = true
+      currentPage.value = 'result'
+      try {
+        const res = await api(`/api/generations/${h.id}`)
+        resultData.value = res
+        regenerateTtsModel.value = res.tts_model || 'qwen-audio-3.0-tts-plus'
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { resultLoading.value = false }
+    }
+
+    // ====== 熟词僻意 ======
+    async function searchPolysemy() {
+      if (!polysemySearch.value.trim()) { ElementPlus.ElMessage.warning('请输入单词'); return }
+      try {
+        polysemyResult.value = await api(`/api/polysemy?word=${encodeURIComponent(polysemySearch.value.trim())}`)
+      } catch(e) {
+        polysemyResult.value = null
+      }
+    }
+    async function loadPolysemyHot() {
+      polysemyLoading.value = true
+      try {
+        const res = await api(`/api/polysemy/hot?page=${polysemyPage.value}`)
+        polysemyHot.value = res.items
+        polysemyTotal.value = res.total
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { polysemyLoading.value = false }
+    }
+    async function loadCandidates() {
+      try {
+        const res = await api('/api/polysemy/candidates?limit=1')
+        candidateTotal.value = res.total || 0
+      } catch(e) { candidateTotal.value = 0 }
+    }
+    async function runAutoDetect() {
+      if (autoDetectRunning.value) return
+      autoDetectRunning.value = true
+      autoDetectResult.value = null
+      try {
+        const res = await api('/api/polysemy/auto-detect', {
+          method: 'POST',
+          body: JSON.stringify({batch_size: 20, max_batches: 5}),
+        })
+        autoDetectResult.value = res
+        if (res.ok && res.added_count > 0) {
+          ElementPlus.ElMessage.success(`新增了 ${res.added_count} 个熟词僻意词条！`)
+        } else if (res.ok && res.added_count === 0) {
+          ElementPlus.ElMessage.info(res.message || '没有新增词条')
+        } else {
+          ElementPlus.ElMessage.warning(res.message || '检测未完成')
+        }
+        polysemyPage.value = 1
+        await Promise.all([loadPolysemyHot(), loadCandidates()])
+      } catch(e) {
+        ElementPlus.ElMessage.error(e.message || '自动检测失败')
+      } finally {
+        autoDetectRunning.value = false
+      }
+    }
+    async function deletePolysemy(word, source) {
+      if (!word) return
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定从熟词僻意库删除 "${word}" 吗？\n（同时会移除单词库中对应的"熟词僻意"标签）`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        await api(`/api/polysemy/${encodeURIComponent(word.trim().toLowerCase())}`, {method:'DELETE'})
+        ElementPlus.ElMessage.success('删除成功')
+        if (source === 'result') {
+          polysemyResult.value = undefined
+          polysemySearch.value = ''
+          polysemyPage.value = 1
+          await Promise.all([loadPolysemyHot(), loadCandidates()])
+        } else {
+          await loadPolysemyHot()
+          await loadCandidates()
+        }
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message || '删除失败') }
+    }
+    function toggleSelectPolysemy(word, checked) {
+      if (!word) return
+      const w = word.trim().toLowerCase()
+      if (checked) polysemySelectedSet.add(w)
+      else polysemySelectedSet.delete(w)
+    }
+    function toggleSelectAllPolysemy(checked) {
+      for (const e of polysemyHot.value) {
+        if (checked) polysemySelectedSet.add(e.word)
+        else polysemySelectedSet.delete(e.word)
+      }
+    }
+    function clearPolysemySelection() { polysemySelectedSet.clear() }
+    async function batchDeletePolysemy() {
+      if (polysemySelectedSet.size === 0) { ElementPlus.ElMessage.warning('请先选择要删除的词条'); return }
+      const words = Array.from(polysemySelectedSet)
+      try {
+        await ElementPlus.ElMessageBox.confirm(
+          `确定批量删除选中的 ${words.length} 个熟词僻意词条吗？\n（同时会移除单词库中对应的"熟词僻意"标签）`,
+          '提示',
+          {confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'}
+        )
+        const res = await api('/api/polysemy/batch-delete', {
+          method:'POST',
+          body: JSON.stringify({words})
+        })
+        ElementPlus.ElMessage.success(`成功删除 ${res.deleted || 0} 个词条`)
+        polysemySelectedSet.clear()
+        if (polysemyPage.value > 1 && polysemyHot.value.every(e => words.includes(e.word))) {
+          polysemyPage.value -= 1
+        }
+        await Promise.all([loadPolysemyHot(), loadCandidates()])
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message || '批量删除失败') }
+    }
+
+    // ====== 结果 ======
+    async function toggleFavorite() {
+      if (!resultData.value) return
+      try {
+        const newFav = !resultData.value.is_favorited
+        await api(`/api/texts/${resultData.value.id}/favorite`, {method:'POST', body:JSON.stringify({favorited:newFav})})
+        resultData.value.is_favorited = newFav
+        ElementPlus.ElMessage.success(newFav?'已收藏':'已取消收藏')
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+    }
+    async function deleteCurrentResult() {
+      if (!resultData.value) return
+      try {
+        await ElementPlus.ElMessageBox.confirm('确定删除本条记录吗？','提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        await api(`/api/texts/${resultData.value.id}`, {method:'DELETE'})
+        ElementPlus.ElMessage.success('删除成功')
+        resultData.value = null
+        currentPage.value = 'history'
+        loadHistory()
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
+    }
+    async function regenerateAudio() {
+      if (!resultData.value) return
+      audioLoading.value = true
+      try {
+        const res = await api(`/api/texts/${resultData.value.id}/regenerate-audio`, {method:'POST', body:JSON.stringify({
+          tts_model: regenerateTtsModel.value,
+          voice: regenerateVoice.value || undefined,
+          speed: regenerateSpeed.value,
+        })})
+        resultData.value.audio_url = res.url
+        resultData.value.audio_error = null
+        resultData.value.tts_model = res.tts_model || regenerateTtsModel.value
+        if (res.cached) {
+          ElementPlus.ElMessage.info('音频已存在，直接复用')
+        } else {
+          ElementPlus.ElMessage.success('音频已生成')
+        }
+      } catch(e) {
+        resultData.value.audio_error = e.message
+        ElementPlus.ElMessage.error(e.message)
+      } finally { audioLoading.value = false }
+    }
+
+    // ====== 菜单 ======
+    function handleMenuSelect(idx) {
+      currentPage.value = idx
+      if (idx==='words') loadWords()
+      if (idx==='history') loadHistory()
+      if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
+    }
+
+    // ====== 初始化 ======
+    onMounted(() => {
+      loadWords()
+      loadPolysemyHot()
+      loadCandidates()
+      loadImageModels()
+      api('/api/health').then(r => {
+        if (r && r.daily_usage) {
+          dailyUsage.value = {
+            ai: r.daily_usage.ai,
+            tts: r.daily_usage.tts,
+            image: r.daily_usage.image,
+            ai_limit: r.daily_usage.ai_limit,
+            tts_limit: r.daily_usage.tts_limit,
+            image_limit: r.daily_usage.image_limit,
+          }
+        }
+      }).catch(()=>{})
+    })
+
+    // ====== 监听单词搜索 ======
+    watch(wordSearch, () => {
+      wordPage.value = 1
+      loadWords()
+    })
+
+    // ====== 图标组件 ======
+    const Icons = {
+      Search: ElIcons.Search,
+      Upload: ElIcons.Upload,
+      Plus: ElIcons.Plus,
+      MagicStick: ElIcons.MagicStick,
+      Back: ElIcons.Back,
+      UploadFilled: ElIcons.UploadFilled,
+      RefreshLeft: ElIcons.RefreshLeft,
+      EditPen: ElIcons.EditPen,
+      Delete: ElIcons.Delete,
+      Refresh: ElIcons.Refresh,
+      ArrowUp: ElIcons.ArrowUp,
+      ArrowDown: ElIcons.ArrowDown,
+      StarFilled: ElIcons.StarFilled,
+      Star: ElIcons.Star,
+      Headset: ElIcons.Headset,
+    }
+
+    return {
+      currentPage, dailyUsage,
+      TTS_MODELS, groupedTtsModels, imageModels,
+      wordsData, wordsLoading, wordTotal, wordPage, wordPageSize, wordSearch, selectedWords,
+      showAddWordDialog, addWordForm, addWordLoading,
+      importText, parsing, parseResult, importing, fileInputRef,
+      compileWords, compileForm, compiling,
+      historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
+      polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
+      candidateTotal, autoDetectRunning, autoDetectResult,
+      polysemySelectedSet, polysemySelectedCount, polysemyAllSelected, polysemyIndeterminate,
+      resultData, resultLoading, audioLoading, regenerateTtsModel, regenerateVoice, regenerateSpeed,
+      formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
+      loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
+      handleParse, doImport, triggerFileInput, handleFileChange,
+      handleCompile, loadHistory, viewResult, deleteHistoryItem, onHistoryFilterChange,
+      searchPolysemy, loadPolysemyHot, loadCandidates, runAutoDetect, deletePolysemy,
+      toggleSelectPolysemy, toggleSelectAllPolysemy, clearPolysemySelection, batchDeletePolysemy,
+      toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect,
+      ...Icons,
+    }
+  }
+})
+
+// 注册所有图标
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component)
+}
+
+app.use(ElementPlus)
+app.mount('#app')
+</script>
+</body>
+</html>
