@@ -972,3 +972,344 @@ async def polysemy_auto_detect(req: Request):
         "added_words": added_words,
         "rejected_words": rejected_words,
     }
+
+
+# ========================================================================
+# 场景聚汇 API
+# ========================================================================
+
+def _row_to_scene(row: sqlite3.Row) -> dict:
+    """把 scenes 行转换为 dict。"""
+    return {
+        "id": row["id"],
+        "name_en": row["name_en"],
+        "name_zh": row["name_zh"],
+        "description": row["description"] or "",
+        "cover_image_url": row["cover_image_url"] or "",
+        "status": row["status"] or "active",
+        "created_at": row["created_at"],
+    }
+
+
+@router.get("/api/scenes")
+def list_scenes():
+    """获取所有场景概览（含词数统计）。"""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT s.*, COUNT(ws.word_id) AS word_count
+        FROM scenes s
+        LEFT JOIN word_scenes ws ON ws.scene_id = s.id
+        GROUP BY s.id
+        ORDER BY s.created_at
+    """).fetchall()
+    result = []
+    for r in rows:
+        scene = _row_to_scene(r)
+        scene["word_count"] = r["word_count"]
+        result.append(scene)
+    return {"scenes": result, "total": len(result)}
+
+
+@router.get("/api/scenes/suggestions")
+def list_scene_suggestions():
+    """获取待采纳的新场景建议（暂存于内存，每次 detect 返回时由前端管理）。
+    本接口返回空列表占位，建议总是由前端从最近的 detect 结果取。"""
+    return {"suggestions": []}
+
+
+@router.get("/api/scenes/{scene_id}")
+def get_scene(scene_id: int):
+    """获取单个场景详情，含词列表与词伙搭配。"""
+    conn = get_db()
+    s = conn.execute("SELECT * FROM scenes WHERE id = ?", (scene_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "场景不存在")
+    scene = _row_to_scene(s)
+
+    words = conn.execute("""
+        SELECT w.id, w.word, w.pos, w.meaning_zh, ws.created_at AS assigned_at
+        FROM word_scenes ws
+        JOIN words w ON w.id = ws.word_id
+        WHERE ws.scene_id = ?
+        ORDER BY ws.created_at DESC
+    """, (scene_id,)).fetchall()
+    scene["words"] = [dict(w) for w in words]
+
+    cols = conn.execute("""
+        SELECT * FROM scene_collocations WHERE scene_id = ? ORDER BY created_at DESC
+    """, (scene_id,)).fetchall()
+    scene["collocations"] = []
+    for c in cols:
+        d = dict(c)
+        d["words"] = json.loads(d.get("words") or "[]")
+        scene["collocations"].append(d)
+    return scene
+
+
+@router.post("/api/scenes/detect")
+async def detect_scenes(request: Request):
+    """场景自动检测：增量扫描未分类单词 + LLM 分类 + 新场景建议。
+    Body 可选 {limit: int, force: bool}。"""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    limit = int(body.get("limit", 50) or 50)
+    limit = max(1, min(limit, 500))
+    force = bool(body.get("force", False))
+
+    conn = get_db()
+    # 1) 已有场景
+    existing = conn.execute(
+        "SELECT id, name_en, name_zh, description FROM scenes WHERE status = 'active'"
+    ).fetchall()
+    existing_scenes = [dict(r) for r in existing]
+
+    # 2) 待分类单词：未在 word_scenes 表中的词
+    if force:
+        unassigned = conn.execute("""
+            SELECT w.id, w.word FROM words w WHERE w.word IS NOT NULL AND w.word != ''
+            ORDER BY w.id LIMIT ?
+        """, (limit,)).fetchall()
+    else:
+        unassigned = conn.execute("""
+            SELECT w.id, w.word FROM words w
+            LEFT JOIN word_scenes ws ON ws.word_id = w.id
+            WHERE ws.word_id IS NULL AND w.word IS NOT NULL AND w.word != ''
+            ORDER BY w.id LIMIT ?
+        """, (limit,)).fetchall()
+
+    words_to_assign = [r["word"] for r in unassigned]
+    word_id_map = {r["word"].lower(): r["id"] for r in unassigned}
+
+    if not words_to_assign:
+        return {
+            "scanned": 0,
+            "assigned_count": 0,
+            "low_confidence_count": 0,
+            "new_scenes_suggested": [],
+            "message": "没有待分类的单词",
+        }
+
+    # 3) 调用 LLM
+    result = await call_deepseek_scene_detect(words_to_assign, existing_scenes)
+    assignments = result["scene_assignments"]
+    new_scenes = result["new_scenes_suggested"]
+    warning = result.get("warning", "")
+
+    # 4) 写入 word_scenes（覆盖式：先删后加，确保低置信度也存）
+    assigned = 0
+    low_conf_count = 0
+    for a in assignments:
+        wid = word_id_map.get(a["word"].lower())
+        if wid is None:
+            continue
+        conn.execute("DELETE FROM word_scenes WHERE word_id = ?", (wid,))
+        conn.execute(
+            "INSERT OR IGNORE INTO word_scenes (word_id, scene_id) VALUES (?,?)",
+            (wid, a["scene_id"]),
+        )
+        assigned += 1
+        if a["low_confidence"]:
+            low_conf_count += 1
+    conn.commit()
+
+    msg = f"扫描 {len(words_to_assign)} 词，已归类 {assigned} 词，低置信度 {low_conf_count} 词，建议新场景 {len(new_scenes)} 个"
+    if warning:
+        msg = f"⚠️ {warning}"
+    return {
+        "scanned": len(words_to_assign),
+        "assigned_count": assigned,
+        "low_confidence_count": low_conf_count,
+        "new_scenes_suggested": new_scenes,
+        "warning": warning,
+        "message": msg,
+    }
+
+
+@router.post("/api/scenes/adopt")
+async def adopt_scene(request: Request):
+    """采纳一个新场景建议并立即把对应词归到该场景。
+    Body: {name, name_zh, description, suggested_words: [...]}"""
+    body = await request.json()
+    name_en = str(body.get("name") or body.get("name_en") or "").strip()
+    name_zh = str(body.get("name_zh") or "").strip()
+    desc = str(body.get("description") or "").strip()
+    suggested_words = body.get("suggested_words") or []
+    if not name_en:
+        raise HTTPException(400, "name 必填")
+
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO scenes (name_en, name_zh, description, status) VALUES (?,?,?,?)",
+        (name_en, name_zh, desc, "active"),
+    )
+    new_scene_id = cur.lastrowid
+    conn.commit()
+
+    # 把 suggested_words 归到新场景
+    assigned = 0
+    if suggested_words:
+        for w in suggested_words:
+            wid_row = conn.execute("SELECT id FROM words WHERE LOWER(word) = LOWER(?)", (str(w),)).fetchone()
+            if wid_row:
+                conn.execute(
+                    "INSERT OR IGNORE INTO word_scenes (word_id, scene_id) VALUES (?,?)",
+                    (wid_row["id"], new_scene_id),
+                )
+                assigned += 1
+        conn.commit()
+
+    return {
+        "scene_id": new_scene_id,
+        "name_en": name_en,
+        "name_zh": name_zh,
+        "assigned_count": assigned,
+        "message": f"新场景「{name_en}」已创建，归并 {assigned} 个词",
+    }
+
+
+@router.patch("/api/scenes/{scene_id}")
+async def update_scene(scene_id: int, request: Request):
+    """编辑场景：可改 name/name_zh/description，增删词。
+    Body: {name_en?, name_zh?, description?, add_words?: [word_id|str], remove_words?: [word_id|str]}"""
+    body = await request.json()
+    conn = get_db()
+    s = conn.execute("SELECT id FROM scenes WHERE id = ?", (scene_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "场景不存在")
+
+    if "name_en" in body:
+        conn.execute("UPDATE scenes SET name_en = ? WHERE id = ?", (str(body["name_en"]).strip(), scene_id))
+    if "name_zh" in body:
+        conn.execute("UPDATE scenes SET name_zh = ? WHERE id = ?", (str(body["name_zh"]).strip(), scene_id))
+    if "description" in body:
+        conn.execute("UPDATE scenes SET description = ? WHERE id = ?", (str(body["description"]).strip(), scene_id))
+
+    added = 0
+    for w in (body.get("add_words") or []):
+        wid = _resolve_word_id(conn, w)
+        if wid:
+            conn.execute("INSERT OR IGNORE INTO word_scenes (word_id, scene_id) VALUES (?,?)", (wid, scene_id))
+            added += 1
+
+    removed = 0
+    for w in (body.get("remove_words") or []):
+        wid = _resolve_word_id(conn, w)
+        if wid:
+            cur = conn.execute("DELETE FROM word_scenes WHERE word_id = ? AND scene_id = ?", (wid, scene_id))
+            removed += cur.rowcount
+
+    conn.commit()
+    return {
+        "scene_id": scene_id,
+        "added_count": added,
+        "removed_count": removed,
+        "message": f"已更新场景（增 {added} / 删 {removed}）",
+    }
+
+
+def _resolve_word_id(conn: sqlite3.Connection, w) -> int | None:
+    """把 word_id(int) 或 word(str) 解析成 id。"""
+    if isinstance(w, int):
+        return w
+    s = str(w).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    row = conn.execute("SELECT id FROM words WHERE LOWER(word) = LOWER(?)", (s,)).fetchone()
+    return row["id"] if row else None
+
+
+@router.delete("/api/scenes/{scene_id}")
+def delete_scene(scene_id: int):
+    """删除场景（word_scenes/scene_collocations 由 ON DELETE CASCADE 联动删除）。"""
+    conn = get_db()
+    s = conn.execute("SELECT id FROM scenes WHERE id = ?", (scene_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "场景不存在")
+    conn.execute("DELETE FROM scenes WHERE id = ?", (scene_id,))
+    conn.commit()
+    return {"scene_id": scene_id, "message": "场景已删除"}
+
+
+@router.post("/api/scenes/{scene_id}/compile")
+async def compile_scene(scene_id: int, request: Request):
+    """场景批量编译：取该场景下所有单词，调批量编译生成连环画。
+    Body: {panel_count?, theme_hint?, image_model?}"""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    panel_count = int(body.get("panel_count", 4) or 4)
+    theme_hint = str(body.get("theme_hint", "") or "")
+    image_model = str(body.get("image_model", "") or "")
+
+    conn = get_db()
+    s = conn.execute("SELECT * FROM scenes WHERE id = ?", (scene_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "场景不存在")
+
+    words = conn.execute("""
+        SELECT w.word FROM word_scenes ws
+        JOIN words w ON w.id = ws.word_id
+        WHERE ws.scene_id = ? ORDER BY w.word
+    """, (scene_id,)).fetchall()
+    word_list = [r["word"] for r in words]
+    if not word_list:
+        raise HTTPException(400, "该场景下没有单词，无法编译")
+
+    # 复用现有批量编译逻辑（生成深图但暂不生图，由前端按需触发生图）
+    story, usage = await call_deepseek(word_list, panel_count, theme_hint)
+    gen_id = str(uuid.uuid4())
+
+    panels_json = []
+    for i, p in enumerate(story.get("panels", [])):
+        panels_json.append({
+            "scene_index": i,
+            "sentence_en": p.get("sentence_en", ""),
+            "sentence_zh": p.get("sentence_zh", ""),
+            "collocations": p.get("collocations", []),
+            "image_prompt": p.get("image_prompt", ""),
+            "image_url": "",
+            "image_error": None,
+        })
+
+    conn.execute("""
+        INSERT INTO generations (id,words,panel_count,theme_hint,
+                                 story_title,theme,story_synopsis,body_en,model,image_model,panels,
+                                 polysemy_notes,included_words,missing_words,ending_moral,
+                                 generation_type,style)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        gen_id,
+        json.dumps(word_list, ensure_ascii=False),
+        panel_count,
+        theme_hint,
+        story.get("story_title", ""),
+        story.get("theme", ""),
+        story.get("story_synopsis", ""),
+        story.get("body_en", ""),
+        "deepseek-chat",
+        image_model,
+        json.dumps(panels_json, ensure_ascii=False),
+        json.dumps(story.get("polysemy_notes", {}), ensure_ascii=False),
+        json.dumps(story.get("included_words", []), ensure_ascii=False),
+        json.dumps(story.get("missing_words", []), ensure_ascii=False),
+        story.get("ending_moral", ""),
+        "scene",
+        s["name_en"],
+    ))
+    conn.commit()
+
+    return {
+        "gen_id": gen_id,
+        "scene_id": scene_id,
+        "scene_name": s["name_en"],
+        "word_count": len(word_list),
+        "panel_count": panel_count,
+        "message": f"场景「{s['name_en']}」已编译 {len(word_list)} 词 → {panel_count} 画面连环画",
+    }

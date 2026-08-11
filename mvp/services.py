@@ -26,6 +26,7 @@ __all__ = [
     "_get_image_model_config",
     "call_polysemy_detection",
     "call_word_enrichment",
+    "call_deepseek_scene_detect",
 ]
 
 # ========================================================================
@@ -775,3 +776,170 @@ async def call_word_enrichment(words: list[str]) -> dict:
             "meaning_zh": str(r.get("meaning_zh", ""))[:200],
         })
     return {"results": cleaned, "skipped": False}
+
+
+# ========================================================================
+# 场景聚汇：自动检测
+# ========================================================================
+
+SCENE_DETECT_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator.
+
+You will receive:
+1) A list of existing scenes (scene_id + name + name_zh + description)
+2) A list of words that need to be assigned to scenes
+
+For each word, decide which scene it best fits. Use the existing scenes if possible; if a word does not fit any existing scene well, propose a NEW scene.
+
+OUTPUT JSON ONLY:
+{
+  "scene_assignments": [
+    {"word": "...", "scene_id": 3, "confidence": 0.85, "low_confidence": false},
+    ...
+  ],
+  "new_scenes_suggested": [
+    {
+      "name": "Customer Service",
+      "name_zh": "客户服务",
+      "description": "客户咨询、投诉、售后支持",
+      "suggested_words": ["refund", "complain", "inquiry", ...],
+      "confidence": 0.8
+    },
+    ...
+  ]
+}
+
+RULES:
+1. Each existing-scene assignment confidence ∈ [0,1]. If < 0.5, set low_confidence=true.
+2. Don't force-fit. If a group of words clearly forms a new TOEIC business scene not in the existing list, propose a new scene in new_scenes_suggested (max 3 new scenes).
+3. scene_id in scene_assignments MUST be one of the existing scene IDs. New scene suggestions go ONLY into new_scenes_suggested.
+4. Every word MUST appear exactly once in scene_assignments.
+5. Output only the JSON object."""
+
+
+def _build_scene_detect_user_prompt(words: list[str], existing_scenes: list[dict]) -> str:
+    """构造场景检测用户 prompt。"""
+    lines = [f"EXISTING_SCENES ({len(existing_scenes)}):"]
+    for s in existing_scenes:
+        name = s.get('name_en') or s.get('name') or ''
+        lines.append(f"- scene_id={s['id']} | name={name} | name_zh={s.get('name_zh','')} | description={s.get('description','')}")
+    lines.append("")
+    lines.append(f"WORDS_TO_ASSIGN ({len(words)}):")
+    for w in words:
+        lines.append(f"- {w}")
+    lines.append("")
+    lines.append("Output only the JSON object as described.")
+    return "\n".join(lines)
+
+
+# 无已有场景时的"纯分组"模式 prompt
+SCENE_DETECT_GROUPING_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator.
+
+Group the given words into 3-6 TOEIC business scenes. There are NO existing scenes.
+
+Output ONLY this JSON:
+{"new_scenes_suggested": [{"name": "HR", "name_zh": "人力资源", "description": "招聘薪酬", "suggested_words": ["word1","word2"], "confidence": 0.9}]}
+
+Rules:
+1. Each word goes into exactly ONE scene.
+2. Use TOEIC domains: HR, Finance, Logistics, Meetings, Contracts, Marketing etc.
+3. Keep description short (Chinese, one line).
+4. Do NOT include scene_assignments field.
+5. Output only JSON, no other text."""
+
+
+def _build_scene_detect_grouping_user_prompt(words: list[str]) -> str:
+    """构造纯分组模式的用户 prompt。"""
+    lines = [f"WORDS_TO_GROUP ({len(words)}):"]
+    for w in words:
+        lines.append(f"- {w}")
+    lines.append("")
+    lines.append("There are NO existing scenes. Propose 3-8 new scenes covering all words above.")
+    lines.append("Output only the JSON object with scene_assignments=[] and new_scenes_suggested=[...].")
+    return "\n".join(lines)
+
+
+async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dict]) -> dict:
+    """调用 DeepSeek 进行场景检测。
+    返回 {"scene_assignments": [...], "new_scenes_suggested": [...]}。
+    """
+    if not words:
+        return {"scene_assignments": [], "new_scenes_suggested": []}
+    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
+        raise HTTPException(500, "未配置 DEEPSEEK_API_KEY 或 CHEAP_LLM_API_KEY")
+
+    # 无已有场景时，切换为"纯分组"模式：让 LLM 直接对所有词做场景分组
+    has_existing = len(existing_scenes) > 0
+    if has_existing:
+        system_prompt = SCENE_DETECT_SYSTEM_PROMPT
+        user_prompt = _build_scene_detect_user_prompt(words, existing_scenes)
+    else:
+        system_prompt = SCENE_DETECT_GROUPING_SYSTEM_PROMPT
+        user_prompt = _build_scene_detect_grouping_user_prompt(words)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    data = await _call_llm_with_fallback(
+        messages=messages,
+        temperature=0.2,
+        max_tokens=8192,
+        response_format={"type": "json_object"},
+        timeout=90.0,
+    )
+    if data is None:
+        raise HTTPException(500, "LLM 调用失败（双模型均无响应）")
+
+    content = data["choices"][0]["message"]["content"]
+    if not content or not content.strip():
+        # LLM 返回空内容：返回空结果而非抛异常，让前端正常显示
+        return {
+            "scene_assignments": [],
+            "new_scenes_suggested": [],
+            "warning": "LLM 返回空内容，请稍后重试或检查 API Key",
+        }
+    try:
+        parsed = _extract_json(content)
+    except HTTPException:
+        return {
+            "scene_assignments": [],
+            "new_scenes_suggested": [],
+            "warning": f"LLM 响应解析失败，请稍后重试。响应前 200 字符: {content[:200]}",
+        }
+
+    # 容错与清洗
+    assignments = []
+    existing_ids = {s["id"] for s in existing_scenes}
+    for a in parsed.get("scene_assignments", []):
+        w = str(a.get("word", "")).strip().lower()
+        sid = a.get("scene_id")
+        conf = float(a.get("confidence", 0.0))
+        low = bool(a.get("low_confidence", conf < 0.5))
+        if not w or sid is None or sid not in existing_ids:
+            continue
+        assignments.append({
+            "word": w,
+            "scene_id": int(sid),
+            "confidence": conf,
+            "low_confidence": low,
+        })
+
+    new_scenes = []
+    for ns in parsed.get("new_scenes_suggested", [])[:5]:
+        name = str(ns.get("name", "")).strip()[:60]
+        name_zh = str(ns.get("name_zh", "")).strip()[:60]
+        desc = str(ns.get("description", "")).strip()[:300]
+        suggested = [str(w).strip().lower() for w in ns.get("suggested_words", []) if str(w).strip()][:50]
+        conf = float(ns.get("confidence", 0.5))
+        if not name:
+            continue
+        new_scenes.append({
+            "name": name,
+            "name_zh": name_zh,
+            "description": desc,
+            "suggested_words": suggested,
+            "confidence": conf,
+        })
+
+    return {"scene_assignments": assignments, "new_scenes_suggested": new_scenes}
