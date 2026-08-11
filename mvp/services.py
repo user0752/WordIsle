@@ -447,28 +447,35 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_polysemy_detection(words: list[str]):
-    """调用 LLM 批量判断单词是否为托业高频熟词僻意（先试廉价模型，失败降级到 DeepSeek）。"""
+    """调用 DeepSeek 批量判断单词是否为托业高频熟词僻意，返回结构化词条。"""
     if not words:
         return {"results": []}
-    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
-        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 或 CHEAP_LLM_API_KEY 环境变量")
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
     user_prompt = _build_polysemy_detect_prompt(words)
-    messages = [
-        {"role": "system", "content": POLYSEMY_DETECT_SYSTEM},
-        {"role": "user", "content": user_prompt},
-    ]
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": POLYSEMY_DETECT_SYSTEM},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.4,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
+    }
 
-    data = await _call_llm_with_fallback(
-        messages=messages,
-        temperature=0.4,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
-        timeout=120.0,
-    )
-
-    if data is None:
-        raise HTTPException(500, "LLM 调用失败（廉价模型和 DeepSeek 均不可用）")
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{DEEPSEEK_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
     content = data["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):
