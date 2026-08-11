@@ -134,6 +134,69 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
 
 
 # ========================================================================
+# LLM 双模型兜底调用（先试廉价模型，失败降级到 DeepSeek）
+# ========================================================================
+
+async def _call_llm_with_fallback(
+    messages: list[dict],
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+    response_format: dict | None = None,
+    timeout: float = 30.0,
+) -> dict | None:
+    """调用 LLM，先试廉价模型，失败时降级到 DeepSeek。
+    返回解析后的 data dict；两者都失败时返回 None。"""
+    payload: dict = {
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format:
+        payload["response_format"] = response_format
+
+    # 1) 尝试廉价模型（如智谱 GLM-4.7-Flash）
+    if CHEAP_LLM_API_KEY:
+        payload["model"] = CHEAP_LLM_MODEL
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f"{CHEAP_LLM_BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {CHEAP_LLM_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                # 429 限流直接降级，不重试
+                if resp.status_code == 429:
+                    pass
+                else:
+                    resp.raise_for_status()
+                    return resp.json()
+        except Exception:
+            pass
+
+    # 2) 降级到 DeepSeek
+    if not DEEPSEEK_API_KEY:
+        return None
+    payload["model"] = DEEPSEEK_MODEL
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{DEEPSEEK_BASE}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return None
+
+
+# ========================================================================
 # 百炼 TTS 语音合成
 # ========================================================================
 
@@ -384,35 +447,28 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_polysemy_detection(words: list[str]):
-    """调用 DeepSeek 批量判断单词是否为托业高频熟词僻意，返回结构化词条。"""
+    """调用 LLM 批量判断单词是否为托业高频熟词僻意（先试廉价模型，失败降级到 DeepSeek）。"""
     if not words:
         return {"results": []}
-    if not DEEPSEEK_API_KEY:
-        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
+    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
+        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 或 CHEAP_LLM_API_KEY 环境变量")
 
     user_prompt = _build_polysemy_detect_prompt(words)
-    payload = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": POLYSEMY_DETECT_SYSTEM},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.4,
-        "max_tokens": 4096,
-        "response_format": {"type": "json_object"},
-    }
+    messages = [
+        {"role": "system", "content": POLYSEMY_DETECT_SYSTEM},
+        {"role": "user", "content": user_prompt},
+    ]
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    data = await _call_llm_with_fallback(
+        messages=messages,
+        temperature=0.4,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+        timeout=120.0,
+    )
+
+    if data is None:
+        raise HTTPException(500, "LLM 调用失败（廉价模型和 DeepSeek 均不可用）")
 
     content = data["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):
@@ -497,37 +553,27 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_word_enrichment(words: list[str]) -> dict:
-    """调用 DeepSeek 批量补充单词的词性和中文释义。"""
+    """调用 LLM 批量补充单词的词性和中文释义（先试廉价模型，失败降级到 DeepSeek）。"""
     if not words:
         return {"results": []}
-    if not DEEPSEEK_API_KEY:
+    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
         return {"results": [], "skipped": True, "reason": "no_api_key"}
 
     user_prompt = _build_enrich_prompt(words)
-    payload = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": WORD_ENRICH_SYSTEM},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 2048,
-        "response_format": {"type": "json_object"},
-    }
+    messages = [
+        {"role": "system", "content": WORD_ENRICH_SYSTEM},
+        {"role": "user", "content": user_prompt},
+    ]
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{DEEPSEEK_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception:
+    data = await _call_llm_with_fallback(
+        messages=messages,
+        temperature=0.2,
+        max_tokens=2048,
+        response_format={"type": "json_object"},
+        timeout=30.0,
+    )
+
+    if data is None:
         return {"results": [], "skipped": True, "reason": "llm_error"}
 
     content = data["choices"][0]["message"]["content"].strip()
