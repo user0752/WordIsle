@@ -1286,9 +1286,10 @@
                 <el-select v-model="singleForm.image_model" placeholder="选择文生图模型" style="width:560px">
                   <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
                     <div style="padding:4px 0">
-                      <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
-                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }}</div>
-                    </div>
+                    <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
+                    <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">特点：{{ m.features }}</div>
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:1px">适用：{{ m.scenarios }}</div>
+                  </div>
                   </el-option>
                 </el-select>
                 <div v-if="singleForm.image_model" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
@@ -1296,6 +1297,14 @@
                   <span class="ml-md" style="color:var(--warning-color)">价格: {{ getImageModelPrice(singleForm.image_model) }}</span>
                   <span class="ml-md">预计生成 1 张图</span>
                 </div>
+              </el-form-item>
+              <el-form-item label="画风">
+                <el-select v-model="singleForm.art_style" placeholder="选择画风" style="width:360px">
+                  <el-option v-for="s in artStyleOptions" :key="s.value" :label="s.label" :value="s.value">
+                    <span style="font-size:13px">{{ s.label }}</span>
+                    <span style="font-size:11px;color:var(--text-tertiary)"> — {{ s.extra }}</span>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <el-form-item label="即时音频">
                 <el-switch v-model="singleForm.generate_audio" active-text="深耕完成后为场景句生成 TTS 朗读音频"></el-switch>
@@ -1450,9 +1459,10 @@
                 <el-select v-model="compileForm.image_model" placeholder="选择文生图模型" style="width:560px">
                   <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
                     <div style="padding:4px 0">
-                      <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
-                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }}</div>
-                    </div>
+                    <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
+                    <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">特点：{{ m.features }}</div>
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:1px">适用：{{ m.scenarios }}</div>
+                  </div>
                   </el-option>
                 </el-select>
                 <div v-if="compileForm.image_model" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
@@ -1643,10 +1653,13 @@
                   </template>
                   <span v-else class="text-secondary" style="font-size:12px">固定 3 画面</span>
                   <el-input v-model="sceneCompileForm.theme_hint" placeholder="主题提示（可选，如：办公室加班）" style="width:280px" size="small"></el-input>
-                  <el-select v-model="sceneCompileForm.image_model" placeholder="文生图模型" style="width:240px" size="small">
+                  <el-select v-model="sceneCompileForm.image_model" placeholder="文生图模型" style="width:420px">
                     <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
-                      <span>{{ m.label }}</span>
-                      <span style="float:right;color:var(--warning-color);font-size:11px">{{ m.price }}</span>
+                      <div style="padding:4px 0">
+                        <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
+                        <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">特点：{{ m.features }}</div>
+                        <div style="font-size:11px;color:var(--text-secondary);margin-top:1px">适用：{{ m.scenarios }}</div>
+                      </div>
                     </el-option>
                   </el-select>
                   <el-button type="primary" :icon="MagicStick" :loading="sceneCompileLoading" @click="compileScene">开始编译</el-button>
@@ -2293,8 +2306,17 @@ const app = createApp({
     // 单点深耕
     const singleForm = reactive({
       word:'', theme_hint:'', image_model:'wan2.7-image',
-      generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
+      art_style:'comic', generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
     })
+
+    // 单点深耕可配置画风
+    const artStyleOptions = [
+      { value:'comic',     label:'漫画 · 扁平插画', extra:'默认 · 夸张失衡，适合双义碰撞' },
+      { value:'realistic', label:'写实',            extra:'真实光影，适合人像/产品' },
+      { value:'3d',        label:'3D 渲染',         extra:'Pixar 风格，圆润可爱' },
+      { value:'watercolor',label:'水彩',            extra:'柔和晕染' },
+      { value:'pixel',     label:'像素风',          extra:'复古 8-bit' },
+    ]
 
     // 从词库选择单词
     const wordPickerVisible = ref(false)
@@ -2599,6 +2621,7 @@ const app = createApp({
           word,
           theme_hint: singleForm.theme_hint,
           image_model: singleForm.image_model,
+          art_style: singleForm.art_style,
           generate_audio_immediately: singleForm.generate_audio,
           tts_model: singleForm.tts_model,
         })})
@@ -3105,6 +3128,7 @@ const app = createApp({
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
+      artStyleOptions,
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
       openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,

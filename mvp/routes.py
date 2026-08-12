@@ -327,11 +327,13 @@ async def single_compile(req: Request):
     if not word_clean or len(word_clean) < 2:
         raise HTTPException(400, "请输入一个有效英文单词")
 
+    art_style = body.get("art_style", "comic")
+
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
     gen_id = str(uuid.uuid4())[:8]
-    result, usage = await call_deepseek_single(word_clean, theme_hint)
+    result, usage = await call_deepseek_single(word_clean, theme_hint, art_style)
 
     # 生成 1 张图（先检查配额）
     image_url = None
@@ -403,6 +405,7 @@ async def single_compile(req: Request):
         "image_error": image_error,
         "derivatives": result.get("derivatives", []),
         "image_model": image_model,
+        "art_style": art_style,
         "has_audio": False,
         "audio_id": None,
     }

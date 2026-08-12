@@ -328,7 +328,7 @@ Given one English target word, output:
 
 ## IMAGE REQUIREMENT
 - image_prompt MUST follow the chosen strategy and make the word the visual focus.
-- image_prompt MUST be in English, 1-3 sentences, surreal comic / flat illustration style (NOT cinematic, NOT realistic).
+- image_prompt MUST be in English, 1-3 sentences, following the ART STYLE specified in the user prompt (default: surreal comic / flat illustration).
 - The image is the recall cue: seeing the picture reminds the user of the word.
 - Any English word text rendered INSIDE the image (e.g. a label, sign, caption, or the target word itself) MUST be written in lowercase letters.
 
@@ -362,16 +362,30 @@ Given one English target word, output:
 """
 
 
-def build_single_user_prompt(word: str, theme_hint: str = "") -> str:
+# 单点深耕可配置画风（value → 英文风格指令，传入 LLM 提示词）
+# 前端下拉与后端共用此映射；默认漫画/扁平
+ART_STYLES = {
+    "comic": "Surreal comic / flat illustration style (bold flat colors, exaggerated shapes)",
+    "realistic": "Photorealistic style, natural lighting and textures",
+    "3d": "3D render style, playful Pixar-like, soft rounded shapes",
+    "watercolor": "Watercolor illustration style, soft color washes",
+    "pixel": "Pixel art style, retro 8-bit, chunky pixels",
+}
+DEFAULT_ART_STYLE = "comic"
+
+
+def build_single_user_prompt(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE) -> str:
     """构建单点深耕的用户提示词。"""
     theme_line = (
         f"\nTHEME HINT (optional): {theme_hint}"
         if theme_hint
         else "\nTHEME: Choose any TOEIC business context that fits the word."
     )
+    style_instruction = ART_STYLES.get(art_style, ART_STYLES[DEFAULT_ART_STYLE])
     return f"""Please generate the "one word, one image, one hook" memorization card for the following TOEIC word.
 
 TARGET WORD: {word}
+ART STYLE: {style_instruction}
 {theme_line}
 
 Output ONLY the JSON object. No markdown, no explanation, no prefix text."""
@@ -414,12 +428,12 @@ def _extract_json(content: str) -> dict:
         )
 
 
-async def call_deepseek_single(word: str, theme_hint: str = ""):
+async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE):
     """调用 DeepSeek 生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。"""
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
-    user_prompt = build_single_user_prompt(word, theme_hint)
+    user_prompt = build_single_user_prompt(word, theme_hint, art_style)
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
