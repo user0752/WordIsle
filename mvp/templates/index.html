@@ -1320,7 +1320,9 @@
           <el-card v-if="singleResult" shadow="never">
             <template #header>
               <div class="flex-between">
-                <span class="card-title">记忆钩子卡片 · {{ singleResult.word }}</span>
+                <span class="card-title">记忆钩子卡片 · {{ singleResult.word }}
+                  <el-tag v-if="singleResult.hook_type" size="small" class="ml-sm" type="warning">{{ singleResult.hook_type }}</el-tag>
+                </span>
                 <div class="flex gap-sm">
                   <el-button v-if="singleResult.has_audio" link type="primary" :icon="VideoPlay" @click="playSingleAudio">播放朗读</el-button>
                   <el-button v-else-if="!singleResult.audio_error" link type="primary" :icon="VideoPlay" :loading="singleAudioLoading" @click="regenerateSingleAudio">生成朗读</el-button>
@@ -1977,7 +1979,9 @@
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">记忆钩子卡片 · {{ (resultData.words||[])[0] || '' }}</span>
+                    <span class="card-title">记忆钩子卡片 · {{ (resultData.words||[])[0] || '' }}
+                      <el-tag v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].hook_type" size="small" class="ml-sm" type="warning">{{ (resultData.panels||[])[0].hook_type }}</el-tag>
+                    </span>
                     <div class="flex gap-sm">
                       <el-tag size="small" type="info">{{ resultData.image_model }}</el-tag>
                       <el-tag v-if="resultData.has_audio" size="small" type="success">已生成音频</el-tag>
