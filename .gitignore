@@ -5,4 +5,5 @@ __pycache__/
 mvp/venv/
 logs/
 mvp/data/
+阿里云百炼图像生成价格文档.md
 *.log
