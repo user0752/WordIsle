@@ -145,6 +145,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS word_scenes (
             word_id INTEGER NOT NULL,
             scene_id INTEGER NOT NULL,
+            source TEXT DEFAULT 'detect',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY (word_id, scene_id),
             FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
@@ -161,10 +162,23 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique
+            ON audios (generation_id, voice, speed, tts_model);
     """)
     # 迁移：为已有数据库添加 tts_model 列
     try:
         conn.execute("ALTER TABLE audios ADD COLUMN tts_model TEXT DEFAULT ''")
+    except Exception:
+        pass
+    # 迁移：清理 audios 重复行并为已有数据库建立唯一索引（并发合成去重）
+    try:
+        conn.execute("""
+            DELETE FROM audios WHERE id NOT IN (
+                SELECT MIN(id) FROM audios GROUP BY generation_id, voice, speed, tts_model
+            )
+        """)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique ON audios (generation_id, voice, speed, tts_model)")
+        conn.commit()
     except Exception:
         pass
     # 迁移：为已有 generations 表添加新字段（panels 模式）
@@ -187,6 +201,11 @@ def init_db():
     # 迁移：为 daily_usage 添加 image_count 列
     try:
         conn.execute("ALTER TABLE daily_usage ADD COLUMN image_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    # 迁移：为 word_scenes 添加 source 列（detect/adopt/manual），用于一词可入多场景时按来源清理
+    try:
+        conn.execute("ALTER TABLE word_scenes ADD COLUMN source TEXT DEFAULT 'detect'")
     except Exception:
         pass
     # 种子数据：托业高频熟词僻意（仅当表为空时插入）

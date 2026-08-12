@@ -335,14 +335,24 @@ class MainAppTestCase(unittest.TestCase):
         self.assertEqual(du["tts_limit"], main.DAILY_TTS_LIMIT)
         self.assertEqual(du["image_limit"], main.DAILY_IMAGE_LIMIT)
 
-    # ================= #17: /api/image-models 返回三档模型 =================
+    # ================= #17: /api/image-models 返回多档模型阶梯 =================
 
     def test_image_models_returns_three_tiers(self):
         r = self.client.get("/api/image-models")
         self.assertEqual(r.status_code, 200)
         models = r.json()["models"]
-        self.assertEqual(len(models), 3)
-        self.assertEqual([m["tier"] for m in models], ["旗舰", "均衡", "性价比"])
+        tiers = [m["tier"] for m in models]
+        # 各档位均存在
+        for t in ["旗舰", "高清", "万相", "性价比", "免费"]:
+            self.assertIn(t, tiers)
+        # 模型数量（5个百炼 + 2个 TokenRhythm 免费 = 7）
+        self.assertEqual(len(models), 7)
+        values = [m["value"] for m in models]
+        self.assertIn("wan2.7-image-free", values)
+        self.assertIn("qwen-image-3.0-pro", values)
+        self.assertIn("wan2.7-image", values)
+        # 模型 value 唯一（前端 v-for :key 依赖）
+        self.assertEqual(len(values), len(set(values)))
 
     # ================= #18: /api/generate 返回剧情连环画结构 =================
 
@@ -360,7 +370,7 @@ class MainAppTestCase(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         data = r.json()
         self.assertEqual(data["story_title"], "Test Story")
-        self.assertEqual(data["panel_count"], 3)
+        self.assertEqual(data["panel_count"], len(data["panels"]))  # panel_count 返回实际画面数（M10）
         self.assertEqual(data["image_model"], "z-image-turbo")
         self.assertEqual(len(data["panels"]), 1)
         self.assertIn("image_error", data["panels"][0])  # 图片降级不阻塞整体

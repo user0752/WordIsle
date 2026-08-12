@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TOEIC 顽固词深度加工系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
 <style>
   /* ================================================
@@ -80,32 +83,62 @@
   html, body, #app { height: 100%; width: 100%; }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Noto Serif SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--text-primary);
     font-size: 14px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    position: relative;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; z-index: -1;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.015'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+    pointer-events: none;
   }
 
-  /* ===== 滚动条 ===== */
+  /* 标题字体 — Playfair Display + Noto Serif SC 搭配 */
+  h1, h2, h3, h4, .page-title, .home-card-title, .story-overview-title,
+  .panel-index-num, .word-title, .single-collocation .phrase-en {
+    font-family: 'Noto Serif SC', 'Playfair Display', Georgia, 'Songti SC', serif;
+    font-weight: 600;
+  }
+  .logo-text, .story-card-title, .scene-name-en {
+    font-family: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
+    font-weight: 600;
+  }
+  .english-body, .panel-sentence-en, .single-sentence-en {
+    font-family: 'Playfair Display', Georgia, 'Noto Serif SC', 'Songti SC', serif;
+  }
+
+  /* ===== 滚动条 — 极细书签 ===== */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.08); border-radius: 2px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.15); }
+  ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.07); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(58, 125, 106, 0.25); }
+  .app-sidebar::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.05); }
+  .app-sidebar::-webkit-scrollbar-thumb:hover { background: rgba(58, 125, 106, 0.2); }
 
   /* ===== 布局 ===== */
   .app-layout { height: 100vh; display: flex; flex-direction: column; }
 
-  /* ===== 头部 — 极简白 ===== */
+  /* ===== 头部 — 极简毛玻璃 ===== */
   .app-header {
     height: 56px; position: relative; z-index: 100;
     display: flex; align-items: center; justify-content: space-between; padding: 0 28px;
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.82);
     backdrop-filter: blur(16px) saturate(180%);
     -webkit-backdrop-filter: blur(16px) saturate(180%);
     border-bottom: 1px solid var(--border-default);
+  }
+  .app-header::after {
+    content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 60%; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-border), transparent);
+    opacity: 0.4;
   }
   .app-header .logo {
     display: flex; align-items: center; gap: 10px; cursor: pointer;
@@ -124,8 +157,9 @@
     transform: scale(1.05);
   }
   .app-header .logo-text {
-    font-size: 15px; font-weight: 600; letter-spacing: 0.3px;
+    font-size: 16px; font-weight: 600; letter-spacing: 0.5px;
     color: var(--text-primary);
+    font-family: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
   }
   .app-header .header-right {
     display: flex; align-items: center; gap: 10px;
@@ -143,18 +177,45 @@
 
   /* ===== 侧边栏 — 极简书签 ===== */
   .app-sidebar {
-    width: 200px; flex-shrink: 0;
+    width: 220px; flex-shrink: 0;
     background: var(--bg-soft);
     border-right: 1px solid var(--border-subtle);
     overflow-y: auto;
-    padding: 8px 0;
+    padding: 10px 0;
+    position: relative;
   }
   .app-sidebar .el-menu { border-right: none; background: transparent; }
+  .app-sidebar .menu-divider {
+    display: flex; align-items: center;
+    margin: 10px 16px 4px;
+    gap: 8px;
+  }
+  .app-sidebar .menu-divider::after {
+    content: ''; flex: 1; height: 1px;
+    background: var(--border-subtle);
+  }
+  .app-sidebar .menu-divider span {
+    font-size: 11px; font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
   .app-sidebar .el-menu-item {
-    margin: 1px 10px; border-radius: 8px; height: 40px; line-height: 40px;
+    margin: 2px 10px; border-radius: 8px; height: 40px; line-height: 40px;
     font-size: 13px; color: var(--text-secondary);
     transition: all var(--transition-fast);
     font-weight: 400;
+    position: relative;
+    overflow: hidden;
+  }
+  .app-sidebar .el-menu-item::before {
+    content: ''; position: absolute; left: 0; top: 50%;
+    width: 3px; height: 0;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+    transform: translateY(-50%);
+    transition: height var(--transition-base);
   }
   .app-sidebar .el-menu-item:hover {
     background: var(--accent-bg);
@@ -165,12 +226,23 @@
     color: var(--accent); font-weight: 500;
     border-right: none;
   }
+  .app-sidebar .el-menu-item.is-active::before {
+    height: 20px;
+  }
   .app-sidebar .el-menu-item .el-icon {
     color: var(--text-tertiary);
     font-size: 16px;
+    transition: transform var(--transition-fast), color var(--transition-fast);
+  }
+  .app-sidebar .el-menu-item:hover .el-icon {
+    transform: scale(1.1);
   }
   .app-sidebar .el-menu-item.is-active .el-icon {
     color: var(--accent);
+    transform: scale(1.05);
+  }
+  .app-sidebar .el-menu-item:active {
+    transform: scale(0.97);
   }
 
   /* ===== 主内容区 ===== */
@@ -180,12 +252,13 @@
     padding: 28px 32px;
     max-width: 1440px;
     margin: 0 auto;
-    animation: fadeSlideIn 0.35s var(--ease-out);
+    position: relative;
   }
-
-  @keyframes fadeSlideIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
+  .page-container::before {
+    content: ''; position: fixed; top: 56px; right: 0;
+    width: 240px; height: 240px;
+    background: radial-gradient(circle at top right, rgba(58, 125, 106, 0.03), transparent 70%);
+    pointer-events: none; z-index: -1;
   }
 
   .page-header {
@@ -193,8 +266,9 @@
     margin-bottom: 28px;
   }
   .page-title {
-    font-size: 22px; font-weight: 600; color: var(--text-primary);
+    font-size: 24px; font-weight: 700; color: var(--text-primary);
     line-height: 1.3; display: flex; align-items: center; gap: 12px;
+    letter-spacing: -0.3px;
   }
   .page-title .title-accent {
     display: inline-block; width: 3px; height: 22px;
@@ -217,8 +291,8 @@
     box-shadow: var(--shadow-xs);
   }
   .el-card:hover {
-    box-shadow: var(--shadow-md);
-    border-color: var(--border-strong);
+    box-shadow: var(--shadow-lg);
+    border-color: rgba(58, 125, 106, 0.12);
   }
   .el-card .el-card__header {
     padding: 16px 20px;
@@ -247,7 +321,6 @@
     border-radius: 8px; transition: all var(--transition-fast);
     font-weight: 500;
   }
-  .el-button:active { transform: scale(0.97); }
   .el-button--default {
     --el-button-bg-color: transparent;
     --el-button-border-color: var(--border-strong);
@@ -448,6 +521,51 @@
   }
   .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(8px); }
 
+  /* 卡片入场动画（延迟叠加） */
+  .home-card:nth-child(1) { animation: cardSlideIn 0.4s var(--ease-out) 0s both; }
+  .home-card:nth-child(2) { animation: cardSlideIn 0.4s var(--ease-out) 0.1s both; }
+  .home-card:nth-child(3) { animation: cardSlideIn 0.4s var(--ease-out) 0.2s both; }
+  .recent-item:nth-child(1) { animation: cardSlideIn 0.35s var(--ease-out) 0.05s both; }
+  .recent-item:nth-child(2) { animation: cardSlideIn 0.35s var(--ease-out) 0.1s both; }
+  .recent-item:nth-child(3) { animation: cardSlideIn 0.35s var(--ease-out) 0.15s both; }
+  .recent-item:nth-child(4) { animation: cardSlideIn 0.35s var(--ease-out) 0.2s both; }
+  .recent-item:nth-child(5) { animation: cardSlideIn 0.35s var(--ease-out) 0.25s both; }
+  .story-card { animation: cardSlideIn 0.35s var(--ease-out) both; }
+  .story-card:nth-child(1) { animation-delay: 0s; }
+  .story-card:nth-child(2) { animation-delay: 0.05s; }
+  .story-card:nth-child(3) { animation-delay: 0.1s; }
+  .story-card:nth-child(4) { animation-delay: 0.15s; }
+  .story-card:nth-child(5) { animation-delay: 0.2s; }
+  .scene-card { animation: cardSlideIn 0.35s var(--ease-out) both; }
+  .scene-card:nth-child(1) { animation-delay: 0s; }
+  .scene-card:nth-child(2) { animation-delay: 0.05s; }
+  .scene-card:nth-child(3) { animation-delay: 0.1s; }
+  .scene-card:nth-child(4) { animation-delay: 0.15s; }
+  .scene-card:nth-child(5) { animation-delay: 0.2s; }
+  .panel-card { animation: cardSlideIn 0.4s var(--ease-out) both; }
+  .panel-card:nth-child(1) { animation-delay: 0s; }
+  .panel-card:nth-child(2) { animation-delay: 0.08s; }
+  .panel-card:nth-child(3) { animation-delay: 0.16s; }
+  .panel-card:nth-child(4) { animation-delay: 0.24s; }
+  .panel-card:nth-child(5) { animation-delay: 0.32s; }
+
+  @keyframes cardSlideIn {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 页面切换时的微过渡 */
+  .page-container {
+    animation: pageEnter 0.35s var(--ease-out);
+  }
+  @keyframes pageEnter {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 按钮按压微动效 */
+  .el-button:active { transform: scale(0.97); }
+
   /* ===== 工具类 ===== */
   .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 20px; }
   .card-title { font-weight: 500; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
@@ -466,6 +584,8 @@
   .text-secondary { color: var(--text-secondary); }
   .text-success { color: var(--success); }
   .text-danger { color: var(--danger); }
+  .card-border-success { border-color: var(--success) !important; }
+  .card-border-danger { border-color: var(--danger) !important; }
   .rotating { animation: rotating 1.5s linear infinite; }
   @keyframes rotating { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
@@ -520,6 +640,16 @@
     color: var(--text-secondary);
   }
   .collocation-item:hover { border-color: var(--gold); }
+  .scene-collocation-item {
+    display: flex; flex-direction: column; gap: 4px; padding: 10px 14px;
+    background: var(--gold-bg); border: 1px solid var(--gold-border);
+    border-radius: var(--radius-md); transition: var(--transition-fast);
+  }
+  .scene-collocation-item:hover { border-color: var(--gold); }
+  .scene-collocation-item .phrase-en { font-weight: 600; font-size: 14px; color: var(--accent); }
+  .scene-collocation-item .phrase-zh { font-size: 13px; color: var(--text-secondary); }
+  .scene-collocation-item .example-en { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .scene-collocation-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 
   /* ===== 操作按钮 ===== */
   .action-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -655,12 +785,13 @@
   .home-card-single .home-card-icon { color: var(--success, #3a7d6a); }
   .home-card-batch .home-card-icon { color: var(--warning-color, #d97706); }
   .home-card-title {
-    font-size: 20px; font-weight: 600; color: var(--text-primary);
-    margin-top: 4px;
+    font-size: 20px; font-weight: 700; color: var(--text-primary);
+    margin-top: 4px; letter-spacing: -0.2px;
   }
   .home-card-subtitle {
     font-size: 12px; color: var(--text-tertiary);
-    text-transform: uppercase; letter-spacing: 0.5px;
+    text-transform: uppercase; letter-spacing: 0.8px;
+    font-weight: 500;
   }
   .home-card-desc {
     font-size: 13px; color: var(--text-secondary);
@@ -718,6 +849,19 @@
 
   @media (max-width: 900px) {
     .home-cards { grid-template-columns: 1fr; }
+    .app-sidebar { width: 180px; }
+    .page-container { padding: 20px 16px; }
+    .page-title { font-size: 20px; }
+  }
+  @media (max-width: 640px) {
+    .app-sidebar { width: 56px; }
+    .app-sidebar .menu-divider { display: none; }
+    .app-sidebar .el-menu-item span { display: none; }
+    .app-sidebar .el-menu-item { justify-content: center; padding: 0; }
+    .app-sidebar .el-menu-item .el-icon { margin: 0; font-size: 18px; }
+    .app-sidebar .el-menu-item::before { display: none; }
+    .page-container { padding: 16px 12px; }
+    .page-header { flex-direction: column; gap: 12px; }
   }
 
   /* ===== 历史记录卡片列表 ===== */
@@ -859,10 +1003,14 @@
       <!-- 侧边栏 — 极简书签 -->
       <aside class="app-sidebar">
         <el-menu :default-active="currentPage" @select="handleMenuSelect">
+          <!-- 概览 -->
           <el-menu-item index="home">
-            <el-icon><HomeFilled /></el-icon>
+            <el-icon><House /></el-icon>
             <span>首页</span>
           </el-menu-item>
+
+          <!-- 单词管理 -->
+          <div class="menu-divider"><span>单词管理</span></div>
           <el-menu-item index="words">
             <el-icon><Collection /></el-icon>
             <span>单词库</span>
@@ -871,25 +1019,34 @@
             <el-icon><Upload /></el-icon>
             <span>导入单词</span>
           </el-menu-item>
+
+          <!-- 内容编译 -->
+          <div class="menu-divider"><span>内容编译</span></div>
           <el-menu-item index="single">
             <el-icon><Aim /></el-icon>
             <span>单点深耕</span>
-          </el-menu-item>
-          <el-menu-item index="compile">
-            <el-icon><MagicStick /></el-icon>
-            <span>批量编译</span>
           </el-menu-item>
           <el-menu-item index="scenes">
             <el-icon><Grid /></el-icon>
             <span>场景聚汇</span>
           </el-menu-item>
-          <el-menu-item index="history">
-            <el-icon><Document /></el-icon>
-            <span>历史记录</span>
+          <el-menu-item index="compile">
+            <el-icon><List /></el-icon>
+            <span>批量编译</span>
           </el-menu-item>
+
+          <!-- 知识库 -->
+          <div class="menu-divider"><span>知识库</span></div>
           <el-menu-item index="polysemy">
             <el-icon><Discount /></el-icon>
             <span>熟词僻意</span>
+          </el-menu-item>
+
+          <!-- 回顾 -->
+          <div class="menu-divider"><span>回顾</span></div>
+          <el-menu-item index="history">
+            <el-icon><Document /></el-icon>
+            <span>历史记录</span>
           </el-menu-item>
         </el-menu>
       </aside>
@@ -932,7 +1089,7 @@
             </div>
             <div class="home-card home-card-batch" @click="currentPage='compile'">
               <div class="home-card-icon">
-                <el-icon :size="32"><MagicStick /></el-icon>
+                <el-icon :size="32"><List /></el-icon>
               </div>
               <div class="home-card-title">批量编译</div>
               <div class="home-card-subtitle">5-15 词</div>
@@ -990,7 +1147,7 @@
           </div>
           <el-card shadow="never" class="mb-md">
             <div class="flex-between">
-              <el-input v-model="wordSearch" placeholder="搜索单词..." :prefix-icon="Search" clearable style="width:300px" @clear="loadWords" @keyup.enter="loadWords"></el-input>
+              <el-input v-model="wordSearch" placeholder="搜索单词..." :prefix-icon="Search" clearable style="width:300px"></el-input>
               <div class="flex gap-sm">
                 <el-tag v-if="selectedWords.length>0" type="primary" size="large">已选 {{ selectedWords.length }} 个单词</el-tag>
                 <el-button v-if="selectedWords.length>0" type="primary" :icon="MagicStick" @click="goCompile">发起编译</el-button>
@@ -1120,6 +1277,7 @@
               <el-form-item label="目标单词">
                 <el-input v-model="singleForm.word" placeholder="输入或粘贴一个英文单词，如 submit / tender / address" style="width:360px" clearable @keyup.enter="handleSingleCompile"></el-input>
                 <el-button type="primary" class="ml-md" :icon="Aim" :loading="singleCompiling" @click="handleSingleCompile">深耕</el-button>
+                <el-button class="ml-md" :icon="Collection" @click="openWordPicker">从词库选择</el-button>
               </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="singleForm.theme_hint" placeholder="可选，如 finance / law / shipping。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
@@ -1128,8 +1286,8 @@
                 <el-select v-model="singleForm.image_model" placeholder="选择文生图模型" style="width:560px">
                   <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
                     <div style="padding:4px 0">
-                      <div style="font-size:13px;font-weight:600">{{ m.label }}</div>
-                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }} · 价格: {{ m.price }}</div>
+                      <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
+                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }}</div>
                     </div>
                   </el-option>
                 </el-select>
@@ -1221,6 +1379,18 @@
           </el-card>
         </div>
 
+        <!-- 从词库选择单词（单点深耕） -->
+        <el-dialog v-model="wordPickerVisible" title="从单词库选择单词" width="500px">
+          <el-select v-model="wordPickerValue" filterable remote :remote-method="searchWords" :loading="wordPickerLoading" placeholder="输入关键字搜索单词库" style="width:100%">
+            <el-option v-for="w in wordPickerOptions" :key="w.id" :label="`${w.word}（${w.pos||'-'}）${w.meaning_zh||''}`" :value="w.word"></el-option>
+          </el-select>
+          <div class="text-secondary mt-sm" style="font-size:12px">最多列出 50 个，可直接下拉浏览或输入关键字筛选</div>
+          <template #footer>
+            <el-button @click="wordPickerVisible=false">取消</el-button>
+            <el-button type="primary" :disabled="!wordPickerValue" @click="confirmWordPick">使用该单词</el-button>
+          </template>
+        </el-dialog>
+
         <!-- 编译配置 -->
         <div v-if="currentPage==='compile'" class="page-container">
           <div class="page-header">
@@ -1278,15 +1448,15 @@
                 <el-select v-model="compileForm.image_model" placeholder="选择文生图模型" style="width:560px">
                   <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
                     <div style="padding:4px 0">
-                      <div style="font-size:13px;font-weight:600">{{ m.label }}</div>
-                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }} · 价格: {{ m.price }}</div>
+                      <div style="font-size:13px;font-weight:600">{{ m.label }} <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span></div>
+                      <div style="font-size:11px;color:var(--text-tertiary)">{{ m.note }}</div>
                     </div>
                   </el-option>
                 </el-select>
                 <div v-if="compileForm.image_model" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
                   <span>{{ getImageModelNote(compileForm.image_model) }}</span>
                   <span class="ml-md" style="color:var(--warning-color)">价格: {{ getImageModelPrice(compileForm.image_model) }}</span>
-                  <span class="ml-md">预计生成 {{ compileForm.panel_count }} 张图</span>
+                  <span class="ml-md">预计生成 {{ (compileForm.style==='absurd'||compileForm.style==='conflict') ? 3 : compileForm.panel_count }} 张图</span>
                 </div>
               </el-form-item>
               <el-form-item label="立即生成音频">
@@ -1354,7 +1524,7 @@
                 </div>
               </template>
               <div class="scene-suggestion-grid">
-                <el-card v-for="(s, idx) in sceneSuggestions" :key="idx" shadow="hover" class="scene-suggestion-card">
+                <el-card v-for="(s, idx) in sceneSuggestions" :key="s.name + '_' + s.name_zh" shadow="hover" class="scene-suggestion-card">
                   <div class="flex-between mb-sm">
                     <div>
                       <span style="font-weight:600;font-size:14px">{{ s.name }}</span>
@@ -1364,7 +1534,7 @@
                   </div>
                   <p class="text-secondary" style="font-size:12px;margin-bottom:8px">{{ s.description }}</p>
                   <div v-if="s.suggested_words && s.suggested_words.length" class="suggested-words">
-                    <el-tag v-for="w in s.suggested_words.slice(0,12)" :key="w" size="small" effect="plain" class="word-list-tag">{{ w }}</el-tag>
+                    <el-tag v-for="(w, i) in s.suggested_words.slice(0,12)" :key="w + '_' + i" size="small" effect="plain" class="word-list-tag">{{ w }}</el-tag>
                     <el-tag v-if="s.suggested_words.length>12" size="small" type="info" effect="plain">+{{ s.suggested_words.length-12 }}</el-tag>
                   </div>
                   <div class="mt-md flex gap-sm">
@@ -1395,8 +1565,11 @@
                 <el-card v-for="s in scenes" :key="s.id" shadow="hover" class="scene-card" @click="openSceneDetail(s.id)">
                   <div class="scene-card-header">
                     <span class="scene-name-en">{{ s.name_en }}</span>
-                    <el-tag v-if="s.word_count>0" size="small" type="success" effect="plain">{{ s.word_count }} 词</el-tag>
-                    <el-tag v-else size="small" type="info" effect="plain">空</el-tag>
+                    <div class="flex gap-sm">
+                      <el-tag v-if="s.word_count>0" size="small" type="success" effect="plain">{{ s.word_count }} 词</el-tag>
+                      <el-tag v-if="s.collocations_count>0" size="small" type="warning" effect="plain">{{ s.collocations_count }} 词伙</el-tag>
+                      <el-tag v-if="s.word_count===0" size="small" type="info" effect="plain">空</el-tag>
+                    </div>
                   </div>
                   <div class="scene-name-zh">{{ s.name_zh || '—' }}</div>
                   <p v-if="s.description" class="scene-desc">{{ s.description }}</p>
@@ -1454,14 +1627,25 @@
                   </div>
                 </template>
                 <div class="flex gap-sm" style="flex-wrap:wrap;align-items:center">
-                  <el-select v-model="sceneCompileForm.panel_count" placeholder="画面数" style="width:120px" size="small">
-                    <el-option :value="4" label="4 画面"></el-option>
-                    <el-option :value="6" label="6 画面"></el-option>
-                    <el-option :value="8" label="8 画面"></el-option>
+                  <el-select v-model="sceneCompileForm.style" placeholder="编译风格" style="width:130px" size="small">
+                    <el-option value="absurd" label="荒诞三连弹"></el-option>
+                    <el-option value="conflict" label="冲突连环"></el-option>
+                    <el-option value="" label="微电影"></el-option>
                   </el-select>
+                  <template v-if="sceneCompileForm.style===''">
+                    <el-select v-model="sceneCompileForm.panel_count" placeholder="画面数" style="width:120px" size="small">
+                      <el-option :value="4" label="4 画面"></el-option>
+                      <el-option :value="6" label="6 画面"></el-option>
+                      <el-option :value="8" label="8 画面"></el-option>
+                    </el-select>
+                  </template>
+                  <span v-else class="text-secondary" style="font-size:12px">固定 3 画面</span>
                   <el-input v-model="sceneCompileForm.theme_hint" placeholder="主题提示（可选，如：办公室加班）" style="width:280px" size="small"></el-input>
                   <el-select v-model="sceneCompileForm.image_model" placeholder="文生图模型" style="width:240px" size="small">
-                    <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value"></el-option>
+                    <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
+                      <span>{{ m.label }}</span>
+                      <span style="float:right;color:var(--warning-color);font-size:11px">{{ m.price }}</span>
+                    </el-option>
                   </el-select>
                   <el-button type="primary" :icon="MagicStick" :loading="sceneCompileLoading" @click="compileScene">开始编译</el-button>
                 </div>
@@ -1486,13 +1670,37 @@
                   <el-table-column prop="assigned_at" label="归入时间" width="160"></el-table-column>
                 </el-table>
               </el-card>
+
+              <!-- 词伙搭配 -->
+              <el-card shadow="never" class="mt-md">
+                <template #header>
+                  <div class="flex-between">
+                    <span class="card-title">🔗 词伙搭配（{{ sceneDetail.collocations?.length || 0 }}）</span>
+                    <span class="text-secondary" style="font-size:12px">运行「增量检测」或「全量重扫」自动刷新</span>
+                  </div>
+                </template>
+                <div v-if="!sceneDetail.collocations || sceneDetail.collocations.length===0" class="empty-state">
+                  <el-icon :size="32"><WarningFilled /></el-icon>
+                  <p>暂无词伙，运行「增量检测」或「全量重扫」后自动生成</p>
+                </div>
+                <div v-else class="collocations-grid">
+                  <div v-for="c in sceneDetail.collocations" :key="c.id" class="scene-collocation-item">
+                    <span class="phrase-en">{{ c.phrase_en }}</span>
+                    <span v-if="c.phrase_zh" class="phrase-zh">{{ c.phrase_zh }}</span>
+                    <div v-if="c.words && c.words.length" class="scene-collocation-tags">
+                      <el-tag v-for="(w, i) in c.words" :key="w + '_' + i" size="small" type="warning" effect="plain">{{ w }}</el-tag>
+                    </div>
+                    <span v-if="c.example_en" class="example-en">{{ c.example_en }}</span>
+                  </div>
+                </div>
+              </el-card>
             </template>
           </template>
 
           <!-- 场景编辑对话框 -->
           <el-dialog v-model="sceneEditVisible" title="编辑场景" width="600px">
-            <el-form :model="sceneEditForm" label-width="80px" size="small">
-              <el-form-item label="英文名">
+            <el-form :model="sceneEditForm" :rules="sceneEditRules" ref="sceneEditFormRef" label-width="80px" size="small">
+              <el-form-item label="英文名" prop="name_en">
                 <el-input v-model="sceneEditForm.name_en"></el-input>
               </el-form-item>
               <el-form-item label="中文名">
@@ -1505,7 +1713,7 @@
                 <el-input v-model="sceneEditAddWord" placeholder="输入单词后回车" style="width:200px" @keyup.enter="addWordToSceneEdit"></el-input>
                 <el-button type="primary" size="small" class="ml-sm" @click="addWordToSceneEdit">添加</el-button>
                 <div v-if="sceneEditForm.add_words && sceneEditForm.add_words.length" class="mt-sm">
-                  <el-tag v-for="(w,i) in sceneEditForm.add_words" :key="i" closable size="small" class="word-list-tag" @close="sceneEditForm.add_words.splice(i,1)">{{ w }}</el-tag>
+                  <el-tag v-for="w in sceneEditForm.add_words" :key="w" closable size="small" class="word-list-tag" @close="sceneEditForm.add_words.splice(sceneEditForm.add_words.indexOf(w),1)">{{ w }}</el-tag>
                 </div>
               </el-form-item>
               <el-form-item label="移除单词">
@@ -1607,7 +1815,7 @@
               </el-tooltip>
             </div>
           </div>
-          <el-card v-if="autoDetectResult" shadow="never" class="mb-md" :type="autoDetectResult.ok?'success':'danger'">
+          <el-card v-if="autoDetectResult" shadow="never" class="mb-md" :class="autoDetectResult.ok?'card-border-success':'card-border-danger'">
             <template #header>
               <div class="flex-between" style="width:100%">
                 <span class="card-title"><el-icon><MagicStick /></el-icon> 自动检测结果</span>
@@ -1710,10 +1918,10 @@
               </div>
               <el-row v-else :gutter="16">
                 <el-col v-for="entry in polysemyHot" :key="entry.id" :span="12" class="mb-md">
-                  <div class="polysemy-card" :class="{'is-selected': polysemySelectedSet.has(entry.word)}">
+                  <div class="polysemy-card" :class="{'is-selected': polysemySelectedSet.has(String(entry.word).toLowerCase())}">
                     <div class="card-header">
                       <div class="flex gap-sm" style="align-items:center">
-                        <el-checkbox :model-value="polysemySelectedSet.has(entry.word)" @change="(v)=>toggleSelectPolysemy(entry.word, v)" size="large"></el-checkbox>
+                        <el-checkbox :model-value="polysemySelectedSet.has(String(entry.word).toLowerCase())" @change="(v)=>toggleSelectPolysemy(entry.word, v)" size="large"></el-checkbox>
                         <span class="word-title">{{ entry.word }}</span>
                       </div>
                       <div class="flex gap-sm">
@@ -1873,20 +2081,20 @@
               <div class="story-overview-header">
                 <h3 class="story-overview-title">{{ resultData.story_title || 'Untitled' }}</h3>
                 <div class="story-overview-meta">
-                  <el-tag size="small" type="info">{{ resultData.panel_count }} 画面</el-tag>
+                  <el-tag size="small" type="info">{{ (resultData.panels||[]).length }} 画面</el-tag>
                   <el-tag v-if="resultData.theme" size="small">{{ resultData.theme }}</el-tag>
                   <el-tag v-if="resultData.image_model" size="small" type="warning" effect="plain">{{ resultData.image_model }}</el-tag>
                 </div>
               </div>
               <p v-if="resultData.story_synopsis" class="story-overview-synopsis">{{ resultData.story_synopsis }}</p>
               <div class="story-overview-words">
-                <el-tag v-for="w in (resultData.included_words||[])" :key="w" type="success" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
-                <el-tag v-for="w in (resultData.missing_words||[])" :key="'m'+w" type="danger" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
+                <el-tag v-for="(w, i) in (resultData.included_words||[])" :key="w + '_' + i" type="success" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
+                <el-tag v-for="(w, i) in (resultData.missing_words||[])" :key="'m' + w + '_' + i" type="danger" effect="plain" size="small" class="word-list-tag">{{ w }}</el-tag>
               </div>
             </el-card>
 
             <div class="panels-container">
-              <div v-for="(panel, idx) in (resultData.panels||[])" :key="idx" class="panel-card">
+              <div v-for="(panel, idx) in (resultData.panels||[])" :key="panel.scene_index || idx" class="panel-card">
                 <div class="panel-index">
                   <span class="panel-index-num">{{ idx + 1 }}</span>
                   <span v-if="panel.round_label" class="panel-index-role" style="color:var(--warning-color)">{{ panel.round_label }}</span>
@@ -1904,7 +2112,7 @@
                   <div class="panel-sentence-en" v-html="highlightPanelWords(panel.sentence_en, panel.target_words_in_scene)"></div>
                   <div class="panel-sentence-zh">{{ panel.sentence_zh }}</div>
                   <div v-if="panel.target_words_in_scene && panel.target_words_in_scene.length" class="panel-words">
-                    <el-tag v-for="w in panel.target_words_in_scene" :key="w" size="small" type="primary" effect="plain" class="word-list-tag">{{ w }}</el-tag>
+                    <el-tag v-for="(w, i) in panel.target_words_in_scene" :key="w + '_' + i" size="small" type="primary" effect="plain" class="word-list-tag">{{ w }}</el-tag>
                   </div>
                   <div v-if="panel.word_notes && Object.keys(panel.word_notes).length" class="panel-word-notes">
                     <div v-for="(note, w) in panel.word_notes" :key="w" class="word-note-item">
@@ -1914,7 +2122,7 @@
                   </div>
                   <div v-if="panel.collocations && panel.collocations.length" class="panel-collocations">
                     <el-icon color="var(--gold)"><Connection /></el-icon>
-                    <el-tag v-for="c in panel.collocations" :key="c" size="small" type="warning" effect="plain">{{ c }}</el-tag>
+                    <el-tag v-for="(c, i) in panel.collocations" :key="c + '_' + i" size="small" type="warning" effect="plain">{{ c }}</el-tag>
                   </div>
                 </div>
               </div>
@@ -1984,8 +2192,8 @@
 
   <!-- 添加单词对话框 -->
   <el-dialog v-model="showAddWordDialog" title="添加单词" width="480px" @close="addWordForm.word='';addWordForm.pos='';addWordForm.meaning_zh=''">
-    <el-form label-width="80px">
-      <el-form-item label="单词">
+    <el-form :model="addWordForm" :rules="addWordRules" ref="addWordFormRef" label-width="80px">
+      <el-form-item label="单词" prop="word">
         <el-input v-model="addWordForm.word" placeholder="请输入英文单词" clearable @keyup.enter="submitAddWord"></el-input>
       </el-form-item>
       <el-form-item label="词性">
@@ -2057,6 +2265,10 @@ const app = createApp({
     const selectedWords = ref([])
     const showAddWordDialog = ref(false)
     const addWordForm = reactive({word:'',pos:'',meaning_zh:''})
+    const addWordFormRef = ref(null)
+    const addWordRules = {
+      word: [{ required: true, message: '请输入英文单词', trigger: 'blur' }],
+    }
     const addWordLoading = ref(false)
 
     // 导入
@@ -2079,6 +2291,30 @@ const app = createApp({
       word:'', theme_hint:'', image_model:'wan2.7-image',
       generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
     })
+
+    // 从词库选择单词
+    const wordPickerVisible = ref(false)
+    const wordPickerValue = ref('')
+    const wordPickerOptions = ref([])
+    const wordPickerLoading = ref(false)
+    async function loadWordPicker(q) {
+      wordPickerLoading.value = true
+      try {
+        const res = await api(`/api/words?page=1&page_size=50&search=${encodeURIComponent(q||'')}`)
+        wordPickerOptions.value = res.items || []
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { wordPickerLoading.value = false }
+    }
+    async function openWordPicker() {
+      wordPickerValue.value = ''
+      wordPickerVisible.value = true
+      await loadWordPicker('')
+    }
+    async function searchWords(q) { await loadWordPicker(q) }
+    function confirmWordPick() {
+      if (wordPickerValue.value) singleForm.word = wordPickerValue.value
+      wordPickerVisible.value = false
+    }
     const singleCompiling = ref(false)
     const singleResult = ref(null)
     const singleAudioLoading = ref(false)
@@ -2109,12 +2345,12 @@ const app = createApp({
     const polysemySelectedSet = reactive(new Set())
     const polysemySelectedCount = computed(() => polysemySelectedSet.size)
     const polysemyAllSelected = computed({
-      get: () => polysemyHot.value.length > 0 && polysemyHot.value.every(e => polysemySelectedSet.has(e.word)),
+      get: () => polysemyHot.value.length > 0 && polysemyHot.value.every(e => polysemySelectedSet.has(String(e.word).toLowerCase())),
       set: v => {},
     })
     const polysemyIndeterminate = computed(() => {
       if (polysemyHot.value.length === 0) return false
-      const selN = polysemyHot.value.filter(e => polysemySelectedSet.has(e.word)).length
+      const selN = polysemyHot.value.filter(e => polysemySelectedSet.has(String(e.word).toLowerCase())).length
       return selN > 0 && selN < polysemyHot.value.length
     })
 
@@ -2136,10 +2372,14 @@ const app = createApp({
     const sceneDetectResult = ref(null)
     const sceneSuggestions = ref([])
     const sceneAdoptingIdx = ref(-1)
-    const sceneCompileForm = reactive({ panel_count: 4, theme_hint: '', image_model: '' })
+    const sceneCompileForm = reactive({ style: 'absurd', panel_count: 4, theme_hint: '', image_model: '' })
     const sceneCompileLoading = ref(false)
     const sceneEditVisible = ref(false)
     const sceneEditForm = reactive({ name_en: '', name_zh: '', description: '', add_words: [], remove_words: [] })
+    const sceneEditFormRef = ref(null)
+    const sceneEditRules = {
+      name_en: [{ required: true, message: '请输入场景英文名', trigger: 'blur' }],
+    }
     const sceneEditAddWord = ref('')
     const sceneEditLoading = ref(false)
 
@@ -2175,18 +2415,29 @@ const app = createApp({
       let text = sentence.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       if (!words || !words.length) return text
       const sorted = [...words].sort((a,b)=>b.length-a.length)
+      const placeholders = []
       for (const w of sorted) {
-        const re = new RegExp('\\b('+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[a-z]*)\\b','gi')
-        text = text.replace(re, '<span class="word-hit">$1</span>')
+        const escaped = w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+        const stem = (w.length > 3 && w.endsWith('e')) ? w.slice(0, -1) : ''
+        const prefixes = stem ? '(?:' + escaped + '|' + stem + ')' : escaped
+        const re = new RegExp('\\b' + prefixes + '(?:s|es|ed|d|ing|ings|ly|tion|tions|ment|ments|er|est|ion|ied|\'s)?\\b','gi')
+        text = text.replace(re, (m) => {
+          const ph = '\u0000' + placeholders.length + '\u0000'
+          placeholders.push(m)
+          return ph
+        })
       }
+      placeholders.forEach((m, i) => {
+        text = text.split('\u0000'+i+'\u0000').join('<span class="word-hit">'+m+'</span>')
+      })
       return text
     }
 
     // ====== API 请求 ======
     async function api(url, opts={}) {
       const resp = await fetch(url, {
-        headers:{'Content-Type':'application/json',...opts.headers},
-        ...opts
+        ...opts,
+        headers:{'Content-Type':'application/json',...(opts.headers||{})},
       })
       if (!resp.ok) {
         const err = await resp.json().catch(()=>({detail:'请求失败'}))
@@ -2230,6 +2481,9 @@ const app = createApp({
       } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
     }
     async function submitAddWord() {
+      if (addWordFormRef.value) {
+        try { await addWordFormRef.value.validate() } catch(e) { return }
+      }
       if (!addWordForm.word.trim()) { ElementPlus.ElMessage.warning('请输入单词'); return }
       addWordLoading.value = true
       try {
@@ -2249,18 +2503,20 @@ const app = createApp({
     }
     function goCompile() {
       if (selectedWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      if (selectedWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       compileWords.value = [...selectedWords.value]
       currentPage.value = 'compile'
     }
     async function batchDeleteWords() {
       if (selectedWords.value.length===0) return
+      const ids = selectedWords.value.map(w=>w.id)
       try {
-        await ElementPlus.ElMessageBox.confirm(`确定批量删除选中的 ${selectedWords.value.length} 个单词吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
-        for (const w of selectedWords.value) {
-          await api(`/api/words/${w.id}`, {method:'DELETE'})
-        }
-        ElementPlus.ElMessage.success(`已删除 ${selectedWords.value.length} 个单词`)
+        await ElementPlus.ElMessageBox.confirm(`确定批量删除选中的 ${ids.length} 个单词吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        const res = await api('/api/words/batch-delete', {method:'POST', body: JSON.stringify({ids})})
+        ElementPlus.ElMessage.success(`已删除 ${res.deleted} 个单词`)
         selectedWords.value = []
+        const maxPage = Math.max(1, Math.ceil((wordTotal.value - (res.deleted || 0)) / wordPageSize.value))
+        if (wordPage.value > maxPage) wordPage.value = maxPage
         loadWords()
       } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
     }
@@ -2305,6 +2561,7 @@ const app = createApp({
     // ====== 编译 ======
     async function handleCompile() {
       if (compileWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       compiling.value = true
       try {
@@ -2430,7 +2687,12 @@ const app = createApp({
         const res = await api(`/api/generations/${h.id}`)
         resultData.value = res
         regenerateTtsModel.value = res.tts_model || 'qwen-audio-3.0-tts-plus'
-      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      } catch(e) {
+        ElementPlus.ElMessage.error(e.message)
+        resultData.value = null
+        currentPage.value = 'history'
+        loadHistory()
+      }
       finally { resultLoading.value = false }
     }
 
@@ -2508,8 +2770,9 @@ const app = createApp({
     }
     function toggleSelectAllPolysemy(checked) {
       for (const e of polysemyHot.value) {
-        if (checked) polysemySelectedSet.add(e.word)
-        else polysemySelectedSet.delete(e.word)
+        const k = String(e.word).toLowerCase()
+        if (checked) polysemySelectedSet.add(k)
+        else polysemySelectedSet.delete(k)
       }
     }
     function clearPolysemySelection() { polysemySelectedSet.clear() }
@@ -2528,7 +2791,7 @@ const app = createApp({
         })
         ElementPlus.ElMessage.success(`成功删除 ${res.deleted || 0} 个词条`)
         polysemySelectedSet.clear()
-        if (polysemyPage.value > 1 && polysemyHot.value.every(e => words.includes(e.word))) {
+        if (polysemyPage.value > 1 && polysemyHot.value.every(e => words.includes(String(e.word).toLowerCase()))) {
           polysemyPage.value -= 1
         }
         await Promise.all([loadPolysemyHot(), loadCandidates()])
@@ -2542,6 +2805,8 @@ const app = createApp({
         const newFav = !resultData.value.is_favorited
         await api(`/api/texts/${resultData.value.id}/favorite`, {method:'POST', body:JSON.stringify({favorited:newFav})})
         resultData.value.is_favorited = newFav
+        const it = (historyData.value||[]).find(x => x.id === resultData.value.id)
+        if (it) it.is_favorited = newFav
         ElementPlus.ElMessage.success(newFav?'已收藏':'已取消收藏')
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
     }
@@ -2691,6 +2956,9 @@ const app = createApp({
 
     async function saveSceneEdit() {
       if (!sceneDetail.value) return
+      if (sceneEditFormRef.value) {
+        try { await sceneEditFormRef.value.validate() } catch(e) { return }
+      }
       sceneEditLoading.value = true
       try {
         const body = {}
@@ -2739,6 +3007,7 @@ const app = createApp({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            style: sceneCompileForm.style,
             panel_count: sceneCompileForm.panel_count,
             theme_hint: sceneCompileForm.theme_hint,
             image_model: sceneCompileForm.image_model,
@@ -2785,10 +3054,12 @@ const app = createApp({
       }).catch(()=>{})
     })
 
-    // ====== 监听单词搜索 ======
+    // ====== 监听单词搜索（防抖 300ms，避免每次击键都触发请求） ======
+    let wordSearchTimer = null
     watch(wordSearch, () => {
       wordPage.value = 1
-      loadWords()
+      clearTimeout(wordSearchTimer)
+      wordSearchTimer = setTimeout(loadWords, 300)
     })
 
     // ====== 图标组件 ======
@@ -2817,16 +3088,21 @@ const app = createApp({
       Loading: ElIcons.Loading,
       WarningFilled: ElIcons.WarningFilled,
       HomeFilled: ElIcons.HomeFilled,
+      House: ElIcons.House,
+      VideoPlay: ElIcons.VideoPlay,
+      List: ElIcons.List,
     }
 
     return {
       currentPage, dailyUsage,
       TTS_MODELS, groupedTtsModels, imageModels,
       wordsData, wordsLoading, wordTotal, wordPage, wordPageSize, wordSearch, selectedWords,
-      showAddWordDialog, addWordForm, addWordLoading,
+      showAddWordDialog, addWordForm, addWordFormRef, addWordRules, addWordLoading,
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
+      wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
+      openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
       recentItems, recentLoading,
       polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
@@ -2835,7 +3111,7 @@ const app = createApp({
       resultData, resultLoading, audioLoading, regenerateTtsModel, regenerateVoice, regenerateSpeed,
       sceneView, scenes, scenesLoading, sceneDetail, sceneDetailLoading,
       sceneDetectLoading, sceneDetectResult, sceneSuggestions, sceneAdoptingIdx,
-      sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditAddWord, sceneEditLoading,
+      sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,
       formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
       handleParse, doImport, triggerFileInput, handleFileChange,

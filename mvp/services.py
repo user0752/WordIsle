@@ -5,6 +5,7 @@ DeepSeek AI 生成、百炼 TTS 语音合成、百炼文生图。
 """
 
 import asyncio
+import base64
 import json
 
 import dashscope
@@ -27,6 +28,7 @@ __all__ = [
     "call_polysemy_detection",
     "call_word_enrichment",
     "call_deepseek_scene_detect",
+    "call_deepseek_scene_collocations",
 ]
 
 # ========================================================================
@@ -575,15 +577,18 @@ def _get_image_model_config(model_name: str) -> dict:
 
 
 async def _generate_image_qwen_multimodal(prompt: str, model: str) -> bytes:
-    """旗舰档：qwen-image-3.0-pro / z-image-turbo，同步端点。"""
-    size = "1024*1024" if model == "z-image-turbo" else "1664*928"
+    """千问图像系列：qwen-image-3.0/2.0-pro、qwen-image、z-image-turbo，同步端点。
+    size 与 prompt_extend 从模型配置读取。"""
+    cfg = _get_image_model_config(model)
+    size = cfg.get("size", "1024*1024")
+    prompt_extend = cfg.get("prompt_extend", True)
     url = f"{IMAGE_BASE_URL}/services/aigc/multimodal-generation/generation"
     payload = {
-        "model": model,
+        "model": cfg.get("api_model", model),
         "input": {
             "messages": [{"role": "user", "content": [{"text": prompt}]}]
         },
-        "parameters": {"size": size, "n": 1, "prompt_extend": True},
+        "parameters": {"size": size, "n": 1, "prompt_extend": prompt_extend},
     }
     headers = {
         "Authorization": f"Bearer {IMAGE_API_KEY}",
@@ -617,11 +622,12 @@ async def _generate_image_qwen_multimodal(prompt: str, model: str) -> bytes:
 
 
 async def _generate_image_wan_t2i(prompt: str, model: str) -> bytes:
-    """均衡档：wan2.7-image，异步轮询端点。"""
-    size = "1280*720"
+    """万相文生图：wan2.7/2.6-image、wan2.2-t2i 等，异步轮询端点。size 从模型配置读取。"""
+    cfg = _get_image_model_config(model)
+    size = cfg.get("size", "1280*720")
     submit_url = f"{IMAGE_BASE_URL}/services/aigc/text2image/image-synthesis"
     payload = {
-        "model": model,
+        "model": cfg.get("api_model", model),
         "input": {"prompt": prompt},
         "parameters": {"size": size, "n": 1},
     }
@@ -668,26 +674,119 @@ async def _generate_image_wan_t2i(prompt: str, model: str) -> bytes:
         return img_resp.content
 
 
+async def _generate_image_openai_compat(prompt: str, model: str, api_key: str, base_url: str, size: str = "1024x1024") -> bytes:
+    """OpenAI 兼容协议文生图（如 TokenRhythm），POST {base_url}/images/generations。
+    优先用 b64_json 直接返回图片数据（避免二次下载 OSS 签名 URL 的间歇性 403）；
+    若平台仅返回 url，则带浏览器 UA 重试下载。
+    对 502/503/504 及超时自动重试 3 次（退避），缓解平台抖动。"""
+    url = f"{base_url}/images/generations"
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "n": 1,
+        "size": size,
+        "response_format": "b64_json",
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    # 临时性服务端错误：502/503/504，及网络超时 —— 自动重试
+    RETRYABLE_STATUS = {502, 503, 504}
+    last_err = None
+    data = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code in RETRYABLE_STATUS:
+                last_err = RuntimeError(f"平台临时不可用 HTTP {resp.status_code}")
+                await asyncio.sleep(2.0 * (attempt + 1))  # 2s, 4s, 6s 退避
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_err = e
+            await asyncio.sleep(2.0 * (attempt + 1))
+            continue
+    if data is None:
+        raise RuntimeError(f"文生图请求失败（重试 3 次）: {last_err}")
+
+    items = data.get("data") or []
+    if not items:
+        raise RuntimeError(f"文生图返回无 data: {data}")
+    item = items[0]
+
+    # 1) 优先 b64_json（无需二次下载，最可靠）
+    b64 = item.get("b64_json")
+    if b64:
+        return base64.b64decode(b64)
+
+    # 2) 退回到 url 下载（带浏览器 UA，重试 3 次以规避 OSS 签名 URL 间歇 403）
+    image_url = item.get("url")
+    if not image_url:
+        raise RuntimeError("文生图返回无 url/b64_json")
+    dl_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
+    last_err = None
+    for attempt in range(3):
+        try:
+            await asyncio.sleep(1.0 * attempt)  # 首次立即，后续指数退避
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                img_resp = await client.get(image_url, headers=dl_headers)
+                img_resp.raise_for_status()
+                return img_resp.content
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"图片下载失败（重试 3 次）: {last_err}")
+
+
 async def call_image_generation(prompt: str, model: str = None) -> bytes:
-    """文生图统一入口，按模型分派到同步或异步端点。返回图片二进制。"""
-    if not IMAGE_API_KEY:
-        raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
+    """文生图统一入口，按模型分派到同步、异步或 OpenAI 兼容端点。返回图片二进制。"""
     model_name = model or IMAGE_MODEL
     cfg = _get_image_model_config(model_name)
+    endpoint = cfg.get("endpoint", "t2i")
+    provider = cfg.get("provider", "dashscope")
+    api_model = cfg.get("api_model", model_name)
     try:
-        if cfg.get("endpoint") == "multimodal":
+        if endpoint == "openai":
+            # OpenAI 兼容协议（TokenRhythm 免费调用 qwen-image-2.0 / wan2.7-image）
+            if provider == "tokenrhythm":
+                if not TOKENRHYTHM_API_KEY:
+                    raise HTTPException(500, "请先设置 TOKENRHYTHM_API_KEY 环境变量")
+                api_key, base_url = TOKENRHYTHM_API_KEY, TOKENRHYTHM_BASE_URL
+            else:
+                if not IMAGE_API_KEY:
+                    raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
+                api_key, base_url = IMAGE_API_KEY, IMAGE_BASE_URL
+            return await _generate_image_openai_compat(
+                prompt, api_model, api_key, base_url, cfg.get("size", "1024x1024")
+            )
+        if not IMAGE_API_KEY:
+            raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
+        if endpoint == "multimodal":
             return await _generate_image_qwen_multimodal(prompt, model_name)
-        else:
-            return await _generate_image_wan_t2i(prompt, model_name)
+        return await _generate_image_wan_t2i(prompt, model_name)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"文生图失败 ({model_name}): {e}")
 
 
-async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int) -> dict:
-    """为单个画面生成图片，失败时降级（不阻塞整体）。"""
-    full_prompt = f"cinematic storyboard, film grain, dramatic lighting, {prompt}, 16:9"
+_STYLE_IMAGE_PROMPT_PREFIX = {
+    "absurd": "Surreal comic, absurd juxtaposition, bold flat colors, weird objects",
+    "conflict": "Comic strip, exaggerated facial expressions, two-character interaction, office satire",
+}
+
+
+async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int, style: str = "") -> dict:
+    """为单个画面生成图片，失败时降级（不阻塞整体）。
+    style: ''/'legacy' 保留旧版微电影风格；'absurd'/'conflict' 强化对应漫画风格，避免被电影质感污染。"""
+    prefix = _STYLE_IMAGE_PROMPT_PREFIX.get(style)
+    if prefix:
+        full_prompt = f"{prefix}, {prompt}, 16:9"
+    else:
+        full_prompt = f"cinematic storyboard, film grain, dramatic lighting, {prompt}, 16:9"
     try:
         img_bytes = await call_image_generation(full_prompt, model)
         file_name = f"{gen_id}_panel{scene_index}.png"
@@ -1098,3 +1197,80 @@ async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dic
         })
 
     return {"scene_assignments": assignments, "new_scenes_suggested": new_scenes}
+
+
+# ========================================================================
+# 场景聚汇：场景词伙搭配生成
+# ========================================================================
+
+SCENE_COLLOCATIONS_SYSTEM_PROMPT = """You are a TOEIC collocation expert. Generate typical high-frequency business collocations for the words in a scene.
+
+OUTPUT JSON ONLY:
+{
+  "collocations": [
+    {
+      "phrase": "submit a resume",
+      "zh": "提交简历",
+      "words": ["submit", "resume"],
+      "example_en": "Please submit a resume before Friday.",
+      "example_zh": "请在周五前提交简历。"
+    }
+  ]
+}
+
+RULES:
+1. Generate 2-5 collocations. Each phrase must be 2-4 words and contain at least one word from the scene word list.
+2. Collocations should be authentic TOEIC business chunks (verb+noun, noun+noun, adj+noun, etc.).
+3. zh: concise Chinese meaning of the phrase.
+4. words: the scene words used in this collocation.
+5. example_en/example_zh: one short example sentence using the collocation.
+6. Output only the JSON object."""
+
+
+def _build_scene_collocations_user_prompt(words: list[str], scene_name: str, scene_name_zh: str) -> str:
+    """构造场景词伙生成的用户 prompt。"""
+    lines = [f"Scene: {scene_name} ({scene_name_zh})", "Words in this scene:", "  " + ", ".join(words)]
+    return "\n".join(lines)
+
+
+async def call_deepseek_scene_collocations(words: list[str], scene_name: str, scene_name_zh: str = "") -> list[dict]:
+    """为场景内单词生成 2-5 条典型 TOEIC 词伙搭配。任何失败都返回 []，不抛异常。"""
+    if not words or len(words) < 2:
+        return []
+    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
+        return []
+    messages = [
+        {"role": "system", "content": SCENE_COLLOCATIONS_SYSTEM_PROMPT},
+        {"role": "user", "content": _build_scene_collocations_user_prompt(words, scene_name, scene_name_zh)},
+    ]
+    try:
+        data = await _call_llm_with_fallback(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2048,
+            response_format={"type": "json_object"},
+            timeout=60.0,
+        )
+        if data is None:
+            return []
+        content = data["choices"][0]["message"]["content"]
+        if not content or not content.strip():
+            return []
+        parsed = _extract_json(content)
+        out = []
+        seen = set()
+        for c in parsed.get("collocations", [])[:8]:
+            phrase = str(c.get("phrase", "")).strip()
+            if not phrase or phrase.lower() in seen:
+                continue
+            seen.add(phrase.lower())
+            out.append({
+                "phrase_en": phrase,
+                "phrase_zh": str(c.get("zh", "")).strip(),
+                "words": [str(w).strip().lower() for w in c.get("words", []) if str(w).strip()][:10],
+                "example_en": str(c.get("example_en", "")).strip(),
+                "example_zh": str(c.get("example_zh", "")).strip(),
+            })
+        return out
+    except Exception:
+        return []
