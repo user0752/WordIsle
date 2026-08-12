@@ -118,6 +118,23 @@ def init_db():
             tts_count INTEGER DEFAULT 0,
             image_count INTEGER DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS videos (
+            id TEXT PRIMARY KEY,
+            words TEXT NOT NULL,
+            theme_hint TEXT DEFAULT '',
+            story_title TEXT DEFAULT '',
+            narration_en TEXT DEFAULT '',
+            narration_zh TEXT DEFAULT '',
+            video_prompt TEXT DEFAULT '',
+            script TEXT DEFAULT '{}',
+            model TEXT DEFAULT '',
+            duration INTEGER DEFAULT 10,
+            file_name TEXT DEFAULT '',
+            video_url TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            error TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         CREATE TABLE IF NOT EXISTS polysemy (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             word TEXT NOT NULL UNIQUE,
@@ -193,6 +210,7 @@ def init_db():
         ("ending_moral", "TEXT DEFAULT ''"),
         ("generation_type", "TEXT DEFAULT 'batch'"),
         ("style", "TEXT DEFAULT ''"),
+        ("video_url", "TEXT DEFAULT ''"),
     ]:
         try:
             conn.execute(f"ALTER TABLE generations ADD COLUMN {col} {decl}")

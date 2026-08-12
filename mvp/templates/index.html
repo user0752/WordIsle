@@ -1034,6 +1034,10 @@
             <el-icon><List /></el-icon>
             <span>批量编译</span>
           </el-menu-item>
+          <el-menu-item index="video">
+            <el-icon><VideoCamera /></el-icon>
+            <span>视频编译</span>
+          </el-menu-item>
 
           <!-- 知识库 -->
           <div class="menu-divider"><span>知识库</span></div>
@@ -1113,6 +1117,7 @@
                 <div v-for="r in recentItems" :key="r.id" class="recent-item" @click="viewResult(r)">
                   <div class="recent-item-cover">
                     <img v-if="r.first_image_url" :src="r.first_image_url" alt="cover" loading="lazy" />
+                    <div v-else-if="r.video_url" class="recent-cover-placeholder"><el-icon :size="22"><VideoCamera /></el-icon></div>
                     <div v-else class="recent-cover-placeholder"><el-icon :size="22"><Picture /></el-icon></div>
                   </div>
                   <div class="recent-item-body">
@@ -1452,6 +1457,14 @@
               <el-form-item v-else label="画面数量">
                 <span class="text-secondary" style="font-size:13px">固定 3 画面（{{ compileForm.style==='absurd' ? '荒诞三连弹' : '冲突三回合' }}）</span>
               </el-form-item>
+              <el-form-item label="画风">
+                <el-select v-model="compileForm.art_style" placeholder="不指定（用风格默认）" clearable style="width:360px">
+                  <el-option v-for="s in artStyleOptions" :key="s.value" :label="s.label" :value="s.value">
+                    <span style="font-size:13px">{{ s.label }}</span>
+                    <span style="font-size:11px;color:var(--text-tertiary)"> — {{ s.extra }}</span>
+                  </el-option>
+                </el-select>
+              </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="compileForm.theme_hint" :placeholder="compileForm.style==='conflict' ? '可选，冲突类型：买方 vs 卖方 / 老板 vs 员工 / 供应商 vs 采购' : '可选，如：投资失败 / 项目危机 / 采购谈判。留空则 AI 自由发挥'" style="width:460px" clearable></el-input>
               </el-form-item>
@@ -1493,6 +1506,125 @@
                 <span class="ml-md text-secondary" style="font-size:13px">剧情生成 + 文生图约需 20-90 秒（取决于画面数与模型），请耐心等待</span>
               </el-form-item>
             </el-form>
+          </el-card>
+        </div>
+
+        <!-- 视频编译 -->
+        <div v-if="currentPage==='video'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>视频编译</h2>
+              <p class="page-subtitle">把单词编成一段 5-10 秒记忆微电影 · 旁白 + 画面 + 视听记忆</p>
+            </div>
+            <el-button :icon="Back" @click="currentPage='words'">返回单词库</el-button>
+          </div>
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex-between">
+                <span class="card-title">已选单词 <el-tag type="primary" size="small" class="ml-sm">{{ compileWords.length }} 个</el-tag></span>
+                <el-button link type="primary" @click="currentPage='words'">修改选择</el-button>
+              </div>
+            </template>
+            <div v-if="compileWords.length===0" class="empty-state">
+              <el-icon><WarningFilled /></el-icon>
+              <p>未选择任何单词，请返回单词库选择</p>
+              <el-button type="primary" class="mt-md" @click="currentPage='words'">去选择单词</el-button>
+            </div>
+            <div v-else class="word-tags">
+              <el-tag v-for="w in compileWords" :key="w.id" closable @close="compileWords=compileWords.filter(x=>x.id!==w.id)" class="word-tag-item">{{ w.word }}</el-tag>
+            </div>
+          </el-card>
+          <el-card shadow="never" v-if="compileWords.length>0">
+            <el-form label-width="120px" label-position="right">
+              <el-form-item label="文生视频模型">
+                <el-select v-model="videoForm.video_model" placeholder="选择文生视频模型" style="width:560px">
+                  <el-option v-for="m in videoModels" :key="m.value" :label="m.label" :value="m.value">
+                    <div style="padding:4px 0">
+                      <div style="font-size:13px;font-weight:600">
+                        {{ m.label }}
+                        <el-tag v-if="m.tier==='有额度'" size="small" type="success" effect="plain" class="ml-sm">额度 {{ m.quota }} 秒</el-tag>
+                        <span style="float:right;color:var(--warning-color);font-weight:600">{{ m.price }}</span>
+                      </div>
+                      <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">{{ m.note }}</div>
+                    </div>
+                  </el-option>
+                </el-select>
+                <div v-if="videoForm.video_model" class="mt-sm" style="font-size:12px">
+                  <span class="text-secondary">{{ getVideoModelNote(videoForm.video_model) }}</span>
+                </div>
+              </el-form-item>
+              <!-- 有额度免费模型：标注剩余额度，使用/测试会消耗 -->
+              <el-form-item v-if="selectedVideoModel && selectedVideoModel.free" label="免费额度">
+                <el-alert type="success" show-icon :closable="false" style="width:100%">
+                  <template #title>
+                    免费额度 {{ selectedVideoModel.quota }} 秒 / 共 {{ selectedVideoModel.quota_total }} 秒<span class="ml-md">到期 {{ selectedVideoModel.expiry }}</span>
+                  </template>
+                  <template #default>
+                    <span style="font-size:12px">当前为有额度免费模型，使用或测试后会消耗额度，请确认后生成。</span>
+                  </template>
+                </el-alert>
+              </el-form-item>
+              <el-form-item label="视频时长">
+                <el-radio-group v-model="videoForm.duration">
+                  <el-radio-button :value="5">5 秒</el-radio-button>
+                  <el-radio-button :value="10">10 秒</el-radio-button>
+                </el-radio-group>
+                <span class="ml-md text-secondary" style="font-size:12px">wan2.2-t2v-plus 与 wanx2.1-t2v-turbo 固定 5 秒</span>
+              </el-form-item>
+              <el-form-item label="旁白音色">
+                <el-select v-model="videoForm.tts_model" placeholder="选择语音合成模型" style="width:420px">
+                  <el-option-group v-for="g in groupedTtsModels" :key="g.label" :label="g.label">
+                    <el-option v-for="m in g.models" :key="m.value" :label="m.label" :value="m.value">
+                      <span>{{ m.label }}</span>
+                      <br><span style="font-size:11px;color:var(--text-tertiary)">推荐音色: {{ m.voices }}</span>
+                    </el-option>
+                  </el-option-group>
+                </el-select>
+                <span v-if="videoForm.tts_model" class="ml-sm" style="font-size:12px;color:var(--text-tertiary)">
+                  <br>默认音色: {{ getModelDefaultVoice(videoForm.tts_model) }}
+                </span>
+              </el-form-item>
+              <el-form-item label="主题方向">
+                <el-input v-model="videoForm.theme_hint" placeholder="可选，如：投资失败 / 项目危机 / 采购谈判。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
+              </el-form-item>
+              <el-form-item label="画风">
+                <el-select v-model="videoForm.art_style" placeholder="选择画风" style="width:360px">
+                  <el-option v-for="s in artStyleOptions" :key="s.value" :label="s.label" :value="s.value">
+                    <span style="font-size:13px">{{ s.label }}</span>
+                    <span style="font-size:11px;color:var(--text-tertiary)"> — {{ s.extra }}</span>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+              <el-divider></el-divider>
+              <el-form-item>
+                <el-button type="primary" size="large" :icon="MagicStick" :loading="videoCompiling" @click="handleVideoCompile">开始 AI 视频编译</el-button>
+                <span class="ml-md text-secondary" style="font-size:13px">脚本生成 + 文生视频约需 1-5 分钟，请耐心等待</span>
+              </el-form-item>
+            </el-form>
+          </el-card>
+          <!-- 视频编译结果 -->
+          <el-card v-if="videoResult" shadow="never" class="mt-md">
+            <template #header>
+              <div class="flex-between">
+                <span class="card-title">🎬 {{ videoResult.story_title || '视频编译结果' }}</span>
+                <div class="flex gap-sm">
+                  <el-tag size="small" type="info" effect="plain">{{ getVideoModelLabel(videoResult.video_model) }}</el-tag>
+                  <el-tag size="small">{{ videoResult.duration }} 秒</el-tag>
+                </div>
+              </div>
+            </template>
+            <div v-if="videoResult.video_url">
+              <video :src="videoResult.video_url" controls playsinline style="width:100%;max-width:640px;border-radius:8px" @error="videoOnError"></video>
+            </div>
+            <div v-else class="empty-state">
+              <el-icon><WarningFilled /></el-icon>
+              <p>视频生成失败或仍在处理中</p>
+            </div>
+            <div class="mt-md" style="font-size:13px">
+              <p class="text-secondary"><strong>旁白 (EN)：</strong>{{ videoResult.narration_en }}</p>
+              <p class="text-secondary"><strong>旁白 (中)：</strong>{{ videoResult.narration_zh }}</p>
+              <p class="text-secondary" style="font-size:12px;color:var(--text-tertiary)"><strong>画面提示词：</strong>{{ videoResult.video_prompt }}</p>
+            </div>
           </el-card>
         </div>
 
@@ -1639,19 +1771,11 @@
                   </div>
                 </template>
                 <div class="flex gap-sm" style="flex-wrap:wrap;align-items:center">
-                  <el-select v-model="sceneCompileForm.style" placeholder="编译风格" style="width:130px" size="small">
-                    <el-option value="absurd" label="荒诞三连弹"></el-option>
-                    <el-option value="conflict" label="冲突连环"></el-option>
-                    <el-option value="" label="微电影"></el-option>
+                  <span class="text-secondary" style="font-size:12px;border:1px solid var(--border-color);border-radius:4px;padding:2px 8px">自然覆盖 · 高关联场景词连贯成故事</span>
+                  <span class="text-secondary" style="font-size:12px">固定 3 画面</span>
+                  <el-select v-model="sceneCompileForm.art_style" placeholder="画风" clearable style="width:130px" size="small">
+                    <el-option v-for="s in artStyleOptions" :key="s.value" :label="s.label" :value="s.value"></el-option>
                   </el-select>
-                  <template v-if="sceneCompileForm.style===''">
-                    <el-select v-model="sceneCompileForm.panel_count" placeholder="画面数" style="width:120px" size="small">
-                      <el-option :value="4" label="4 画面"></el-option>
-                      <el-option :value="6" label="6 画面"></el-option>
-                      <el-option :value="8" label="8 画面"></el-option>
-                    </el-select>
-                  </template>
-                  <span v-else class="text-secondary" style="font-size:12px">固定 3 画面</span>
                   <el-input v-model="sceneCompileForm.theme_hint" placeholder="主题提示（可选，如：办公室加班）" style="width:280px" size="small"></el-input>
                   <el-select v-model="sceneCompileForm.image_model" placeholder="文生图模型" style="width:420px">
                     <el-option v-for="m in imageModels" :key="m.value" :label="m.label" :value="m.value">
@@ -1778,6 +1902,7 @@
               <div v-for="h in historyData" :key="h.id" class="story-card" @click="viewResult(h)">
                 <div class="story-card-cover">
                   <img v-if="h.first_image_url" :src="h.first_image_url" alt="cover" loading="lazy" />
+                  <div v-else-if="h.video_url" class="story-cover-placeholder"><el-icon :size="28"><VideoCamera /></el-icon></div>
                   <div v-else class="story-cover-placeholder"><el-icon :size="28"><Picture /></el-icon></div>
                 </div>
                 <div class="story-card-body">
@@ -1973,12 +2098,13 @@
           <div class="page-header">
             <div>
               <h2 class="page-title">
-                <span class="title-accent"></span>{{ resultData && resultData.generation_type==='single' ? '单点深耕' : '剧情连环画' }}
+                <span class="title-accent"></span>{{ resultData && resultData.generation_type==='single' ? '单点深耕' : (resultData && resultData.generation_type==='video' ? '视频编译' : '剧情连环画') }}
                 <el-tag v-if="resultData && resultData.style==='absurd'" size="small" type="warning" effect="dark" class="ml-sm">荒诞三连弹</el-tag>
                 <el-tag v-else-if="resultData && resultData.style==='conflict'" size="small" type="danger" effect="dark" class="ml-sm">冲突连环</el-tag>
                 <el-tag v-else-if="resultData && resultData.generation_type==='scene'" size="small" type="success" effect="dark" class="ml-sm">场景编译</el-tag>
+                <el-tag v-else-if="resultData && resultData.generation_type==='video'" size="small" type="danger" effect="dark" class="ml-sm">旁白+字幕</el-tag>
               </h2>
-              <p class="page-subtitle">{{ resultData && resultData.generation_type==='single' ? '一个词一张图一句梗 · 字面义与商务义冲突' : '电影分镜记忆卡片 · 单句聚焦，剧情串联' }}</p>
+              <p class="page-subtitle">{{ resultData && resultData.generation_type==='single' ? '一个词一张图一句梗 · 字面义与商务义冲突' : (resultData && resultData.generation_type==='video' ? '记忆微电影 · 画面 + 旁白 + 字幕' : '电影分镜记忆卡片 · 单句聚焦，剧情串联') }}</p>
             </div>
             <el-button :icon="Back" @click="currentPage='history'; loadHistory()">返回历史记录</el-button>
           </div>
@@ -2090,6 +2216,45 @@
                 <el-button type="danger" :icon="Delete" @click="deleteCurrentResult">删除本条记录</el-button>
               </div>
             </el-card>
+            </template>
+
+            <!-- 视频编译结果 -->
+            <template v-else-if="resultData.generation_type==='video'">
+              <el-card shadow="never" class="mb-md">
+                <template #header>
+                  <div class="flex-between">
+                    <span class="card-title">🎬 {{ resultData.story_title || '视频编译结果' }}</span>
+                    <div class="flex gap-sm">
+                      <el-tag size="small" type="info">{{ resultData.image_model || resultData.video_model }}</el-tag>
+                      <el-tag v-if="resultData.has_audio" size="small" type="success">已配音</el-tag>
+                    </div>
+                  </div>
+                </template>
+                <div v-if="resultData.video_url">
+                  <video :src="resultData.video_url" controls playsinline style="width:100%;max-width:640px;border-radius:8px" @error="videoOnError"></video>
+                </div>
+                <div v-else class="empty-state">
+                  <el-icon><WarningFilled /></el-icon>
+                  <p>视频不存在或已被删除</p>
+                </div>
+                <div class="mt-md" style="font-size:13px">
+                  <p v-if="resultData.body_en" class="text-secondary"><strong>旁白 (EN)：</strong>{{ resultData.body_en }}</p>
+                  <p v-if="resultData.narration_zh" class="text-secondary"><strong>旁白 (中)：</strong>{{ resultData.narration_zh }}</p>
+                  <div class="word-stats flex gap-sm mt-sm">
+                    <el-tag size="small" type="success" effect="plain">命中 {{ (resultData.included_words||[]).length }}</el-tag>
+                    <el-tag v-if="(resultData.missing_words||[]).length" size="small" type="info" effect="plain">未覆盖 {{ (resultData.missing_words||[]).join(', ') }}</el-tag>
+                  </div>
+                </div>
+              </el-card>
+              <el-card shadow="never" class="mb-md">
+                <template #header>
+                  <span class="card-title">操作</span>
+                </template>
+                <div class="action-buttons">
+                  <el-button :type="resultData.is_favorited?'warning':'default'" :icon="resultData.is_favorited?StarFilled:Star" @click="toggleFavorite">{{ resultData.is_favorited?'已收藏':'收藏' }}</el-button>
+                  <el-button type="danger" :icon="Delete" @click="deleteCurrentResult">删除本条记录</el-button>
+                </div>
+              </el-card>
             </template>
 
             <!-- 批量编译结果 -->
@@ -2272,6 +2437,29 @@ const app = createApp({
       } catch(e) { /* silent */ }
     }
 
+    // 文生视频模型（视频编译）
+    const videoModels = ref([])
+    async function loadVideoModels() {
+      try {
+        const res = await api('/api/video-models')
+        videoModels.value = res.models || []
+        if (videoModels.value.length && !videoModels.value.find(m => m.value === videoForm.video_model)) {
+          videoForm.video_model = videoModels.value[0].value
+        }
+      } catch(e) { /* silent */ }
+    }
+    const selectedVideoModel = computed(() =>
+      videoModels.value.find(m => m.value === videoForm.video_model) || null
+    )
+    function getVideoModelNote(model) {
+      const m = videoModels.value.find(x => x.value === model)
+      return m ? m.note : ''
+    }
+    function getVideoModelLabel(model) {
+      const m = videoModels.value.find(x => x.value === model)
+      return m ? m.label : model || ''
+    }
+
     // 单词库
     const wordsData = ref([])
     const wordsLoading = ref(false)
@@ -2298,10 +2486,20 @@ const app = createApp({
     // 编译
     const compileWords = ref([])
     const compileForm = reactive({
-      style:'absurd', panel_count:4, theme_hint:'', image_model:'wan2.7-image',
+      style:'absurd', panel_count:4, theme_hint:'', image_model:'wan2.7-image', art_style:'',
       generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
     })
     const compiling = ref(false)
+
+    // 视频编译
+    const videoForm = reactive({
+      video_model:'wan2.2-t2v-plus', duration:5, theme_hint:'', tts_model:'cosyvoice-v3-flash', art_style:'auto',
+    })
+    const videoCompiling = ref(false)
+    const videoResult = ref(null)
+    function videoOnError() {
+      ElementPlus.ElMessage.warning('视频加载失败，请检查文件')
+    }
 
     // 单点深耕
     const singleForm = reactive({
@@ -2311,6 +2509,7 @@ const app = createApp({
 
     // 单点深耕可配置画风
     const artStyleOptions = [
+      { value:'auto',      label:'🧠 自动(Auto)',    extra:'LLM 按单词与语义自动选最利于记忆的画风' },
       { value:'comic',     label:'漫画 · 扁平插画', extra:'默认 · 夸张失衡，适合双义碰撞' },
       { value:'realistic', label:'写实',            extra:'真实光影，适合人像/产品' },
       { value:'3d',        label:'3D 渲染',         extra:'Pixar 风格，圆润可爱' },
@@ -2398,7 +2597,7 @@ const app = createApp({
     const sceneDetectResult = ref(null)
     const sceneSuggestions = ref([])
     const sceneAdoptingIdx = ref(-1)
-    const sceneCompileForm = reactive({ style: 'absurd', panel_count: 4, theme_hint: '', image_model: '' })
+    const sceneCompileForm = reactive({ style: 'scene', panel_count: 4, theme_hint: '', image_model: '', art_style: '' })
     const sceneCompileLoading = ref(false)
     const sceneEditVisible = ref(false)
     const sceneEditForm = reactive({ name_en: '', name_zh: '', description: '', add_words: [], remove_words: [] })
@@ -2598,6 +2797,7 @@ const app = createApp({
           panel_count: compileForm.panel_count,
           theme_hint: compileForm.theme_hint,
           image_model: compileForm.image_model,
+          art_style: compileForm.art_style,
           generate_audio_immediately: compileForm.generate_audio,
           tts_model: compileForm.tts_model,
         })})
@@ -2607,6 +2807,33 @@ const app = createApp({
         currentPage.value = 'result'
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
       finally { compiling.value = false }
+    }
+
+    // ====== 视频编译 ======
+    async function handleVideoCompile() {
+      if (compileWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
+      if (!videoForm.video_model) { ElementPlus.ElMessage.warning('请选择文生视频模型'); return }
+      if (!selectedVideoModel.value) { ElementPlus.ElMessage.warning('视频模型配置不存在'); return }
+      if (selectedVideoModel.value.free) {
+        ElementPlus.ElMessage.warning(`该模型为有额度免费模型（剩余 ${selectedVideoModel.value.quota} 秒），确认将消耗额度`)
+      }
+      videoCompiling.value = true
+      videoResult.value = null
+      try {
+        const words = compileWords.value.map(w=>w.word).join(', ')
+        const res = await api('/api/video/generate', {method:'POST', body:JSON.stringify({
+          words,
+          theme_hint: videoForm.theme_hint,
+          video_model: videoForm.video_model,
+          duration: videoForm.duration,
+          tts_model: videoForm.tts_model,
+          art_style: videoForm.art_style,
+        })})
+        ElementPlus.ElMessage.success('视频编译完成')
+        videoResult.value = res
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { videoCompiling.value = false }
     }
 
     // ====== 单点深耕 ======
@@ -2694,10 +2921,10 @@ const app = createApp({
       finally { recentLoading.value = false }
     }
     function generationTypeLabel(t) {
-      return {single:'单点深耕', scene:'场景编译', batch:'批量编译'}[t] || '批量编译'
+      return {single:'单点深耕', scene:'场景编译', batch:'批量编译', video:'视频编译'}[t] || '批量编译'
     }
     function generationTypeTag(t) {
-      return {single:'success', scene:'info', batch:'warning'}[t] || 'warning'
+      return {single:'success', scene:'info', batch:'warning', video:'danger'}[t] || 'warning'
     }
     async function deleteHistoryItem(h) {
       try {
@@ -3038,6 +3265,7 @@ const app = createApp({
             panel_count: sceneCompileForm.panel_count,
             theme_hint: sceneCompileForm.theme_hint,
             image_model: sceneCompileForm.image_model,
+            art_style: sceneCompileForm.art_style,
           }),
         })
         ElementPlus.ElMessage.success(r.message || '编译完成')
@@ -3066,6 +3294,7 @@ const app = createApp({
       loadPolysemyHot()
       loadCandidates()
       loadImageModels()
+      loadVideoModels()
       loadRecentItems()
       api('/api/health').then(r => {
         if (r && r.daily_usage) {
@@ -3123,6 +3352,8 @@ const app = createApp({
     return {
       currentPage, dailyUsage,
       TTS_MODELS, groupedTtsModels, imageModels,
+      videoModels, videoForm, selectedVideoModel, getVideoModelNote, getVideoModelLabel,
+      videoCompiling, videoResult, videoOnError, handleVideoCompile, loadVideoModels,
       wordsData, wordsLoading, wordTotal, wordPage, wordPageSize, wordSearch, selectedWords,
       showAddWordDialog, addWordForm, addWordFormRef, addWordRules, addWordLoading,
       importText, parsing, parseResult, importing, fileInputRef,

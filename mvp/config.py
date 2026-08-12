@@ -20,6 +20,7 @@ DATA_DIR   = BASE_DIR / "data"
 DB_PATH    = DATA_DIR / "words.db"
 AUDIOS_DIR = DATA_DIR / "audios"
 IMAGES_DIR   = DATA_DIR / "images"
+VIDEOS_DIR   = DATA_DIR / "videos"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
 # ========================================================================
@@ -143,6 +144,110 @@ IMAGE_MODELS = [
         "size": "1024x1024",
     },
 ]
+
+# ========================================================================
+# 文生视频模型（视频编译）
+# 计费：输出按成功生成的视频秒数计费；失败不收费也不消耗免费额度。
+# free=True 表示当前账号有免费额度（quota 为剩余秒数，expiry 为到期日），使用/测试会消耗额度。
+# ========================================================================
+VIDEO_MODELS = [
+    # ============ 付费模型（无免费额度） ============
+    {
+        "value": "wan2.2-t2v-plus",
+        "label": "低成本 · Wan 2.2 T2V Plus (480P)",
+        "tier": "付费",
+        "price": "0.14 元/秒",
+        "resolution": "480P",
+        "free": False,
+        "note": "万相2.2文生视频Plus，全表最便宜；480P画质较低但适合低成本量产",
+    },
+    {
+        "value": "wanx2.1-t2v-turbo",
+        "label": "性价比 · Wanx2.1 T2V Turbo (720P)",
+        "tier": "付费",
+        "price": "0.24 元/秒",
+        "resolution": "720P",
+        "free": False,
+        "note": "万相2.1文生视频Turbo，速度快、指令遵循强；720P画质与成本均衡",
+    },
+    # ============ 有免费额度模型（使用/测试会消耗额度） ============
+    {
+        "value": "wan2.7-t2v-2026-06-12",
+        "label": "免费 · Wan 2.7 T2V (文生视频)",
+        "tier": "有额度",
+        "price": "0.60 元/秒",
+        "resolution": "720P",
+        "free": True,
+        "quota": 50,
+        "quota_total": 50,
+        "expiry": "2026/09/30",
+        "note": "万相2.7文生视频，直接文本出视频；免费额度50秒，使用/测试消耗",
+    },
+    {
+        "value": "wan3.0-video",
+        "label": "免费 · Wan 3.0 Video (邀测)",
+        "tier": "有额度",
+        "price": "0.60 元/秒",
+        "resolution": "720P",
+        "free": True,
+        "quota": 30,
+        "quota_total": 30,
+        "expiry": "2026/11/05",
+        "note": "万相3.0视频生成（邀测中）；免费额度30秒（输入+输出合计），使用/测试消耗",
+    },
+    {
+        "value": "happyhorse-1.1-t2v",
+        "label": "免费 · HappyHorse 1.1 T2V (文生视频)",
+        "tier": "有额度",
+        "price": "0.45 元/秒",
+        "resolution": "480P",
+        "free": True,
+        "quota": 10,
+        "quota_total": 10,
+        "expiry": "2026/09/21",
+        "note": "快乐小马文生视频；免费额度10秒，使用/测试消耗",
+    },
+    {
+        "value": "happyhorse-1.1-i2v",
+        "label": "免费 · HappyHorse 1.1 I2V (图生·首帧)",
+        "tier": "有额度",
+        "price": "0.45 元/秒",
+        "resolution": "480P",
+        "free": True,
+        "quota": 10,
+        "quota_total": 10,
+        "expiry": "2026/09/21",
+        "note": "快乐小马图生视频（基于首帧），需先提供首帧图；免费额度10秒，使用/测试消耗",
+    },
+    {
+        "value": "happyhorse-1.1-r2v",
+        "label": "免费 · HappyHorse 1.1 R2V (参考生视频)",
+        "tier": "有额度",
+        "price": "0.45 元/秒",
+        "resolution": "480P",
+        "free": True,
+        "quota": 10,
+        "quota_total": 10,
+        "expiry": "2026/09/21",
+        "note": "快乐小马参考生视频（需参考视频）；免费额度10秒，使用/测试消耗",
+    },
+    {
+        "value": "wan2.7-r2v-2026-06-12",
+        "label": "免费 · Wan 2.7 R2V (参考生视频)",
+        "tier": "有额度",
+        "price": "0.60 元/秒",
+        "resolution": "720P",
+        "free": True,
+        "quota": 50,
+        "quota_total": 50,
+        "expiry": "2026/09/30",
+        "note": "万相2.7参考生视频（需参考视频）；免费额度50秒，使用/测试消耗",
+    },
+]
+
+# 文生视频（阿里云百炼，复用百炼 API Key）
+VIDEO_API_KEY  = os.getenv("VIDEO_API_KEY", IMAGE_API_KEY)
+VIDEO_BASE_URL = os.getenv("VIDEO_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
 
 # ========================================================================
 # TokenRhythm 文生图（OpenAI 兼容协议，免费调用 qwen-image-2.0 / wan2.7-image）

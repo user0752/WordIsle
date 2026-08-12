@@ -19,6 +19,13 @@ from services import *
 
 router = APIRouter()
 
+# 各 TTS 音色模型推荐的默认音色（视频旁白未指定音色时使用）
+_VIDEO_DEFAULT_VOICE = {
+    "qwen-audio-3.0-tts-plus": "loongmary",
+    "cosyvoice-v3-plus": "loongandy_v3",
+    "cosyvoice-v3-flash": "loongandy_v3",
+}
+
 
 # ========================================================================
 # 内部辅助函数
@@ -70,7 +77,9 @@ def _delete_generation(gen_id: str, not_found_msg: str = "记录不存在") -> d
             raise HTTPException(404, not_found_msg)
         audio_files = [a["file_name"] for a in conn.execute("SELECT file_name FROM audios WHERE generation_id=?", (gen_id,)).fetchall()]
         image_names = [Path(p["image_url"]).name for p in json.loads(gen["panels"] or "[]") if p.get("image_url")]
+        video_url = gen["video_url"] or ""
         conn.execute("DELETE FROM generations WHERE id=?", (gen_id,))
+        conn.execute("DELETE FROM videos WHERE id=?", (gen_id,))
         conn.commit()
     finally:
         conn.close()
@@ -80,6 +89,12 @@ def _delete_generation(gen_id: str, not_found_msg: str = "记录不存在") -> d
         target = IMAGES_DIR / name
         if target.is_relative_to(IMAGES_DIR):
             target.unlink(missing_ok=True)
+    if video_url:
+        vname = Path(video_url).name
+        vid_root = str(gen_id)
+        for f in VIDEOS_DIR.glob(f"{vid_root}*.mp4"):
+            f.unlink(missing_ok=True)
+        (VIDEOS_DIR / vname).unlink(missing_ok=True)
     return {"ok": True}
 
 
@@ -155,6 +170,7 @@ async def generate(req: Request):
     generate_audio = _to_bool(body.get("generate_audio_immediately", False))
     tts_model    = body.get("tts_model", TTS_MODEL) if generate_audio else None
     style        = body.get("style", "absurd")  # 缺省 'absurd'；显式传 '' 为旧版微电影
+    art_style    = body.get("art_style", "")    # 可选画风（comic/realistic/3d/watercolor/pixel），空=不指定
 
     words = normalize_words(raw_words)
     if not words:
@@ -169,7 +185,7 @@ async def generate(req: Request):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
     gen_id = str(uuid.uuid4())[:8]
-    result, usage = await call_deepseek(words, panel_count, theme_hint, style=style)
+    result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style)
 
     # 防护：LLM 未返回任何画面时，直接报错而非写入空记录
     if not result.get("panels"):
@@ -189,7 +205,7 @@ async def generate(req: Request):
     else:
         # 并发生成每个画面的图片
         image_tasks = [
-            generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, p.get("scene_index", idx + 1), style=style)
+            generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, p.get("scene_index", idx + 1), style=style, art_style=art_style)
             for idx, p in enumerate(panels)
         ]
         if image_tasks:
@@ -472,12 +488,13 @@ async def list_generations():
         "image_model": r["image_model"],
         "created_at": r["created_at"],
         "body_en": (r["body_en"][:100] + "...") if r["body_en"] and len(r["body_en"]) > 100 else (r["body_en"] or ""),
-        "has_audio": bool(r["audio_file"]),
+        "has_audio": bool(r["audio_file"]) or bool(r["video_url"]),
         "is_favorited": bool(r["is_favorited"]),
         "included_words": json.loads(r["included_words"] or "[]"),
         "missing_words": json.loads(r["missing_words"] or "[]"),
         "polysemy_notes": json.loads(r["polysemy_notes"] or "{}"),
         "first_image_url": (json.loads(r["panels"] or "[]")[0:1] or [{}])[0].get("image_url") if r["panels"] else None,
+        "video_url": r["video_url"] or "",
     } for r in rows]
 
 
@@ -486,6 +503,13 @@ async def get_generation(gen_id: str):
     conn = get_db()
     gen = conn.execute("SELECT * FROM generations WHERE id=?", (gen_id,)).fetchone()
     aud = conn.execute("SELECT * FROM audios WHERE generation_id=? LIMIT 1", (gen_id,)).fetchone()
+    narration_zh = ""
+    video_model = gen["image_model"] if gen else ""
+    if gen and (gen["generation_type"] == "video"):
+        v = conn.execute("SELECT * FROM videos WHERE id=? LIMIT 1", (gen_id,)).fetchone()
+        if v:
+            narration_zh = v["narration_zh"] or ""
+            video_model = v["model"] or video_model
     conn.close()
     if not gen:
         raise HTTPException(404, "记录不存在")
@@ -499,6 +523,8 @@ async def get_generation(gen_id: str):
         "ending_moral": gen["ending_moral"],
         "panels": json.loads(gen["panels"] or "[]"),
         "body_en": gen["body_en"],
+        "narration_zh": narration_zh,
+        "video_model": video_model,
         "words": json.loads(gen["words"] or "[]"),
         "panel_count": gen["panel_count"],
         "image_model": gen["image_model"],
@@ -509,8 +535,9 @@ async def get_generation(gen_id: str):
         "created_at": gen["created_at"],
         "audio_url": f"/audios/{aud['file_name']}" if aud else None,
         "audio_id": aud["id"] if aud else None,
-        "has_audio": bool(aud),
+        "has_audio": bool(aud) or bool(gen["video_url"]),
         "tts_model": aud["tts_model"] if aud else None,
+        "video_url": gen["video_url"] or "",
     }
 
 
@@ -550,6 +577,160 @@ async def health():
 async def list_image_models():
     """返回文生图模型三档列表，供前端下拉选择。"""
     return {"models": IMAGE_MODELS}
+
+
+@router.get("/api/video-models")
+async def list_video_models():
+    """返回文生视频模型列表（含免费额度标注），供前端下拉选择。"""
+    return {"models": VIDEO_MODELS}
+
+
+@router.post("/api/video/generate")
+async def video_generate(req: Request):
+    """视频编译：选词 → LLM 写视频脚本 → 百炼文生视频 → 存盘入库。"""
+    body = await _safe_json(req)
+    raw_words   = _coerce_str(body.get("words", ""))
+    theme_hint  = body.get("theme_hint", "") or ""
+    video_model = body.get("video_model", "")
+    duration    = _clamp_int(body.get("duration", 5), 2, 15, 5)
+    tts_model   = body.get("tts_model", TTS_MODEL) or TTS_MODEL
+    voice       = body.get("voice", "") or _VIDEO_DEFAULT_VOICE.get(tts_model, TTS_VOICE)
+    art_style   = body.get("art_style", "") or ""
+
+    words = normalize_words(raw_words)
+    if not words:
+        raise HTTPException(400, "请至少输入一个有效单词")
+    if len(words) > 30:
+        raise HTTPException(400, f"单次最多 30 个单词，当前 {len(words)} 个")
+    if not video_model:
+        raise HTTPException(400, "请选择文生视频模型")
+
+    if not consume_daily_quota("ai"):
+        raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+
+    vid_id = str(uuid.uuid4())[:8]
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO videos (id,words,theme_hint,model,duration,status)
+           VALUES (?,?,?,?,?,'pending')""",
+        (vid_id, json.dumps(words), theme_hint, video_model, duration),
+    )
+    conn.commit()
+    conn.close()
+
+    # 1) LLM 生成视频脚本（旁白 + 视频提示词）
+    try:
+        script, _ = await call_video_script(words, theme_hint, art_style)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"视频脚本生成失败: {e}")
+
+    video_prompt = (script.get("video_prompt") or "").strip()
+    if not video_prompt:
+        raise HTTPException(502, "AI 未能生成视频提示词，请重试")
+
+    # 预扣 AI 脚本已占用一次；视频生成不计入 image 配额（视频额度独立）
+    # 2) 调用文生视频
+    try:
+        video_bytes = await call_video_generation(video_prompt, video_model, duration)
+    except Exception as e:
+        _update_video_status(vid_id, "failed", str(e))
+        raise HTTPException(502, f"视频生成失败: {e}")
+
+    if not video_bytes:
+        _update_video_status(vid_id, "failed", "视频生成返回空数据")
+        raise HTTPException(502, "视频生成返回空数据")
+
+    # 3) 合成旁白音频 + ffmpeg 烧录英文字幕
+    narration_en = (script.get("narration_en") or "").strip()
+    narration_zh = (script.get("narration_zh") or "").strip()
+    raw_video_path = str(VIDEOS_DIR / f"{vid_id}_raw.mp4")
+    (VIDEOS_DIR / f"{vid_id}_raw.mp4").write_bytes(video_bytes)
+
+    final_name = f"{vid_id}.mp4"
+    final_path = str(VIDEOS_DIR / final_name)
+    if narration_en:
+        try:
+            audio_bytes = await call_tts(narration_en, voice=voice, speed=1.0, model=tts_model)
+            mux_video_with_audio(raw_video_path, audio_bytes, narration_en, final_path)
+        except Exception as e:
+            _update_video_status(vid_id, "failed", f"配音/字幕合成失败: {e}")
+            raise HTTPException(502, f"视频生成成功但配音/字幕合成失败: {e}")
+    else:
+        import shutil as _sh
+        _sh.move(raw_video_path, final_path)
+
+    (VIDEOS_DIR / f"{vid_id}_raw.mp4").unlink(missing_ok=True)
+
+    conn = get_db()
+    conn.execute(
+        """UPDATE videos SET story_title=?, narration_en=?, narration_zh=?,
+                             video_prompt=?, script=?, file_name=?, video_url=?, status='success'
+           WHERE id=?""",
+        (
+            script.get("story_title", ""),
+            narration_en,
+            narration_zh,
+            video_prompt,
+            json.dumps(script),
+            final_name,
+            f"/videos/{final_name}",
+            vid_id,
+        ),
+    )
+    # 同步写入历史（generations 表），使视频在"最近生成/历史"中可见
+    gen_id = vid_id
+    conn.execute(
+        """INSERT INTO generations (id,words,panel_count,theme_hint,
+                                     story_title,story_synopsis,body_en,model,image_model,panels,
+                                     included_words,missing_words,generation_type,style,video_url)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            gen_id,
+            json.dumps(words),
+            duration,
+            theme_hint,
+            script.get("story_title", ""),
+            narration_en[:80],
+            narration_en,
+            DEEPSEEK_MODEL,
+            video_model,
+            "[]",
+            json.dumps(script.get("included_words", [])),
+            json.dumps(script.get("missing_words", [])),
+            "video",
+            "video",
+            f"/videos/{final_name}",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": vid_id,
+        "status": "success",
+        "generation_type": "video",
+        "story_title": script.get("story_title", ""),
+        "narration_en": narration_en,
+        "narration_zh": narration_zh,
+        "video_prompt": video_prompt,
+        "included_words": script.get("included_words", []),
+        "missing_words": script.get("missing_words", []),
+        "video_model": video_model,
+        "duration": duration,
+        "video_url": f"/videos/{final_name}",
+        "has_audio": bool(narration_en),
+        "tts_model": tts_model,
+        "words": words,
+    }
+
+
+def _update_video_status(vid_id: str, status: str, error: str = ""):
+    conn = get_db()
+    conn.execute("UPDATE videos SET status=?, error=? WHERE id=?", (status, error, vid_id))
+    conn.commit()
+    conn.close()
 
 
 # ========================================================================
@@ -838,6 +1019,7 @@ async def list_recent_texts(limit: int = 5):
             "words": json.loads(r["words"] or "[]"),
             "included_words": json.loads(r["included_words"] or "[]"),
             "first_image_url": panels[0].get("image_url") if panels else None,
+            "video_url": r["video_url"] or "",
             "created_at": r["created_at"],
         })
     return {"items": items}
@@ -1472,9 +1654,9 @@ async def compile_scene(scene_id: int, request: Request):
     panel_count = _clamp_int(body.get("panel_count", 4), 3, 8, 4)
     theme_hint = str(body.get("theme_hint", "") or "")
     image_model = str(body.get("image_model", "") or "") or IMAGE_MODEL
-    # 场景编译默认荒诞三连弹；显式传空串 '' 表示微电影风格（此时 panel_count 生效）
-    style = body.get("style", "absurd")
-    style = "absurd" if style is None else str(style).strip()
+    # 场景编译固定"自然覆盖"（scene）风格，与批量编译彻底区分
+    style = "scene"
+    art_style = body.get("art_style", "")  # 可选画风，空=不指定
 
     conn = get_db()
     try:
@@ -1491,11 +1673,17 @@ async def compile_scene(scene_id: int, request: Request):
         if not word_list:
             raise HTTPException(400, "该场景下没有单词，无法编译")
 
-        # 场景批量编译：复用批量编译的 LLM 逻辑（荒诞/冲突固定 3 画面），场景名作为主题提示
+        # 场景批量编译：复用批量编译的 LLM 逻辑（风格 scene/absurd/conflict），场景名作为主题提示
         scene_theme = theme_hint or s["name_en"]
+        # 把已生成的场景词伙（scene_collocations）作为词伙约束喂给 LLM，保证连环画与场景词汇一致
+        scene_cols = conn.execute(
+            "SELECT phrase_en FROM scene_collocations WHERE scene_id = ? ORDER BY created_at DESC",
+            (scene_id,),
+        ).fetchall()
+        collocations = [r["phrase_en"] for r in scene_cols] if scene_cols else None
         if not consume_daily_quota("ai"):
             raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
-        story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style)
+        story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
 
         # 防护：LLM 未返回任何画面时，直接报错而非写入空记录
         if not story.get("panels"):
@@ -1529,7 +1717,7 @@ async def compile_scene(scene_id: int, request: Request):
                 p["image_error"] = f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)"
         else:
             image_tasks = [
-                generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, i + 1, style=style)
+                generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, i + 1, style=style, art_style=art_style)
                 for i, p in enumerate(panels)
             ]
             if image_tasks:

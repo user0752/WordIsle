@@ -21,6 +21,7 @@ from routes import router
 
 AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ========================================================================
 # 前端模板
@@ -47,9 +48,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TOEIC MVP", docs_url=None, redoc_url=None, lifespan=lifespan)
 setup_middleware(app)
 
-# 静态文件：音频 + 图片目录
+# 静态文件：音频 + 图片 + 视频目录
 app.mount("/audios", StaticFiles(directory=str(AUDIOS_DIR)), name="audios")
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+app.mount("/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
 
 # 注册路由
 app.include_router(router)

@@ -29,6 +29,10 @@ __all__ = [
     "call_word_enrichment",
     "call_deepseek_scene_detect",
     "call_deepseek_scene_collocations",
+    "call_video_script",
+    "call_video_generation",
+    "mux_video_with_audio",
+    "_get_video_model_config",
 ]
 
 # ========================================================================
@@ -111,7 +115,7 @@ RULES:
 1. Exactly 3 panels. Each panel = one independent absurd scene.
 2. Each English sentence: 8-15 words, VERY short and punchy.
 3. Pack 3-5 target words per panel via business collocations (use common inflections if needed).
-4. Each panel's image_prompt: surreal comic, absurd juxtaposition, bold flat colors, weird objects. 16:9.
+4. Each panel's image_prompt: surreal comic, absurd juxtaposition, bold flat colors, weird objects. Any English text rendered inside the image must be lowercase. 16:9.
 5. Each panel has 2-4 collocations (business chunks containing target words).
 6. No scene_role, no ending_moral. Story_title is just a label for the list.
 7. Image must be ABSURD: literal meaning + business meaning forced into one frame.
@@ -140,7 +144,7 @@ JSON STRUCTURE:
 """
 
 
-def build_batch_absurd_user_prompt(words: list[str], theme_hint: str = ""):
+def build_batch_absurd_user_prompt(words: list[str], theme_hint: str = "", art_style: str = ""):
     """构建荒诞三连弹用户提示词。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = (
@@ -148,13 +152,16 @@ def build_batch_absurd_user_prompt(words: list[str], theme_hint: str = ""):
         if theme_hint
         else "\nTHEME: Choose any TOEIC business scenario."
     )
+    style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
     return f"""Create 3 ABSURD MEMORABLE CARDS for the following TOEIC words.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
 {theme_line}
+{style_line}
 
 CONSTRAINTS:
+- These words may be totally unrelated (low relatedness). Your job is creative forced LINKING — weave them together with surprising, memorable connections. The more unexpected the linkage, the better the memory hook.
 - Exactly 3 panels, each an independent absurd scene.
 - Each sentence: 8-15 words, containing 3-5 target words.
 - Distribute ALL {len(words)} words across the 3 panels.
@@ -179,7 +186,7 @@ RULES:
    - Panel 3 (round_3): 荒诞结局 (Absurd resolution)
 2. Each English sentence: 10-18 words (slightly longer to convey conflict).
 3. Pack 3-5 target words per panel via business collocations.
-4. Each panel's image_prompt: comic strip style, exaggerated character expressions, focus on two-person interaction. 16:9.
+4. Each panel's image_prompt: comic strip style, exaggerated character expressions, focus on two-person interaction. Any English text rendered inside the image must be lowercase. 16:9.
 5. Each panel has a round_label: "A方出招" / "B方反击" / "荒诞结局".
 6. Each panel has 2-4 collocations.
 7. Choose a conflict type: buyer vs seller / boss vs employee / vendor vs procurement / HQ vs branch.
@@ -210,7 +217,7 @@ JSON STRUCTURE:
 """
 
 
-def build_batch_conflict_user_prompt(words: list[str], theme_hint: str = ""):
+def build_batch_conflict_user_prompt(words: list[str], theme_hint: str = "", art_style: str = ""):
     """构建冲突连环用户提示词。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = (
@@ -218,13 +225,16 @@ def build_batch_conflict_user_prompt(words: list[str], theme_hint: str = ""):
         if theme_hint
         else "\nCONFLICT TYPE: Choose one (buyer vs seller / boss vs employee / vendor vs procurement / HQ vs branch)."
     )
+    style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
     return f"""Create a 3-ROUND CONFLICT COMIC STRIP for the following TOEIC words.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
 {theme_line}
+{style_line}
 
 CONSTRAINTS:
+- These words may be totally unrelated (low relatedness). Your job is creative forced LINKING — stage a conflict that naturally (or wittily) connects them all. The more unexpected the connection, the better the memory hook.
 - Exactly 3 panels: round_1 (A方出招) → round_2 (B方反击) → round_3 (荒诞结局).
 - Each sentence: 10-18 words, containing 3-5 target words.
 - Distribute ALL {len(words)} words across the 3 panels.
@@ -235,24 +245,97 @@ Output only the JSON object."""
 
 
 # ========================================================================
+# 场景编译专用 Prompt（高关联词：自然连贯、完整覆盖、复用场景词伙）
+# ========================================================================
+
+SCENE_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in SCENE-BASED story comics.
+
+CORE DISTINCTION: These words belong to ONE business scene (high relatedness). Your job is to weave them into a NATURAL, coherent mini-story that covers ALL of them — NOT to force absurdity. The scene itself is the memory cue.
+
+RULES:
+1. Exactly 3 panels, one continuous mini-story (start → middle → resolution).
+2. Cover ALL given scene words across the panels. Reuse the provided scene collocations verbatim where possible, so the comic matches the scene's vocabulary. Do NOT omit words.
+3. Each panel: 1 English sentence (10-18 words) containing 2-4 scene words, via natural business collocations.
+4. Each panel has collocations (business chunks) and word_notes (Chinese business definitions).
+5. Each panel's image_prompt: natural, coherent cartoon scene matching the scene theme; consistent characters across panels. Any English text rendered inside the image must be lowercase. 16:9.
+6. Polysemous scene words: show the business meaning in context (no need to force the everyday meaning).
+7. Output ONLY valid JSON.
+
+JSON STRUCTURE:
+{
+  "story_title": "English title (3-6 words)",
+  "theme": "Chinese theme (e.g. 采购谈判)",
+  "story_synopsis": "Chinese one-line summary",
+  "panels": [
+    {
+      "scene_index": 1,
+      "sentence_en": "Natural English sentence covering 2-4 scene words.",
+      "sentence_zh": "Chinese translation.",
+      "target_words_in_scene": ["word1","word2"],
+      "word_notes": {"word1": "中文商务释义"},
+      "collocations": ["business collocation 1"],
+      "image_prompt": "Coherent cartoon scene, consistent characters. 16:9."
+    }
+  ],
+  "included_words": ["word1","word2"],
+  "missing_words": [],
+  "polysemy_notes": {}
+}
+"""
+
+
+def build_scene_user_prompt(words: list[str], theme_hint: str = "", collocations: list = None, art_style: str = ""):
+    """构建场景编译用户提示词，把已生成的场景词伙作为词伙约束喂入。"""
+    words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
+    theme_line = f"\nTHEME: {theme_hint}" if theme_hint else "\nTHEME: Choose the scene's business scenario."
+    col_line = ""
+    if collocations:
+        col_list = "\n".join(f"  - {c}" for c in collocations)
+        col_line = f"""
+REUSE THESE SCENE COLLOCATIONS verbatim where possible (they are the scene's vocabulary, keep the comic consistent with them):
+{col_list}"""
+    style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
+    return f"""Create a NATURAL, COHERENT 3-panel story comic that covers ALL the following scene words.
+
+SCENE WORDS ({len(words)} total):
+{words_list}
+{theme_line}
+{col_line}
+{style_line}
+
+CONSTRAINTS:
+- Exactly 3 panels, one continuous mini-story covering ALL {len(words)} words.
+- Each sentence: 10-18 words, containing 2-4 scene words via natural business collocations.
+- Story must feel natural for this scene, not absurd. No word may be silently dropped.
+
+Output only the JSON object."""
+
+
+# ========================================================================
 # DeepSeek AI 生成
 # ========================================================================
 
-async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = "", style: str = ""):
+async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = "", style: str = "", collocations: list = None, art_style: str = ""):
     """调用 DeepSeek API 生成剧情连环画。
-    style: '' 或 'legacy' 走旧版微电影；'absurd' 荒诞三连弹；'conflict' 冲突连环。
+    style: '' 或 'legacy' 走旧版微电影；'absurd' 荒诞三连弹；'conflict' 冲突连环；'scene' 场景编译。
+    collocations: 场景编译时传入的已有场景词伙（可选）。
+    art_style: 可选画风（comic/realistic/3d/watercolor/pixel），空表示不指定。
     """
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
     # 根据风格分派 prompt
-    if style == "absurd":
+    if style == "scene":
+        system_prompt = SCENE_SYSTEM_PROMPT
+        user_prompt = build_scene_user_prompt(words, theme_hint, collocations, art_style)
+        effective_panel_count = 3
+    elif style == "absurd":
         system_prompt = BATCH_ABSURD_SYSTEM_PROMPT
-        user_prompt = build_batch_absurd_user_prompt(words, theme_hint)
+        user_prompt = build_batch_absurd_user_prompt(words, theme_hint, art_style)
         effective_panel_count = 3
     elif style == "conflict":
         system_prompt = BATCH_CONFLICT_SYSTEM_PROMPT
-        user_prompt = build_batch_conflict_user_prompt(words, theme_hint)
+        user_prompt = build_batch_conflict_user_prompt(words, theme_hint, art_style)
         effective_panel_count = 3
     else:
         # 旧版微电影（向后兼容）
@@ -372,6 +455,15 @@ ART_STYLES = {
     "pixel": "Pixel art style, retro 8-bit, chunky pixels",
 }
 DEFAULT_ART_STYLE = "comic"
+AUTO_ART_STYLE_INSTRUCTION = ("AUTO — 根据单词的语义与记忆策略，从「漫画扁平风 / 写实 / 3D / 水彩 / 像素」"
+                              "中自动选择最能强化记忆的画风，并在每个 image_prompt 的开头明确写出所选画风。")
+
+
+def _art_style_instruction(art_style: str) -> str:
+    """把画风 value 转成传给 LLM 的英文风格指令；auto 时让 LLM 自行选择。"""
+    if art_style == "auto":
+        return AUTO_ART_STYLE_INSTRUCTION
+    return ART_STYLES.get(art_style, ART_STYLES[DEFAULT_ART_STYLE])
 
 
 def build_single_user_prompt(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE) -> str:
@@ -381,7 +473,11 @@ def build_single_user_prompt(word: str, theme_hint: str = "", art_style: str = D
         if theme_hint
         else "\nTHEME: Choose any TOEIC business context that fits the word."
     )
-    style_instruction = ART_STYLES.get(art_style, ART_STYLES[DEFAULT_ART_STYLE])
+    if art_style == "auto":
+        style_instruction = ("AUTO — 根据该单词的语义与记忆策略，从「漫画扁平风 / 写实 / 3D / 水彩 / 像素」"
+                             "中自动选择最能强化记忆的画风，并在 image_prompt 的开头明确写出所选画风。")
+    else:
+        style_instruction = ART_STYLES.get(art_style, ART_STYLES[DEFAULT_ART_STYLE])
     return f"""Please generate the "one word, one image, one hook" memorization card for the following TOEIC word.
 
 TARGET WORD: {word}
@@ -490,6 +586,235 @@ async def generate_single_image(prompt: str, model: str, gen_id: str) -> dict:
     file_name = f"{gen_id}_single.png"
     (IMAGES_DIR / file_name).write_bytes(img_bytes)
     return {"url": f"/images/{file_name}", "error": None}
+
+
+# ========================================================================
+# 百炼文生视频（视频编译）
+# ========================================================================
+
+VIDEO_SYSTEM_PROMPT = """You are a TOEIC Business English video director. Given a list of TOEIC words, write a short MEMORY MICROFILM in the form of a text-to-video prompt.
+
+CORE IDEA: The user learns words by watching a short video (5-10s). The video must visually encode the words so that seeing it triggers recall. Weave ALL target words into ONE coherent cinematic scene showing their business meanings.
+
+RULES:
+1. The words may be totally unrelated — your job is a creative forced LINKING into a single memorable scene.
+2. narration_en: 1-3 short English sentences (~15-25 words total) that naturally include as many target words as possible; spoken or shown as subtitles.
+3. narration_zh: Chinese translation of the narration.
+4. video_prompt: English text-to-video prompt (1-3 sentences) describing scene, camera motion, characters, and objects that visually depict the words' business meanings. Any English text rendered inside the video (signs, labels, captions) MUST be lowercase.
+5. Output ONLY a valid JSON object. No markdown.
+
+JSON STRUCTURE:
+{
+  "story_title": "English title (3-6 words)",
+  "narration_en": "English narration sentences",
+  "narration_zh": "Chinese translation",
+  "video_prompt": "Cinematic text-to-video prompt with camera motion",
+  "included_words": ["word1","word2"],
+  "missing_words": []
+}
+"""
+
+
+def build_video_user_prompt(words: list[str], theme_hint: str = "", art_style: str = ""):
+    """构建视频编译用户提示词。"""
+    words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
+    theme_line = f"\nTHEME HINT (optional): {theme_hint}" if theme_hint else ""
+    style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
+    return f"""Write a short MEMORY MICROFILM video for the following TOEIC words.
+
+TARGET WORDS ({len(words)} total):
+{words_list}
+{theme_line}
+{style_line}
+
+CONSTRAINTS:
+- These words may be totally unrelated (low relatedness). Creatively force-link them into ONE coherent cinematic scene.
+- STRICTLY follow the ART STYLE above when describing the visual look in video_prompt (scene, characters, textures, lighting). If ART STYLE is AUTO, you choose the most memorization-effective style and state it explicitly at the start of video_prompt.
+- narration_en: 1-3 short English sentences naturally containing as many target words as possible.
+- video_prompt: English, 1-3 sentences; describe the scene, camera motion, and how the words' business meanings are visually encoded. Lowercase for any in-video text.
+- Cover as many words as possible; list any not covered in missing_words.
+
+Output only the JSON object."""
+
+
+async def call_video_script(words: list[str], theme_hint: str = "", art_style: str = ""):
+    """调用 DeepSeek 生成视频脚本（旁白 + 视频提示词）。"""
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": VIDEO_SYSTEM_PROMPT},
+            {"role": "user", "content": build_video_user_prompt(words, theme_hint, art_style)},
+        ],
+        "temperature": 0.8,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{DEEPSEEK_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    return _extract_json(content), data.get("usage", {})
+
+
+def _get_video_model_config(model_name: str) -> dict:
+    """根据模型名返回视频模型配置。"""
+    for m in VIDEO_MODELS:
+        if m["value"] == model_name:
+            return m
+    return {}
+
+
+# 分辨率标签 → 视频尺寸（万相 2.1/2.2/2.5 系列）
+_VIDEO_RES_SIZE = {"480P": "832*480", "720P": "1280*720", "1080P": "1920*1080"}
+# 固定时长的模型：不受支持的自由时长会强制使用固定值，避免 API 报错
+_VIDEO_FIXED_DURATION = {"wan2.2-t2v-plus": 5, "wanx2.1-t2v-turbo": 5}
+
+
+def _wrap_text(text: str, max_chars: int = 28) -> str:
+    """把英文旁白按单词拆成多行，避免字幕溢出画面。"""
+    words = text.split()
+    lines, cur = [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > max_chars:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return "\n".join(lines)
+
+
+def _pick_font() -> str:
+    """挑选一个可用的 Windows 中文字体路径供 drawtext 使用。"""
+    import os as _os
+    candidates = [
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+    ]
+    for f in candidates:
+        if _os.path.exists(f):
+            return f.replace("\\", "/")
+    return ""
+
+
+def mux_video_with_audio(video_path: str, audio_bytes: bytes, subtitle_text: str, output_path: str) -> None:
+    """用 ffmpeg 把 TTS 旁白合成进无声视频，并烧录英文字幕。
+
+    必须使用完整版 ffmpeg（含 drawtext/libfreetype 与 aac 编码器）。
+    系统 PATH 里的 ffmpeg 可能是精简版（--disable-everything），因此优先采用
+    imageio-ffmpeg 自带的完整二进制。
+    """
+    import subprocess
+    import tempfile
+    import os as _os
+    import shutil as _shutil
+
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg_exe = "ffmpeg"
+
+    workdir = tempfile.mkdtemp(prefix="toeic_video_")
+    audio_name = "audio.mp3"
+    sub_name = "sub.txt"
+
+    with open(_os.path.join(workdir, audio_name), "wb") as f:
+        f.write(audio_bytes)
+    # drawtext textfile 中 % 需转义为 %%，反斜杠需转义
+    with open(_os.path.join(workdir, sub_name), "w", encoding="utf-8") as f:
+        f.write(_wrap_text(subtitle_text).replace("%", "%%").replace("\\", "\\\\"))
+
+    fontfile = _pick_font()
+    drawtext = (
+        f"drawtext=textfile='{sub_name}'"
+        f":fontcolor=white:fontsize=26:line_spacing=10"
+        f":box=1:boxcolor=black@0.55:boxborderw=14"
+        f":x=(w-text_w)/2:y=h-th-70:shadowcolor=black@0.5:shadowx=2:shadowy=2"
+    )
+    if fontfile:
+        # 字体路径含盘符冒号，需在 f-string 之外转义为 \: 供 ffmpeg 过滤器解析
+        fontfile_escaped = fontfile.replace(":", r"\:")
+        drawtext += f":fontfile='{fontfile_escaped}'"
+
+    cmd = [
+        ffmpeg_exe, "-y",
+        "-i", video_path,
+        "-i", audio_name,
+        "-filter_complex", f"[0:v]{drawtext}[v]",
+        "-map", "[v]", "-map", "1:a",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+        output_path,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
+    _shutil.rmtree(workdir, ignore_errors=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg 合成失败: {proc.stderr[-500:]}")
+
+
+async def call_video_generation(prompt: str, model: str, duration: int = 5) -> bytes:
+    """调用百炼文生视频异步接口并轮询，返回视频二进制。"""
+    if not VIDEO_API_KEY:
+        raise HTTPException(500, "请先设置百炼 API Key（IMAGE_API_KEY / VIDEO_API_KEY）")
+    cfg = _get_video_model_config(model)
+    resolution = cfg.get("resolution", "480P")
+    size = _VIDEO_RES_SIZE.get(resolution, "832*480")
+    eff_duration = _VIDEO_FIXED_DURATION.get(model, duration)
+
+    submit_url = f"{VIDEO_BASE_URL}/services/aigc/video-generation/video-synthesis"
+    payload = {
+        "model": model,
+        "input": {"prompt": prompt},
+        "parameters": {"size": size, "duration": eff_duration},
+    }
+    headers = {
+        "Authorization": f"Bearer {VIDEO_API_KEY}",
+        "Content-Type": "application/json",
+        "X-DashScope-Async": "enable",
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(submit_url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    task_id = data.get("output", {}).get("task_id")
+    if not task_id:
+        raise RuntimeError(f"文生视频提交任务失败: {data.get('message', '')}")
+
+    task_url = f"{VIDEO_BASE_URL}/tasks/{task_id}"
+    headers_poll = {"Authorization": f"Bearer {VIDEO_API_KEY}"}
+    for _ in range(120):  # 视频生成通常 1-5 分钟
+        await asyncio.sleep(5)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(task_url, headers=headers_poll)
+            resp.raise_for_status()
+            tdata = resp.json()
+        status = tdata.get("output", {}).get("task_status", "")
+        if status == "SUCCEEDED":
+            video_url = tdata.get("output", {}).get("video_url")
+            if not video_url:
+                raise RuntimeError("文生视频任务成功但无 video_url")
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                vresp = await client.get(video_url)
+                vresp.raise_for_status()
+                return vresp.content
+        elif status == "FAILED":
+            msg = tdata.get("output", {}).get("message", "未知错误")
+            raise RuntimeError(f"文生视频任务失败: {msg}")
+    raise RuntimeError("文生视频任务超时（10分钟未完成）")
 
 
 # ========================================================================
@@ -809,17 +1134,22 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
 _STYLE_IMAGE_PROMPT_PREFIX = {
     "absurd": "Surreal comic, absurd juxtaposition, bold flat colors, weird objects",
     "conflict": "Comic strip, exaggerated facial expressions, two-character interaction, office satire",
+    "scene": "Coherent cartoon, consistent characters, clean flat colors, corporate/office setting",
 }
 
 
-async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int, style: str = "") -> dict:
+async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int, style: str = "", art_style: str = "") -> dict:
     """为单个画面生成图片，失败时降级（不阻塞整体）。
-    style: ''/'legacy' 保留旧版微电影风格；'absurd'/'conflict' 强化对应漫画风格，避免被电影质感污染。"""
-    prefix = _STYLE_IMAGE_PROMPT_PREFIX.get(style)
-    if prefix:
-        full_prompt = f"{prefix}, {prompt}, 16:9"
+    style: ''/'legacy' 保留旧版微电影风格；'absurd'/'conflict' 强化对应漫画风格，避免被电影质感污染。
+    art_style: 'auto' 时跳过固定风格前缀，完全由 LLM 在 image_prompt 中自主选择画风。"""
+    if art_style == "auto":
+        full_prompt = f"{prompt}, 16:9"
     else:
-        full_prompt = f"cinematic storyboard, film grain, dramatic lighting, {prompt}, 16:9"
+        prefix = _STYLE_IMAGE_PROMPT_PREFIX.get(style)
+        if prefix:
+            full_prompt = f"{prefix}, {prompt}, 16:9"
+        else:
+            full_prompt = f"cinematic storyboard, film grain, dramatic lighting, {prompt}, 16:9"
     try:
         img_bytes = await call_image_generation(full_prompt, model)
         file_name = f"{gen_id}_panel{scene_index}.png"
