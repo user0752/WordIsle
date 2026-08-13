@@ -340,18 +340,41 @@ def read_env_keys():
     except Exception:
         pass
     return [
-        ("DeepSeek", bool(values.get("DEEPSEEK_API_KEY"))),
+        ("LLM(DeepSeek)", bool(values.get("DEEPSEEK_API_KEY"))),
+        ("廉价LLM(智谱GLM)", bool(values.get("CHEAP_LLM_API_KEY"))),
         ("TTS", bool(values.get("TTS_API_KEY"))),
-        ("文生图", bool(values.get("IMAGE_API_KEY") or values.get("TTS_API_KEY"))),
+        ("文生图(百炼)", bool(values.get("IMAGE_API_KEY") or values.get("TTS_API_KEY"))),
+        ("文生图(免费TokenRhythm)", bool(values.get("TOKENRHYTHM_API_KEY"))),
+        ("文生视频", bool(values.get("VIDEO_API_KEY") or values.get("IMAGE_API_KEY") or values.get("TTS_API_KEY"))),
     ]
 
 
+def keys_summary(h) -> str:
+    """把 /api/health 返回的各模型通道密钥状态汇总成一行（全模型通道）。"""
+    if not h:
+        return "LLM:?  廉价LLM:?  TTS:?  图(百炼):?  图(免费):?  视频:?"
+    def ck(k): return '✓' if h.get(k) else '✗'
+    return (f"LLM:{ck('deepseek_key')}  廉价LLM:{ck('cheap_llm_key')}  "
+            f"TTS:{ck('tts_key')}  图(百炼):{ck('bailian_image_key')}  "
+            f"图(免费):{ck('tokenrhythm_key')}  视频:{ck('video_key')}")
+
+
 def build_self_check_report(svc) -> list[tuple[str, str]]:
-    """执行一次性自检，返回 [(level, message), ...] 报告（GUI / CLI 共用）。"""
+    """执行一次性自检，返回 [(level, message), ...] 报告（GUI / CLI 共用）。
+
+    级别语义：
+      - GOOD : 状态正常（可用/存在/已配置/可访问/运行中）→ 绿色
+      - BAD  : 状态异常（缺失/未配置/不可访问/不存在/失败）→ 红色
+      - INFO : 中性信息（解释器/版本/用量/PID 等）→ 白色
+    """
     report: list[tuple[str, str]] = []
 
     def add(level, msg):
         report.append((level, msg))
+
+    def status(ok, msg_ok, msg_bad):
+        """判断行：正常 GOOD / 异常 BAD。"""
+        report.append(("GOOD" if ok else "BAD", msg_ok if ok else msg_bad))
 
     add("INFO", f"Python 解释器: {svc.python_exe}")
     try:
@@ -361,7 +384,7 @@ def build_self_check_report(svc) -> list[tuple[str, str]]:
         )
         add("INFO", f"Python 版本: {r.stdout.strip() or '未知'}")
     except Exception as e:
-        add("WARNING", f"Python 版本读取失败: {e}")
+        status(False, "", f"Python 版本读取失败: {e}")
 
     code = ("import importlib.util; "
             "mods=['fastapi','uvicorn','httpx','dotenv','dashscope']; "
@@ -371,50 +394,48 @@ def build_self_check_report(svc) -> list[tuple[str, str]]:
                            capture_output=True, text=True, timeout=5)
         missing = [m for m in r.stdout.strip().split(",") if m]
         if missing:
-            add("ERROR", f"缺少依赖模块: {', '.join(missing)}")
+            status(False, "", f"缺少依赖模块: {', '.join(missing)}")
         else:
-            add("INFO", "依赖模块: fastapi / uvicorn / httpx / dotenv / dashscope 全部可用")
+            status(True, "依赖模块: fastapi / uvicorn / httpx / dotenv / dashscope 全部可用", "")
     except Exception as e:
-        add("ERROR", f"依赖检测失败: {e}")
+        status(False, "", f"依赖检测失败: {e}")
 
     if MAIN_PY.exists():
-        add("INFO", f"主程序 main.py: 存在 ({MAIN_PY.name})")
+        status(True, f"主程序 main.py: 存在 ({MAIN_PY.name})", "")
     else:
-        add("ERROR", f"主程序 main.py: 不存在 ({MAIN_PY})")
+        status(False, "", f"主程序 main.py: 不存在 ({MAIN_PY})")
 
     if ENV_FILE.exists():
-        add("INFO", f".env 配置文件: 存在 ({ENV_FILE.name})")
+        status(True, f".env 配置文件: 存在 ({ENV_FILE.name})", "")
         for label, ok in read_env_keys():
-            add("INFO" if ok else "WARNING", f"{label} 密钥: {'已配置' if ok else '未配置'}")
+            status(ok, f"{label} 密钥: 已配置", f"{label} 密钥: 未配置")
     else:
-        add("WARNING", f".env 配置文件: 不存在（可点击「编辑 .env」从示例复制）")
+        status(False, "", ".env 配置文件: 不存在（可点击「编辑 .env」从示例复制）")
 
     db_path = MVP_DIR / "data" / "words.db"
     if db_path.exists():
-        add("INFO", f"数据库 words.db: 存在 ({db_path.name})")
+        status(True, f"数据库 words.db: 存在 ({db_path.name})", "")
     else:
-        add("WARNING", "数据库 words.db: 不存在（首次启动服务时自动创建）")
+        status(False, "", "数据库 words.db: 不存在（首次启动服务时自动创建）")
 
     if svc.is_running:
-        add("INFO", f"服务进程: 运行中 (PID={svc.pid})")
+        status(True, f"服务进程: 运行中 (PID={svc.pid})", "")
     else:
-        add("WARNING", "服务进程: 未运行（请点击「启动」）")
+        status(False, "", "服务进程: 未运行（请点击「启动」）")
 
     fe_ok = check_url(BASE_URL, timeout=1.0)
-    add("INFO" if fe_ok else "ERROR",
-        f"前端 {BASE_URL}: {'可访问' if fe_ok else '不可访问'}")
+    status(fe_ok, f"前端 {BASE_URL}: 可访问", f"前端 {BASE_URL}: 不可访问")
 
     health = check_health() if fe_ok else None
     if health:
-        add("INFO", "后端 /api/health: 正常")
-        add("INFO" if health.get("db") else "WARNING",
-            f"数据库: {'正常' if health.get('db') else '缺失'}")
-        add("INFO" if health.get("deepseek_key") else "WARNING",
-            f"DeepSeek: {'已配置' if health.get('deepseek_key') else '未配置'}")
-        add("INFO" if health.get("tts_key") else "WARNING",
-            f"TTS: {'已配置' if health.get('tts_key') else '未配置'}")
-        add("INFO" if health.get("image_key") else "WARNING",
-            f"文生图: {'已配置' if health.get('image_key') else '未配置'}")
+        status(True, "后端 /api/health: 正常", "")
+        status(bool(health.get("db")), "数据库: 正常", "数据库: 缺失")
+        status(bool(health.get("deepseek_key")), "LLM(DeepSeek): 已配置", "LLM(DeepSeek): 未配置")
+        status(bool(health.get("cheap_llm_key")), "廉价LLM(智谱GLM): 已配置", "廉价LLM(智谱GLM): 未配置")
+        status(bool(health.get("tts_key")), "TTS: 已配置", "TTS: 未配置")
+        status(bool(health.get("bailian_image_key")), "文生图(百炼): 已配置", "文生图(百炼): 未配置")
+        status(bool(health.get("tokenrhythm_key")), "文生图(免费TokenRhythm): 已配置", "文生图(免费TokenRhythm): 未配置")
+        status(bool(health.get("video_key")), "文生视频: 已配置", "文生视频: 未配置")
         usage = health.get("daily_usage", {})
         if usage:
             add("INFO",
@@ -422,7 +443,7 @@ def build_self_check_report(svc) -> list[tuple[str, str]]:
                 f"TTS {usage.get('tts', 0)}/{usage.get('tts_limit', 0)} · "
                 f"图片 {usage.get('image', 0)}/{usage.get('image_limit', 0)}")
     else:
-        add("ERROR", "后端 /api/health: 不可访问（服务未启动或端口异常）")
+        status(False, "", "后端 /api/health: 不可访问（服务未启动或端口异常）")
 
     return report
 
@@ -809,6 +830,8 @@ class ManagerApp:
         self.log_text.pack(fill="both", expand=True, padx=12, pady=4)
         self.log_text.tag_config("time", foreground=C["log_time"])
         self.log_text.tag_config("INFO",    foreground=C["text"])
+        self.log_text.tag_config("GOOD",    foreground=C["green"])
+        self.log_text.tag_config("BAD",     foreground=C["red"])
         self.log_text.tag_config("WARNING", foreground=C["yellow"])
         self.log_text.tag_config("ERROR",   foreground=C["red"])
         self.log_text.tag_config("DEBUG",   foreground=C["muted"])
@@ -1081,27 +1104,13 @@ class ManagerApp:
         # 后端状态 + 密钥
         if running and self.be_ok and self.health_data:
             self.lbl_be.config(text="●  已就绪", fg=C["green"])
-            ds  = self.health_data.get("deepseek_key", False)
-            tts = self.health_data.get("tts_key", False)
-            img = self.health_data.get("image_key", False)
-            self.lbl_keys.config(
-                text=f"DeepSeek: {'✓ 已配置' if ds else '✗ 未配置'}    "
-                     f"TTS: {'✓ 已配置' if tts else '✗ 未配置'}    "
-                     f"Image: {'✓ 已配置' if img else '✗ 未配置'}"
-            )
+            self.lbl_keys.config(text=keys_summary(self.health_data))
         elif external and self.be_ok and self.health_data:
             self.lbl_be.config(text="●  占用就绪(外部)", fg=C["yellow"])
-            ds  = self.health_data.get("deepseek_key", False)
-            tts = self.health_data.get("tts_key", False)
-            img = self.health_data.get("image_key", False)
-            self.lbl_keys.config(
-                text=f"DeepSeek: {'✓ 已配置' if ds else '✗ 未配置'}    "
-                     f"TTS: {'✓ 已配置' if tts else '✗ 未配置'}    "
-                     f"Image: {'✓ 已配置' if img else '✗ 未配置'}"
-            )
+            self.lbl_keys.config(text=keys_summary(self.health_data))
         else:
             self.lbl_be.config(text="●  离线", fg=C["muted"])
-            self.lbl_keys.config(text="DeepSeek: ?    TTS: ?    Image: ?")
+            self.lbl_keys.config(text=keys_summary(None))
 
     # ---------- 工具按钮 ----------
     def open_browser(self):
@@ -1159,6 +1168,8 @@ ANSI = {
     "TIME":    "\033[2m\033[37m",
     "MUTED":   "\033[2m\033[90m",
     "INFO":    "\033[37m",
+    "GOOD":    "\033[32m",
+    "BAD":     "\033[31m",
     "WARNING": "\033[33m",
     "ERROR":   "\033[31m",
     "DEBUG":   "\033[90m",
@@ -1231,8 +1242,9 @@ def run_cli():
         return (
             f"{int(running)}|{svc.pid or '-'}|{uptime_min}|"
             f"{int(external)}|{int(state['fe'])}|{int(state['be'])}|"
-            f"{int(bool(h.get('deepseek_key')))}|{int(bool(h.get('tts_key')))}|"
-            f"{int(bool(h.get('image_key')))}"
+            f"{int(bool(h.get('deepseek_key')))}|{int(bool(h.get('cheap_llm_key')))}|"
+            f"{int(bool(h.get('tts_key')))}|{int(bool(h.get('bailian_image_key')))}|"
+            f"{int(bool(h.get('tokenrhythm_key')))}|{int(bool(h.get('video_key')))}"
         )
 
     def status_line(force: bool = False):
@@ -1276,12 +1288,7 @@ def run_cli():
             be = f"{ANSI['MUTED']}离线{ANSI['RESET']}"
 
         h = state["health"] or {}
-        if state["be"]:
-            keys = (f"DeepSeek={'✓' if h.get('deepseek_key') else '✗'}    "
-                    f"TTS={'✓' if h.get('tts_key') else '✗'}    "
-                    f"Image={'✓' if h.get('image_key') else '✗'}")
-        else:
-            keys = "DeepSeek: ?    TTS: ?    Image: ?"
+        keys = keys_summary(h if state["be"] else None)
         print(f"{ANSI['CYAN']}── {core} | 前端={fe} 后端={be} | {keys}{ANSI['RESET']}",
               flush=True)
         _last_status_sig = sig

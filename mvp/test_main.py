@@ -75,6 +75,14 @@ def _mock_image_failure():
     )
 
 
+def _mock_image_success():
+    """文生图 mock：全部成功。"""
+    return mock.patch.object(
+        routes_module, "generate_panel_image",
+        new=mock.AsyncMock(return_value={"url": "/images/x.png", "file_name": "x.png", "error": None}),
+    )
+
+
 class MainAppTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -139,18 +147,18 @@ class MainAppTestCase(unittest.TestCase):
     # ================= Bug #2: 每日限额必须生效 =================
 
     def test_generate_respects_ai_limit_zero(self):
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
              mock.patch.object(db_module, "DAILY_AI_LIMIT", 0):
-            r = self.client.post("/api/generate", json={"words": "accommodate"})
+            r = self.client.post("/api/generate", json={"words": "accommodate", "image_model": "z-image-turbo"})
         self.assertEqual(r.status_code, 429)
 
     def test_generate_immediate_audio_respects_tts_limit(self):
         _seed_tts_usage(tts_count=1)
 
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         tts_calls = []
@@ -162,10 +170,10 @@ class MainAppTestCase(unittest.TestCase):
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
              mock.patch.object(routes_module, "call_tts", fake_tts), \
              mock.patch.object(db_module, "DAILY_TTS_LIMIT", 1), \
-             _mock_image_failure():
+             _mock_image_success():
             r = self.client.post(
                 "/api/generate",
-                json={"words": "accommodate", "generate_audio_immediately": True},
+                json={"words": "accommodate", "generate_audio_immediately": True, "image_model": "z-image-turbo"},
             )
         self.assertEqual(r.status_code, 200)
         data = r.json()
@@ -357,11 +365,11 @@ class MainAppTestCase(unittest.TestCase):
     # ================= #18: /api/generate 返回剧情连环画结构 =================
 
     def test_generate_returns_panels(self):
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
-             _mock_image_failure():
+             _mock_image_success():
             r = self.client.post(
                 "/api/generate",
                 json={"words": "accommodate", "panel_count": 3, "theme_hint": "投资失败",
@@ -373,8 +381,58 @@ class MainAppTestCase(unittest.TestCase):
         self.assertEqual(data["panel_count"], len(data["panels"]))  # panel_count 返回实际画面数（M10）
         self.assertEqual(data["image_model"], "z-image-turbo")
         self.assertEqual(len(data["panels"]), 1)
-        self.assertIn("image_error", data["panels"][0])  # 图片降级不阻塞整体
-        self.assertEqual(data["image_success_count"], 0)
+        self.assertEqual(data["image_success_count"], 1)
+
+    def test_generate_image_fail_fast(self):
+        """fail-fast：任一文生图失败，整体返回失败并提示更换模型，不落库。"""
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+            return dict(FAKE_RESULT), {"total_tokens": 5}
+
+        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
+             _mock_image_failure():
+            r = self.client.post(
+                "/api/generate",
+                json={"words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo"},
+            )
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("更换文生图模型", r.json()["detail"])
+        # 失败即中止：不写入 generation 记录
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM generations").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(n, 0)
+
+    def test_generate_rejects_missing_image_model(self):
+        """去掉兜底：未选文生图模型必须明确报错。"""
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+            return dict(FAKE_RESULT), {"total_tokens": 5}
+
+        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
+             _mock_image_success():
+            r = self.client.post("/api/generate", json={"words": "accommodate"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("选择文生图模型", r.json()["detail"])
+
+    def test_generate_stream_emits_steps_and_result(self):
+        """SSE 流式：应产出 step 事件（含模型名）与 result 事件（含最终结果）。"""
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+            return dict(FAKE_RESULT), {"total_tokens": 5}
+
+        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
+             _mock_image_success():
+            r = self.client.post("/api/generate-stream", json={
+                "words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo",
+            })
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("text/event-stream", r.headers.get("content-type", ""))
+        body = r.text
+        self.assertIn("event: step", body)
+        self.assertIn("event: result", body)
+        self.assertIn("z-image-turbo", body)  # 步骤中应体现实际调用的文生图模型
+        self.assertIn("Test Story", body)     # result 中包含最终结果
+
 
 
 if __name__ == "__main__":

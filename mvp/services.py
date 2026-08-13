@@ -7,6 +7,7 @@ DeepSeek AI 生成、百炼 TTS 语音合成、百炼文生图。
 import asyncio
 import base64
 import json
+import logging
 
 import dashscope
 import httpx
@@ -14,6 +15,14 @@ from dashscope.audio.http_tts import HttpSpeechSynthesizer
 from fastapi import HTTPException
 
 from config import *
+
+# 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）
+logger = logging.getLogger("toeic.services")
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    logger.addHandler(_h)
+    logger.setLevel(logging.INFO)
 
 __all__ = [
     "build_user_prompt",
@@ -323,6 +332,7 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
     """
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
+    logger.info("LLM 调用 model=%s style=%s panel_count=%s", DEEPSEEK_MODEL, style, panel_count)
 
     # 根据风格分派 prompt
     if style == "scene":
@@ -529,6 +539,7 @@ async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str =
     LLM 偶发返回残缺/非 JSON 响应时自动重试一次，避免直接 500。"""
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
+    logger.info("LLM 单点深耕调用 model=%s word=%s art_style=%s", DEEPSEEK_MODEL, word, art_style)
 
     user_prompt = build_single_user_prompt(word, theme_hint, art_style)
     payload = {
@@ -662,6 +673,7 @@ async def call_video_script(words: list[str], theme_hint: str = "", art_style: s
     """调用 DeepSeek 生成视频脚本（旁白 + 视频提示词）。"""
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
+    logger.info("LLM 视频脚本调用 model=%s words=%s", DEEPSEEK_MODEL, len(words))
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
@@ -795,6 +807,7 @@ async def call_video_generation(prompt: str, model: str, duration: int = 5) -> b
     resolution = cfg.get("resolution", "480P")
     size = _VIDEO_RES_SIZE.get(resolution, "832*480")
     eff_duration = _VIDEO_FIXED_DURATION.get(model, duration)
+    logger.info("文生视频调用 model=%s resolution=%s duration=%s", model, resolution, eff_duration)
 
     submit_url = f"{VIDEO_BASE_URL}/services/aigc/video-generation/video-synthesis"
     payload = {
@@ -913,6 +926,7 @@ async def call_tts(text: str, voice=None, speed=1.0, model=None):
     dashscope.api_key = TTS_API_KEY
     voice_name = voice or TTS_VOICE
     model_name = model or TTS_MODEL
+    logger.info("TTS 合成调用 model=%s voice=%s", model_name, voice_name)
 
     loop = asyncio.get_running_loop()
     try:
@@ -928,6 +942,7 @@ async def call_tts(text: str, voice=None, speed=1.0, model=None):
             ),
         )
     except Exception as e:
+        logger.error("TTS 合成请求失败 model=%s voice=%s error=%r", model_name, voice_name, e)
         raise HTTPException(500, f"TTS 合成请求失败 ({model_name}/{voice_name}): {e}")
 
     if not result or not result.audio_url:
@@ -1127,11 +1142,13 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
     endpoint = cfg.get("endpoint", "t2i")
     provider = cfg.get("provider", "dashscope")
     api_model = cfg.get("api_model", model_name)
+    logger.info("文生图调用 value=%s -> 实际模型=%s provider=%s endpoint=%s", model_name, api_model, provider, endpoint)
     try:
         if endpoint == "openai":
             # OpenAI 兼容协议（TokenRhythm 免费调用 qwen-image-2.0 / wan2.7-image）
             if provider == "tokenrhythm":
                 if not TOKENRHYTHM_API_KEY:
+                    logger.error("TokenRhythm 免费文生图缺少 TOKENRHYTHM_API_KEY（model=%s）", api_model)
                     raise HTTPException(500, "请先设置 TOKENRHYTHM_API_KEY 环境变量")
                 api_key, base_url = TOKENRHYTHM_API_KEY, TOKENRHYTHM_BASE_URL
             else:
@@ -1142,6 +1159,7 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
                 prompt, api_model, api_key, base_url, cfg.get("size", "1024x1024")
             )
         if not IMAGE_API_KEY:
+            logger.error("文生图缺少 IMAGE_API_KEY/TTS_API_KEY（model=%s）", model_name)
             raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
         if endpoint == "multimodal":
             return await _generate_image_qwen_multimodal(prompt, model_name)
@@ -1149,6 +1167,7 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("文生图调用失败 model=%s endpoint=%s provider=%s error=%r", model_name, endpoint, provider, e)
         raise HTTPException(500, f"文生图失败 ({model_name}): {e}")
 
 

@@ -6,26 +6,26 @@ TOEIC MVP API 路由
 
 import asyncio
 import json
+import logging
 import sqlite3
 import uuid
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from config import *
 from db import *
 from services import *
 
+logger = logging.getLogger("toeic.routes")
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    logger.addHandler(_h)
+    logger.setLevel(logging.INFO)
+
 router = APIRouter()
-
-# 各 TTS 音色模型推荐的默认音色（视频旁白未指定音色时使用）
-_VIDEO_DEFAULT_VOICE = {
-    "qwen-audio-3.0-tts-plus": "loongmary",
-    "cosyvoice-v3-plus": "loongandy_v3",
-    "cosyvoice-v3-flash": "loongandy_v3",
-}
-
 
 # ========================================================================
 # 内部辅助函数
@@ -67,6 +67,48 @@ def _coerce_str(v, fallback: str = "") -> str:
     if isinstance(v, str):
         return v
     return str(v) if v is not None else fallback
+
+
+def _resolve_image_model(raw) -> str:
+    """严格校验文生图模型：用户选什么就是什么，绝不静默兜底/替换到其他模型。
+    未传、空或非法值一律明确报错，由前端提示用户重新选择。"""
+    model = (raw or "").strip()
+    if not model:
+        raise HTTPException(400, "请选择文生图模型")
+    for m in IMAGE_MODELS:
+        if m["value"] == model:
+            return model
+    raise HTTPException(400, f"未知的文生图模型: {model}，请选择有效模型")
+
+
+# ========================================================================
+# SSE 进度透明：把每步"实际调用了哪个模型/状态"实时推给前端
+# 生成流程以异步生成器 yield (event, data) 二元组；同步接口收集 result，
+# 流式接口逐条转成 SSE 事件。
+# ========================================================================
+
+def _sse(event: str, data) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _image_provider_label(model: str) -> str:
+    """返回文生图模型所属平台（dashscope/tokenrhythm），用于进度展示。"""
+    return _get_image_model_config(model).get("provider", "dashscope")
+
+
+async def _consume_result(gen):
+    """消费生成器，取最后一个 result 事件的数据（供同步接口用）。"""
+    result = None
+    async for evt, data in gen:
+        if evt == "result":
+            result = data
+    return result
+
+
+async def _sse_stream(gen):
+    """把 (event, data) 生成器转成 SSE 文本流。"""
+    async for evt, data in gen:
+        yield _sse(evt, data)
 
 def _delete_generation(gen_id: str, not_found_msg: str = "记录不存在") -> dict:
     """删除生成记录及其关联的音频和图片文件（先删库记录，成功后再清理文件）。"""
@@ -160,78 +202,89 @@ async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str,
 # 生成 API
 # ========================================================================
 
-@router.post("/api/generate")
-async def generate(req: Request):
-    body = await _safe_json(req)
+def _parse_generate_body(body: dict) -> dict:
+    """解析并校验批量编译请求参数（同步/流式共用）。"""
     raw_words    = _coerce_str(body.get("words", ""))
     panel_count  = _clamp_int(body.get("panel_count", 4), 3, 8, 4)
     theme_hint   = body.get("theme_hint", "") or ""
-    image_model  = body.get("image_model", IMAGE_MODEL)
+    image_model  = _resolve_image_model(body.get("image_model"))
     generate_audio = _to_bool(body.get("generate_audio_immediately", False))
     tts_model    = body.get("tts_model", TTS_MODEL) if generate_audio else None
     style        = body.get("style", "absurd")  # 缺省 'absurd'；显式传 '' 为旧版微电影
-    art_style    = body.get("art_style", "")    # 可选画风（comic/realistic/3d/watercolor/pixel），空=不指定
+    art_style    = body.get("art_style", "")    # 可选画风，空=不指定
 
     words = normalize_words(raw_words)
     if not words:
         raise HTTPException(400, "请至少输入一个有效单词")
     if len(words) > 30:
         raise HTTPException(400, f"单次最多 30 个单词，当前 {len(words)} 个")
-    # 新风格固定 3 panel，跳过校验；旧风格校验 3/4/5
     if style not in ("absurd", "conflict") and panel_count not in (3, 4, 5):
         raise HTTPException(400, "画面数量只能是 3、4 或 5")
+    return {
+        "words": words, "panel_count": panel_count, "theme_hint": theme_hint,
+        "image_model": image_model, "generate_audio": generate_audio, "tts_model": tts_model,
+        "style": style, "art_style": art_style,
+    }
+
+
+async def _run_generate(p: dict):
+    """批量编译核心流程（生成器）：LLM → 批量文生图 → 可选 TTS，逐步 yield 状态。"""
+    words, panel_count = p["words"], p["panel_count"]
+    theme_hint, image_model = p["theme_hint"], p["image_model"]
+    generate_audio, tts_model = p["generate_audio"], p["tts_model"]
+    style, art_style = p["style"], p["art_style"]
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
+    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成剧情连环画", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
     result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style)
+    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成剧情连环画", "status": "ok"})
 
-    # 防护：LLM 未返回任何画面时，直接报错而非写入空记录
     if not result.get("panels"):
         raise HTTPException(502, "AI 未能生成画面内容，请重试")
 
-    # 实际 panel 数（新风格固定 3）
     actual_panel_count = len(result.get("panels", [])) or panel_count
-
     panels = result.get("panels", [])
 
-    # 预扣图片配额（生成前检查，避免超限后仍返回图片）
     if len(panels) > 0 and not consume_daily_quota("image", len(panels)):
-        for p in panels:
-            p["image_url"] = None
-            p["image_error"] = f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)"
-        image_results = []
-    else:
-        # 并发生成每个画面的图片
+        raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
+
+    # 批量文生图：失败即整体中止（fail-fast），绝不静默替换模型或给出残缺结果
+    if panels:
+        yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
+                        "label": f"生成 {len(panels)} 张图", "status": "running"})
         image_tasks = [
             generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, p.get("scene_index", idx + 1), style=style, art_style=art_style)
             for idx, p in enumerate(panels)
         ]
-        if image_tasks:
-            cfg = _get_image_model_config(image_model)
-            if cfg.get("endpoint") == "multimodal":
-                # 旗舰档：串行（RPM=2，且每次耗时较长）
-                image_results = []
-                for t in image_tasks:
-                    image_results.append(await t)
-            else:
-                # 均衡/性价比档：并发
-                image_results = await asyncio.gather(*image_tasks)
-        else:
+        cfg = _get_image_model_config(image_model)
+        if cfg.get("endpoint") == "multimodal":
             image_results = []
-
-        # 把图片 URL 写回 panels
+            for t in image_tasks:
+                ir = await t
+                image_results.append(ir)
+                if not ir["url"]:
+                    logger.error("批量文生图失败即中止 model=%s error=%r", image_model, ir.get("error"))
+                    raise HTTPException(502, f"文生图模型 {image_model} 生成失败：{ir['error'] or '未知错误'}。请更换文生图模型后重试")
+        else:
+            image_results = await asyncio.gather(*image_tasks)
+            for ir in image_results:
+                if not ir["url"]:
+                    logger.error("批量文生图失败 model=%s error=%r", image_model, ir.get("error"))
+                    raise HTTPException(502, f"文生图模型 {image_model} 生成失败：{ir['error'] or '未知错误'}。请更换文生图模型后重试")
         for p, ir in zip(panels, image_results):
             p["image_url"] = ir["url"]
             p["image_error"] = ir["error"]
+        yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
+                        "label": f"生成 {len(panels)} 张图", "status": "ok"})
+    else:
+        image_results = []
 
     image_ok_count = sum(1 for ir in image_results if ir["url"])
-
-    # 拼接完整英文正文（供 TTS 和历史预览用）
     full_body_en = " ".join(p.get("sentence_en", "") for p in panels)
 
-    # 入库
     conn = get_db()
     conn.execute("""
         INSERT INTO generations (id,words,panel_count,theme_hint,
@@ -240,23 +293,13 @@ async def generate(req: Request):
                                  generation_type,style)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        gen_id,
-        json.dumps(words),
-        actual_panel_count,
-        theme_hint,
-        result.get("story_title", ""),
-        result.get("theme", ""),
-        result.get("story_synopsis", ""),
-        full_body_en,
-        DEEPSEEK_MODEL,
-        image_model,
-        json.dumps(panels),
+        gen_id, json.dumps(words), actual_panel_count, theme_hint,
+        result.get("story_title", ""), result.get("theme", ""), result.get("story_synopsis", ""),
+        full_body_en, DEEPSEEK_MODEL, image_model, json.dumps(panels),
         json.dumps(result.get("polysemy_notes", {})),
         json.dumps(result.get("included_words", [])),
         json.dumps(result.get("missing_words", [])),
-        result.get("ending_moral", ""),
-        "batch",
-        style,
+        result.get("ending_moral", ""), "batch", style,
     ))
     for w in words:
         conn.execute("INSERT OR IGNORE INTO words(word) VALUES(?)", (w,))
@@ -264,40 +307,32 @@ async def generate(req: Request):
     conn.close()
 
     resp = {
-        "id": gen_id,
-        "status": "success",
-        "generation_type": "batch",
-        "style": style,
-        "story_title": result.get("story_title", ""),
-        "theme": result.get("theme", ""),
-        "story_synopsis": result.get("story_synopsis", ""),
-        "ending_moral": result.get("ending_moral", ""),
-        "panels": panels,
-        "words": words,
+        "id": gen_id, "status": "success", "generation_type": "batch", "style": style,
+        "story_title": result.get("story_title", ""), "theme": result.get("theme", ""),
+        "story_synopsis": result.get("story_synopsis", ""), "ending_moral": result.get("ending_moral", ""),
+        "panels": panels, "words": words,
         "included_words": result.get("included_words", []),
         "missing_words": result.get("missing_words", []),
         "polysemy_notes": result.get("polysemy_notes", {}),
-        "panel_count": actual_panel_count,
-        "image_model": image_model,
-        "image_success_count": image_ok_count,
-        "has_audio": False,
-        "audio_id": None,
+        "panel_count": actual_panel_count, "image_model": image_model,
+        "image_success_count": image_ok_count, "has_audio": False, "audio_id": None,
     }
 
-    # 可选：为整条剧情串联生成 TTS 音频
     if generate_audio and full_body_en:
+        yield ("step", {"step": "tts", "model": tts_model, "label": "合成整段剧情音频", "status": "running"})
         if not consume_daily_quota("tts"):
             resp["audio_error"] = f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)，未生成音频"
+            yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": resp["audio_error"]})
         else:
             try:
-                audio_bytes = await call_tts(full_body_en, TTS_VOICE, 1.0, tts_model)
-                file_name = f"{gen_id}_{TTS_VOICE}_100.mp3"
-                file_path = AUDIOS_DIR / file_name
-                file_path.write_bytes(audio_bytes)
+                voice = default_tts_voice(tts_model)
+                audio_bytes = await call_tts(full_body_en, voice, 1.0, tts_model)
+                file_name = f"{gen_id}_{voice}_100.mp3"
+                (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
                 conn = get_db()
                 cur = conn.execute(
                     "INSERT INTO audios (generation_id,file_name,voice,speed,tts_model) VALUES (?,?,?,?,?)",
-                    (gen_id, file_name, TTS_VOICE, 1.0, tts_model),
+                    (gen_id, file_name, voice, 1.0, tts_model),
                 )
                 conn.commit()
                 conn.close()
@@ -305,20 +340,40 @@ async def generate(req: Request):
                 resp["audio_id"] = cur.lastrowid
                 resp["audio_url"] = f"/audios/{file_name}"
                 resp["tts_model"] = tts_model
+                yield ("step", {"step": "tts", "model": tts_model, "status": "ok"})
             except HTTPException as e:
                 resp["audio_error"] = e.detail
+                yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": e.detail})
             except Exception as e:
                 resp["audio_error"] = f"音频生成失败: {e}"
+                yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": str(e)})
 
-    return resp
+    yield ("result", resp)
+
+
+@router.post("/api/generate")
+async def generate(req: Request):
+    """批量编译（同步）：剧情生成 + 批量文生图 + 可选 TTS。"""
+    body = await _safe_json(req)
+    p = _parse_generate_body(body)
+    return await _consume_result(_run_generate(p))
+
+
+@router.post("/api/generate-stream")
+async def generate_stream(req: Request):
+    """批量编译（SSE 流式）：逐步推送实际调用的模型与状态。"""
+    body = await _safe_json(req)
+    p = _parse_generate_body(body)
+    return StreamingResponse(_sse_stream(_run_generate(p)), media_type="text/event-stream")
+
 
 
 @router.post("/api/generations/{gen_id}/audio")
 async def generate_audio(gen_id: str, req: Request):
     body = await _safe_json(req)
-    voice = body.get("voice", TTS_VOICE)
-    speed = body.get("speed", 1.0)
     tts_model = body.get("tts_model", TTS_MODEL)
+    voice = body.get("voice") or default_tts_voice(tts_model)
+    speed = body.get("speed", 1.0)
     voice, speed = validate_tts_params(voice, speed)
     return await _generate_audio(gen_id, voice, speed, tts_model, "生成记录不存在")
 
@@ -327,45 +382,52 @@ async def generate_audio(gen_id: str, req: Request):
 # 单点深耕 API
 # ========================================================================
 
-@router.post("/api/single/compile")
-async def single_compile(req: Request):
-    """单点深耕：给定 1 个单词 → 生成词伙 + 场景句 + 派生词 + 1 张记忆钩子图。"""
-    body = await _safe_json(req)
+def _parse_single_body(body: dict) -> dict:
+    """解析并校验单点深耕请求参数；非法值在此抛出（同步/流式共用）。"""
+    import re as _re
     word_raw = (body.get("word") or "").strip().lower()
     theme_hint = body.get("theme_hint", "")
-    image_model = body.get("image_model", IMAGE_MODEL)
-    generate_audio_immediately = _to_bool(body.get("generate_audio_immediately", False))
-    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio_immediately else None
-
-    # 单词清洗：只允许字母、连字符、撇号
-    import re as _re
+    image_model = _resolve_image_model(body.get("image_model"))
+    generate_audio = _to_bool(body.get("generate_audio_immediately", False))
+    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
     word_clean = _re.sub(r"[^a-zA-Z\-']", "", word_raw).lower()
     if not word_clean or len(word_clean) < 2:
         raise HTTPException(400, "请输入一个有效英文单词")
-
     art_style = body.get("art_style", "comic")
+    return {
+        "word": word_clean, "theme_hint": theme_hint, "image_model": image_model,
+        "art_style": art_style, "generate_audio": generate_audio, "tts_model": tts_model,
+    }
+
+
+async def _run_single_compile(p: dict):
+    """单点深耕核心流程（生成器）：LLM → 文生图 → 可选 TTS，逐步 yield 状态。"""
+    word_clean, theme_hint = p["word"], p["theme_hint"]
+    image_model, art_style = p["image_model"], p["art_style"]
+    generate_audio, tts_model = p["generate_audio"], p["tts_model"]
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
+    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成记忆卡片", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
     result, usage = await call_deepseek_single(word_clean, theme_hint, art_style)
+    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成记忆卡片", "status": "ok"})
 
-    # 生成 1 张图（先检查配额）
-    image_url = None
-    image_error = None
     if not consume_daily_quota("image", 1):
-        image_error = f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)"
-    else:
-        ir = await generate_single_image(result.get("image_prompt", ""), image_model, gen_id)
-        image_url = ir["url"]
-        image_error = ir["error"]
+        raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
+    yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
+                    "label": "生成记忆钩子图", "status": "running"})
+    ir = await generate_single_image(result.get("image_prompt", ""), image_model, gen_id)
+    image_url, image_error = ir["url"], ir["error"]
+    if not image_url:
+        logger.error("单点深耕文生图失败 model=%s error=%r", image_model, ir.get("error"))
+        raise HTTPException(502, f"文生图模型 {image_model} 生成失败：{image_error or '未知错误'}。请更换文生图模型后重试")
+    yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
+                    "label": "生成记忆钩子图", "status": "ok"})
 
-    # scene_sentence.en 用于 TTS 和 body_en
     scene_sentence = result.get("scene_sentence", {}) or {}
     body_en = scene_sentence.get("en", "") or ""
-
-    # 入库：generation_type='single'，复用 panels 字段存 JSON 整体（schemaless 扩展，PRD 6.2 方案A）
     panels_payload = [{
         "scene_index": 1,
         "collocation": result.get("collocation", {}),
@@ -385,60 +447,44 @@ async def single_compile(req: Request):
                                  generation_type,style)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        gen_id,
-        json.dumps([word_clean]),
-        1,
-        theme_hint,
-        f"{word_clean} · 单点深耕",
-        "单点深耕",
-        scene_sentence.get("zh", ""),
-        body_en,
-        DEEPSEEK_MODEL,
-        image_model,
+        gen_id, json.dumps([word_clean]), 1, theme_hint,
+        f"{word_clean} · 单点深耕", "单点深耕", scene_sentence.get("zh", ""), body_en,
+        DEEPSEEK_MODEL, image_model,
         json.dumps(panels_payload, ensure_ascii=False),
         json.dumps({}, ensure_ascii=False),
         json.dumps([word_clean], ensure_ascii=False),
         json.dumps([], ensure_ascii=False),
-        "",
-        "single",
-        "",
+        "", "single", "",
     ))
-    # 若词库无该词，自动加入（与批量编译一致）
     conn.execute("INSERT OR IGNORE INTO words(word) VALUES(?)", (word_clean,))
     conn.commit()
     conn.close()
 
     resp = {
-        "id": gen_id,
-        "generation_type": "single",
-        "status": "success",
-        "word": word_clean,
-        "collocation": result.get("collocation", {}),
-        "scene_sentence": scene_sentence,
-        "image_prompt": result.get("image_prompt", ""),
-        "hook_type": result.get("hook_type", ""),
-        "image_url": image_url,
-        "image_error": image_error,
-        "derivatives": result.get("derivatives", []),
-        "image_model": image_model,
-        "art_style": art_style,
-        "has_audio": False,
-        "audio_id": None,
+        "id": gen_id, "generation_type": "single", "status": "success",
+        "word": word_clean, "collocation": result.get("collocation", {}),
+        "scene_sentence": scene_sentence, "image_prompt": result.get("image_prompt", ""),
+        "hook_type": result.get("hook_type", ""), "image_url": image_url,
+        "image_error": image_error, "derivatives": result.get("derivatives", []),
+        "image_model": image_model, "art_style": art_style,
+        "has_audio": False, "audio_id": None,
     }
 
-    # 可选：即时合成场景句朗读音频
-    if generate_audio_immediately and body_en:
+    if generate_audio and body_en:
+        yield ("step", {"step": "tts", "model": tts_model, "label": "合成朗读音频", "status": "running"})
         if not consume_daily_quota("tts"):
             resp["audio_error"] = f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)，未生成音频"
+            yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": resp["audio_error"]})
         else:
             try:
-                audio_bytes = await call_tts(body_en, TTS_VOICE, 1.0, tts_model)
-                file_name = f"{gen_id}_{TTS_VOICE}_100.mp3"
+                voice = default_tts_voice(tts_model)
+                audio_bytes = await call_tts(body_en, voice, 1.0, tts_model)
+                file_name = f"{gen_id}_{voice}_100.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
                 conn = get_db()
                 cur = conn.execute(
                     "INSERT INTO audios (generation_id,file_name,voice,speed,tts_model) VALUES (?,?,?,?,?)",
-                    (gen_id, file_name, TTS_VOICE, 1.0, tts_model),
+                    (gen_id, file_name, voice, 1.0, tts_model),
                 )
                 conn.commit()
                 conn.close()
@@ -446,21 +492,41 @@ async def single_compile(req: Request):
                 resp["audio_id"] = cur.lastrowid
                 resp["audio_url"] = f"/audios/{file_name}"
                 resp["tts_model"] = tts_model
+                yield ("step", {"step": "tts", "model": tts_model, "status": "ok"})
             except HTTPException as e:
                 resp["audio_error"] = e.detail
+                yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": e.detail})
             except Exception as e:
                 resp["audio_error"] = f"音频生成失败: {e}"
+                yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": str(e)})
 
-    return resp
+    yield ("result", resp)
+
+
+@router.post("/api/single/compile")
+async def single_compile(req: Request):
+    """单点深耕（同步）：生成词伙 + 场景句 + 派生词 + 1 张记忆钩子图。"""
+    body = await _safe_json(req)
+    p = _parse_single_body(body)
+    return await _consume_result(_run_single_compile(p))
+
+
+@router.post("/api/single/compile-stream")
+async def single_compile_stream(req: Request):
+    """单点深耕（SSE 流式）：逐步推送实际调用的模型与状态。"""
+    body = await _safe_json(req)
+    p = _parse_single_body(body)
+    return StreamingResponse(_sse_stream(_run_single_compile(p)), media_type="text/event-stream")
+
 
 
 @router.post("/api/single/{gen_id}/audio")
 async def single_generate_audio(gen_id: str, req: Request):
     """为单点深耕场景句生成朗读音频（后置生成）。"""
     body = await _safe_json(req)
-    voice = body.get("voice", TTS_VOICE)
-    speed = body.get("speed", 1.0)
     tts_model = body.get("tts_model", TTS_MODEL)
+    voice = body.get("voice") or default_tts_voice(tts_model)
+    speed = body.get("speed", 1.0)
     voice, speed = validate_tts_params(voice, speed)
     return await _generate_audio(gen_id, voice, speed, tts_model, "单点深耕记录不存在")
 
@@ -586,9 +652,14 @@ async def health():
     return {
         "status": "ok",
         "db": DB_PATH.exists(),
-        "deepseek_key": bool(DEEPSEEK_API_KEY),
-        "tts_key": bool(TTS_API_KEY),
-        "image_key": bool(IMAGE_API_KEY or TOKENRHYTHM_API_KEY),
+        # 各模型通道密钥状态（供 manager 状态行/自检展示）
+        "deepseek_key":      bool(DEEPSEEK_API_KEY),                     # 主 LLM
+        "cheap_llm_key":     bool(CHEAP_LLM_API_KEY),                    # 廉价 LLM（智谱 GLM）
+        "tts_key":           bool(TTS_API_KEY),                          # 语音合成
+        "bailian_image_key": bool(IMAGE_API_KEY or TTS_API_KEY),         # 百炼文生图
+        "tokenrhythm_key":   bool(TOKENRHYTHM_API_KEY),                  # TokenRhythm 免费文生图
+        "image_key":         bool(IMAGE_API_KEY or TTS_API_KEY or TOKENRHYTHM_API_KEY),  # 文生图(任一通道)
+        "video_key":         bool(VIDEO_API_KEY or IMAGE_API_KEY or TTS_API_KEY),        # 文生视频(百炼)
         "daily_usage": {**usage, "ai_limit": DAILY_AI_LIMIT, "tts_limit": DAILY_TTS_LIMIT, "image_limit": DAILY_IMAGE_LIMIT},
     }
 
@@ -609,16 +680,14 @@ async def list_video_models():
     return {"models": VIDEO_MODELS}
 
 
-@router.post("/api/video/generate")
-async def video_generate(req: Request):
-    """视频编译：选词 → LLM 写视频脚本 → 百炼文生视频 → 存盘入库。"""
-    body = await _safe_json(req)
+def _parse_video_body(body: dict) -> dict:
+    """解析并校验视频编译请求参数（同步/流式共用）。"""
     raw_words   = _coerce_str(body.get("words", ""))
     theme_hint  = body.get("theme_hint", "") or ""
     video_model = body.get("video_model", "")
     duration    = _clamp_int(body.get("duration", 5), 2, 15, 5)
     tts_model   = body.get("tts_model", TTS_MODEL) or TTS_MODEL
-    voice       = body.get("voice", "") or _VIDEO_DEFAULT_VOICE.get(tts_model, TTS_VOICE)
+    voice       = body.get("voice", "") or default_tts_voice(tts_model)
     art_style   = body.get("art_style", "") or ""
 
     words = normalize_words(raw_words)
@@ -628,6 +697,19 @@ async def video_generate(req: Request):
         raise HTTPException(400, f"单次最多 30 个单词，当前 {len(words)} 个")
     if not video_model:
         raise HTTPException(400, "请选择文生视频模型")
+    if not _get_video_model_config(video_model):
+        raise HTTPException(400, f"未知的文生视频模型: {video_model}，请选择有效模型")
+    return {
+        "words": words, "theme_hint": theme_hint, "video_model": video_model,
+        "duration": duration, "tts_model": tts_model, "voice": voice, "art_style": art_style,
+    }
+
+
+async def _run_video_generate(p: dict):
+    """视频编译核心流程（生成器）：LLM 脚本 → 文生视频 → 配音/字幕，逐步 yield 状态。"""
+    words, theme_hint = p["words"], p["theme_hint"]
+    video_model, duration = p["video_model"], p["duration"]
+    tts_model, voice, art_style = p["tts_model"], p["voice"], p["art_style"]
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
@@ -642,31 +724,30 @@ async def video_generate(req: Request):
     conn.commit()
     conn.close()
 
-    # 1) LLM 生成视频脚本（旁白 + 视频提示词）
+    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 编写视频脚本", "status": "running"})
     try:
         script, _ = await call_video_script(words, theme_hint, art_style)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(502, f"视频脚本生成失败: {e}")
+    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 编写视频脚本", "status": "ok"})
 
     video_prompt = (script.get("video_prompt") or "").strip()
     if not video_prompt:
         raise HTTPException(502, "AI 未能生成视频提示词，请重试")
 
-    # 预扣 AI 脚本已占用一次；视频生成不计入 image 配额（视频额度独立）
-    # 2) 调用文生视频
+    yield ("step", {"step": "video", "model": video_model, "label": "生成视频（耗时约 1-5 分钟）", "status": "running"})
     try:
         video_bytes = await call_video_generation(video_prompt, video_model, duration)
     except Exception as e:
         _update_video_status(vid_id, "failed", str(e))
         raise HTTPException(502, f"视频生成失败: {e}")
-
     if not video_bytes:
         _update_video_status(vid_id, "failed", "视频生成返回空数据")
         raise HTTPException(502, "视频生成返回空数据")
+    yield ("step", {"step": "video", "model": video_model, "label": "生成视频", "status": "ok"})
 
-    # 3) 合成旁白音频 + ffmpeg 烧录英文字幕
     narration_en = (script.get("narration_en") or "").strip()
     narration_zh = (script.get("narration_zh") or "").strip()
     raw_video_path = str(VIDEOS_DIR / f"{vid_id}_raw.mp4")
@@ -675,9 +756,11 @@ async def video_generate(req: Request):
     final_name = f"{vid_id}.mp4"
     final_path = str(VIDEOS_DIR / final_name)
     if narration_en:
+        yield ("step", {"step": "tts", "model": tts_model, "voice": voice, "label": "合成旁白并烧录字幕", "status": "running"})
         try:
             audio_bytes = await call_tts(narration_en, voice=voice, speed=1.0, model=tts_model)
             mux_video_with_audio(raw_video_path, audio_bytes, narration_en, final_path)
+            yield ("step", {"step": "tts", "model": tts_model, "status": "ok"})
         except Exception as e:
             _update_video_status(vid_id, "failed", f"配音/字幕合成失败: {e}")
             raise HTTPException(502, f"视频生成成功但配音/字幕合成失败: {e}")
@@ -692,62 +775,52 @@ async def video_generate(req: Request):
         """UPDATE videos SET story_title=?, narration_en=?, narration_zh=?,
                              video_prompt=?, script=?, file_name=?, video_url=?, status='success'
            WHERE id=?""",
-        (
-            script.get("story_title", ""),
-            narration_en,
-            narration_zh,
-            video_prompt,
-            json.dumps(script),
-            final_name,
-            f"/videos/{final_name}",
-            vid_id,
-        ),
+        (script.get("story_title", ""), narration_en, narration_zh, video_prompt,
+         json.dumps(script), final_name, f"/videos/{final_name}", vid_id),
     )
-    # 同步写入历史（generations 表），使视频在"最近生成/历史"中可见
-    gen_id = vid_id
     conn.execute(
         """INSERT INTO generations (id,words,panel_count,theme_hint,
                                      story_title,story_synopsis,body_en,model,image_model,panels,
                                      included_words,missing_words,generation_type,style,video_url)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            gen_id,
-            json.dumps(words),
-            duration,
-            theme_hint,
-            script.get("story_title", ""),
-            narration_en[:80],
-            narration_en,
-            DEEPSEEK_MODEL,
-            video_model,
-            "[]",
-            json.dumps(script.get("included_words", [])),
-            json.dumps(script.get("missing_words", [])),
-            "video",
-            "video",
-            f"/videos/{final_name}",
-        ),
+        (vid_id, json.dumps(words), duration, theme_hint,
+         script.get("story_title", ""), narration_en[:80], narration_en,
+         DEEPSEEK_MODEL, video_model, "[]",
+         json.dumps(script.get("included_words", [])),
+         json.dumps(script.get("missing_words", [])),
+         "video", "video", f"/videos/{final_name}"),
     )
     conn.commit()
     conn.close()
 
-    return {
-        "id": vid_id,
-        "status": "success",
-        "generation_type": "video",
+    yield ("result", {
+        "id": vid_id, "status": "success", "generation_type": "video",
         "story_title": script.get("story_title", ""),
-        "narration_en": narration_en,
-        "narration_zh": narration_zh,
+        "narration_en": narration_en, "narration_zh": narration_zh,
         "video_prompt": video_prompt,
         "included_words": script.get("included_words", []),
         "missing_words": script.get("missing_words", []),
-        "video_model": video_model,
-        "duration": duration,
+        "video_model": video_model, "duration": duration,
         "video_url": f"/videos/{final_name}",
-        "has_audio": bool(narration_en),
-        "tts_model": tts_model,
-        "words": words,
-    }
+        "has_audio": bool(narration_en), "tts_model": tts_model, "words": words,
+    })
+
+
+@router.post("/api/video/generate")
+async def video_generate(req: Request):
+    """视频编译（同步）：选词 → LLM 写视频脚本 → 百炼文生视频 → 存盘入库。"""
+    body = await _safe_json(req)
+    p = _parse_video_body(body)
+    return await _consume_result(_run_video_generate(p))
+
+
+@router.post("/api/video/generate-stream")
+async def video_generate_stream(req: Request):
+    """视频编译（SSE 流式）：逐步推送实际调用的模型与状态。"""
+    body = await _safe_json(req)
+    p = _parse_video_body(body)
+    return StreamingResponse(_sse_stream(_run_video_generate(p)), media_type="text/event-stream")
+
 
 
 def _update_video_status(vid_id: str, status: str, error: str = ""):
@@ -1084,9 +1157,9 @@ async def delete_text(text_id: str):
 @router.post("/api/texts/{text_id}/regenerate-audio")
 async def regenerate_audio_for_text(text_id: str, req: Request):
     body = await _safe_json(req)
-    voice = body.get("voice", TTS_VOICE)
-    speed = body.get("speed", 1.0)
     tts_model = body.get("tts_model", TTS_MODEL)
+    voice = body.get("voice") or default_tts_voice(tts_model)
+    speed = body.get("speed", 1.0)
     voice, speed = validate_tts_params(voice, speed)
     return await _generate_audio(text_id, voice, speed, tts_model, "文本不存在")
 
@@ -1670,18 +1743,9 @@ def delete_scene(scene_id: int):
         conn.close()
 
 
-@router.post("/api/scenes/{scene_id}/compile")
-async def compile_scene(scene_id: int, request: Request):
-    """场景批量编译：取该场景下所有单词，调批量编译生成连环画。
-    Body: {panel_count?, theme_hint?, image_model?}"""
-    body = await _safe_json(request)
-    panel_count = _clamp_int(body.get("panel_count", 4), 3, 8, 4)
-    theme_hint = str(body.get("theme_hint", "") or "")
-    image_model = str(body.get("image_model", "") or "") or IMAGE_MODEL
-    # 场景编译固定"自然覆盖"（scene）风格，与批量编译彻底区分
+async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, image_model: str, art_style: str):
+    """场景编译核心流程（生成器）：LLM → 批量文生图，逐步 yield 状态。"""
     style = "scene"
-    art_style = body.get("art_style", "")  # 可选画风，空=不指定
-
     conn = get_db()
     try:
         s = conn.execute("SELECT * FROM scenes WHERE id = ?", (scene_id,)).fetchone()
@@ -1697,9 +1761,7 @@ async def compile_scene(scene_id: int, request: Request):
         if not word_list:
             raise HTTPException(400, "该场景下没有单词，无法编译")
 
-        # 场景批量编译：复用批量编译的 LLM 逻辑（风格 scene/absurd/conflict），场景名作为主题提示
         scene_theme = theme_hint or s["name_en"]
-        # 把已生成的场景词伙（scene_collocations）作为词伙约束喂给 LLM，保证连环画与场景词汇一致
         scene_cols = conn.execute(
             "SELECT phrase_en FROM scene_collocations WHERE scene_id = ? ORDER BY created_at DESC",
             (scene_id,),
@@ -1707,9 +1769,11 @@ async def compile_scene(scene_id: int, request: Request):
         collocations = [r["phrase_en"] for r in scene_cols] if scene_cols else None
         if not consume_daily_quota("ai"):
             raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
-        story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
 
-        # 防护：LLM 未返回任何画面时，直接报错而非写入空记录
+        yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成场景连环画", "status": "running"})
+        story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
+        yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成场景连环画", "status": "ok"})
+
         if not story.get("panels"):
             raise HTTPException(502, "AI 未能生成画面内容，请重试")
 
@@ -1732,38 +1796,40 @@ async def compile_scene(scene_id: int, request: Request):
                 "image_error": None,
             })
 
-        # 预扣图片配额（生成前检查，避免超限后仍返回图片）
         panels = story.get("panels", [])
         image_ok_count = 0
         if panels and not consume_daily_quota("image", len(panels)):
-            for p in panels_json:
-                p["image_url"] = None
-                p["image_error"] = f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)"
-        else:
+            raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
+        elif panels:
+            yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
+                            "label": f"生成 {len(panels)} 张图", "status": "running"})
             image_tasks = [
                 generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, i + 1, style=style, art_style=art_style)
                 for i, p in enumerate(panels)
             ]
-            if image_tasks:
-                cfg = _get_image_model_config(image_model)
-                if cfg.get("endpoint") == "multimodal":
-                    # 旗舰档：串行（RPM=2，且每次耗时较长）
-                    image_results = []
-                    for t in image_tasks:
-                        image_results.append(await t)
-                else:
-                    # 均衡/性价比档：并发
-                    image_results = await asyncio.gather(*image_tasks)
-            else:
+            cfg = _get_image_model_config(image_model)
+            if cfg.get("endpoint") == "multimodal":
                 image_results = []
+                for t in image_tasks:
+                    ir = await t
+                    image_results.append(ir)
+                    if not ir["url"]:
+                        logger.error("场景编译文生图失败即中止 model=%s error=%r", image_model, ir.get("error"))
+                        raise HTTPException(502, f"文生图模型 {image_model} 生成失败：{ir['error'] or '未知错误'}。请更换文生图模型后重试")
+            else:
+                image_results = await asyncio.gather(*image_tasks)
+                for ir in image_results:
+                    if not ir["url"]:
+                        logger.error("场景编译文生图失败 model=%s error=%r", image_model, ir.get("error"))
+                        raise HTTPException(502, f"文生图模型 {image_model} 生成失败：{ir['error'] or '未知错误'}。请更换文生图模型后重试")
             for p, ir in zip(panels_json, image_results):
                 p["image_url"] = ir["url"]
                 p["image_error"] = ir["error"]
             image_ok_count = sum(1 for ir in image_results if ir["url"])
+            yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
+                            "label": f"生成 {len(panels)} 张图", "status": "ok"})
 
-        # 拼接 body_en（与批量编译一致）
         full_body_en = " ".join(p.get("sentence_en", "") for p in panels_json)
-
         conn.execute("""
             INSERT INTO generations (id,words,panel_count,theme_hint,
                                      story_title,theme,story_synopsis,body_en,model,image_model,panels,
@@ -1771,34 +1837,47 @@ async def compile_scene(scene_id: int, request: Request):
                                      generation_type,style)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
-            gen_id,
-            json.dumps(word_list, ensure_ascii=False),
-            actual_panel_count,
-            theme_hint,
-            story.get("story_title", ""),
-            story.get("theme", ""),
-            story.get("story_synopsis", ""),
-            full_body_en,
-            DEEPSEEK_MODEL,
-            image_model,
+            gen_id, json.dumps(word_list, ensure_ascii=False), actual_panel_count, theme_hint,
+            story.get("story_title", ""), story.get("theme", ""), story.get("story_synopsis", ""),
+            full_body_en, DEEPSEEK_MODEL, image_model,
             json.dumps(panels_json, ensure_ascii=False),
             json.dumps(story.get("polysemy_notes", {}), ensure_ascii=False),
             json.dumps(story.get("included_words", []), ensure_ascii=False),
             json.dumps(story.get("missing_words", []), ensure_ascii=False),
-            story.get("ending_moral", ""),
-            "scene",
-            style,
+            story.get("ending_moral", ""), "scene", style,
         ))
         conn.commit()
 
-        return {
-            "gen_id": gen_id,
-            "scene_id": scene_id,
-            "scene_name": s["name_en"],
-            "word_count": len(word_list),
-            "panel_count": actual_panel_count,
+        yield ("result", {
+            "gen_id": gen_id, "scene_id": scene_id, "scene_name": s["name_en"],
+            "word_count": len(word_list), "panel_count": actual_panel_count,
             "image_success_count": image_ok_count,
             "message": f"场景「{s['name_en']}」已编译 {len(word_list)} 词 → {actual_panel_count} 画面连环画（{style or '微电影'}），图片 {image_ok_count}/{actual_panel_count}",
-        }
+        })
     finally:
         conn.close()
+
+
+@router.post("/api/scenes/{scene_id}/compile")
+async def compile_scene(scene_id: int, request: Request):
+    """场景批量编译（同步）：取该场景下所有单词，调批量编译生成连环画。"""
+    body = await _safe_json(request)
+    panel_count = _clamp_int(body.get("panel_count", 4), 3, 8, 4)
+    theme_hint = str(body.get("theme_hint", "") or "")
+    image_model = _resolve_image_model(body.get("image_model"))
+    art_style = body.get("art_style", "")  # 可选画风，空=不指定
+    return await _consume_result(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style))
+
+
+@router.post("/api/scenes/{scene_id}/compile-stream")
+async def compile_scene_stream(scene_id: int, request: Request):
+    """场景批量编译（SSE 流式）：逐步推送实际调用的模型与状态。"""
+    body = await _safe_json(request)
+    panel_count = _clamp_int(body.get("panel_count", 4), 3, 8, 4)
+    theme_hint = str(body.get("theme_hint", "") or "")
+    image_model = _resolve_image_model(body.get("image_model"))
+    art_style = body.get("art_style", "")  # 可选画风，空=不指定
+    return StreamingResponse(
+        _sse_stream(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style)),
+        media_type="text/event-stream",
+    )

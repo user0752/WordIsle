@@ -1017,6 +1017,16 @@
   .gen-progress .el-step__title { font-size: 13px; }
   .gen-progress .el-step__head.is-process { color: var(--accent); border-color: var(--accent); }
   .gen-progress .el-step__title.is-process { color: var(--accent); font-weight: 500; }
+  .gen-progress-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+  .gen-step { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
+  .gen-step-status { flex: 0 0 auto; min-width: 44px; text-align: center; font-size: 12px; padding: 1px 6px; border-radius: 10px; }
+  .gen-step-status.is-running { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); animation: pulse 1.2s infinite; }
+  .gen-step-status.is-ok { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+  .gen-step-status.is-failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .gen-step-status.is-pending { color: var(--text-tertiary); background: var(--bg-surface); }
+  .gen-step-label { font-weight: 500; }
+  .gen-step-msg { color: var(--danger); font-size: 12px; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
   /* 图片 shimmer 骨架（加载中占位，避免空白闪跳） */
   .single-image-wrap, .panel-image-wrap, .recent-item-cover, .story-card-cover {
@@ -1394,9 +1404,18 @@
 
           <!-- 生成进度指示 -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <el-steps :active="genProgress.current" align-center finish-status="success" process-status="process">
-              <el-step v-for="(s, i) in genProgress.steps" :key="i" :title="s"></el-step>
-            </el-steps>
+            <div class="gen-progress-title">生成进度</div>
+            <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+              <span class="gen-step-status" :class="'is-'+s.status">
+                {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+              </span>
+              <span class="gen-step-label">{{ s.label }}</span>
+              <el-tag v-if="s.model" size="small" class="ml-sm"
+                      :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
+                {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
+              </el-tag>
+              <span v-if="s.status==='failed' && s.message" class="gen-step-msg">{{ s.message }}</span>
+            </div>
           </el-card>
 
           <!-- 单点深耕结果卡片 -->
@@ -1585,9 +1604,18 @@
 
           <!-- 生成进度指示 -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <el-steps :active="genProgress.current" align-center finish-status="success" process-status="process">
-              <el-step v-for="(s, i) in genProgress.steps" :key="i" :title="s"></el-step>
-            </el-steps>
+            <div class="gen-progress-title">生成进度</div>
+            <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+              <span class="gen-step-status" :class="'is-'+s.status">
+                {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+              </span>
+              <span class="gen-step-label">{{ s.label }}</span>
+              <el-tag v-if="s.model" size="small" class="ml-sm"
+                      :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
+                {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
+              </el-tag>
+              <span v-if="s.status==='failed' && s.message" class="gen-step-msg">{{ s.message }}</span>
+            </div>
           </el-card>
         </div>
 
@@ -1687,9 +1715,18 @@
 
           <!-- 生成进度指示 -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <el-steps :active="genProgress.current" align-center finish-status="success" process-status="process">
-              <el-step v-for="(s, i) in genProgress.steps" :key="i" :title="s"></el-step>
-            </el-steps>
+            <div class="gen-progress-title">生成进度</div>
+            <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+              <span class="gen-step-status" :class="'is-'+s.status">
+                {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+              </span>
+              <span class="gen-step-label">{{ s.label }}</span>
+              <el-tag v-if="s.model" size="small" class="ml-sm"
+                      :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
+                {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
+              </el-tag>
+              <span v-if="s.status==='failed' && s.message" class="gen-step-msg">{{ s.message }}</span>
+            </div>
           </el-card>
 
           <!-- 视频编译结果 -->
@@ -2541,22 +2578,25 @@ const app = createApp({
     const currentPage = ref('home')
     const dailyUsage = ref({ai:0, tts:0, image:0, ai_limit:20, tts_limit:50, image_limit:50})
 
-    // 生成进度指示（同步接口的模拟多步进度）
-    const genProgress = ref({ visible:false, steps:[], current:0 })
-    let genProgressTimer = null
-    function startGenProgress(steps) {
-      genProgress.value = { visible:true, steps, current:0 }
-      clearInterval(genProgressTimer)
-      genProgressTimer = setInterval(() => {
-        if (genProgress.value.current < genProgress.value.steps.length - 1) {
-          genProgress.value.current += 1
-        }
-      }, 2600)
+    // 生成进度（SSE 流式：展示每步实际调用的模型与状态）
+    // steps: [{ key, label, model, provider, status, message }]
+    const genProgress = ref({ visible:false, steps:[], active:0 })
+    function startGenProgress() {
+      genProgress.value = { visible:true, steps:[], active:0 }
     }
     function stopGenProgress() {
-      clearInterval(genProgressTimer)
-      genProgressTimer = null
       genProgress.value.visible = false
+    }
+    function applyGenStep(s) {
+      const idx = genProgress.value.steps.findIndex(x => x.key === s.step)
+      const item = {
+        key: s.step, label: s.label || s.step,
+        model: s.model || '', provider: s.provider || '',
+        status: s.status || 'running', message: s.message || '',
+      }
+      if (idx >= 0) genProgress.value.steps[idx] = item
+      else genProgress.value.steps.push(item)
+      if (item.status === 'running') genProgress.value.active = genProgress.value.steps.indexOf(item)
     }
 
     // AI 结果反馈（👍/👎）
@@ -2606,9 +2646,7 @@ const app = createApp({
       try {
         const res = await api('/api/image-models')
         imageModels.value = res.models || []
-        if (imageModels.value.length && !imageModels.value.find(m => m.value === compileForm.image_model)) {
-          compileForm.image_model = imageModels.value[0].value
-        }
+        // 不自动填充默认模型：用户必须显式选择，避免误走非预期（尤其付费）模型
       } catch(e) { /* silent */ }
     }
 
@@ -2661,8 +2699,8 @@ const app = createApp({
     // 编译
     const compileWords = ref([])
     const compileForm = reactive({
-      style:'absurd', panel_count:4, theme_hint:'', image_model:'wan2.7-image', art_style:'',
-      generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
+      style:'absurd', panel_count:4, theme_hint:'', image_model:'', art_style:'',
+      generate_audio:true, tts_model:'cosyvoice-v3-flash',
     })
     const compiling = ref(false)
 
@@ -2678,8 +2716,8 @@ const app = createApp({
 
     // 单点深耕
     const singleForm = reactive({
-      word:'', theme_hint:'', image_model:'wan2.7-image',
-      art_style:'comic', generate_audio:true, tts_model:'qwen-audio-3.0-tts-plus',
+      word:'', theme_hint:'', image_model:'',
+      art_style:'comic', generate_audio:true, tts_model:'cosyvoice-v3-flash',
     })
 
     // 单点深耕可配置画风
@@ -2858,6 +2896,50 @@ const app = createApp({
       return resp.json()
     }
 
+    // SSE 流式请求（POST）：逐步回调 step 事件，最终回调 result 事件并返回其结果。
+    // 用 fetch + ReadableStream 解析，因为 EventSource 不支持 POST。
+    async function apiStream(url, opts={}, { onStep, onResult } = {}) {
+      const resp = await fetch(url, {
+        ...opts,
+        headers:{'Content-Type':'application/json',...(opts.headers||{})},
+      })
+      if (!resp.ok) {
+        let msg = '请求失败'
+        try {
+          const err = await resp.json()
+          if (typeof err.detail === 'string') msg = err.detail
+          else if (err.detail && typeof err.detail === 'object') msg = (err.detail.message) || JSON.stringify(err.detail)
+          else if (err.message) msg = err.message
+        } catch(_) { /* ignore */ }
+        throw new Error(msg)
+      }
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let result = null
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const raw = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          let event = 'message', data = ''
+          for (const line of raw.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim()
+            else if (line.startsWith('data:')) data += line.slice(5).trim()
+          }
+          if (!data) continue
+          let payload
+          try { payload = JSON.parse(data) } catch(_) { continue }
+          if (event === 'step' && onStep) onStep(payload)
+          else if (event === 'result') { result = payload; if (onResult) onResult(payload) }
+        }
+      }
+      return result
+    }
+
     // ====== 单词库 ======
     async function loadWords() {
       wordsLoading.value = true
@@ -2965,10 +3047,10 @@ const app = createApp({
       if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       compiling.value = true
-      startGenProgress(['剧情生成', `分镜图片 ×${(compileForm.style==='absurd'||compileForm.style==='conflict') ? 3 : compileForm.panel_count}`, '音频合成'])
+      startGenProgress()
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
-        const res = await api('/api/generate', {method:'POST', body:JSON.stringify({
+        const res = await apiStream('/api/generate-stream', {method:'POST', body:JSON.stringify({
           words,
           style: compileForm.style,
           panel_count: compileForm.panel_count,
@@ -2977,10 +3059,10 @@ const app = createApp({
           art_style: compileForm.art_style,
           generate_audio_immediately: compileForm.generate_audio,
           tts_model: compileForm.tts_model,
-        })})
-        ElementPlus.ElMessage.success(`编译完成${res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
+        })}, { onStep: applyGenStep })
+        ElementPlus.ElMessage.success(`编译完成${res && res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
         resultData.value = res
-        regenerateTtsModel.value = res.tts_model || compileForm.tts_model
+        regenerateTtsModel.value = (res && res.tts_model) || compileForm.tts_model
         feedbackGiven.value = ''
         currentPage.value = 'result'
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
@@ -2998,17 +3080,17 @@ const app = createApp({
       }
       videoCompiling.value = true
       videoResult.value = null
-      startGenProgress(['脚本生成', '视频生成', '配音合成'])
+      startGenProgress()
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
-        const res = await api('/api/video/generate', {method:'POST', body:JSON.stringify({
+        const res = await apiStream('/api/video/generate-stream', {method:'POST', body:JSON.stringify({
           words,
           theme_hint: videoForm.theme_hint,
           video_model: videoForm.video_model,
           duration: videoForm.duration,
           tts_model: videoForm.tts_model,
           art_style: videoForm.art_style,
-        })})
+        })}, { onStep: applyGenStep })
         ElementPlus.ElMessage.success('视频编译完成')
         videoResult.value = res
         feedbackGiven.value = ''
@@ -3023,17 +3105,17 @@ const app = createApp({
       if (!singleForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       singleCompiling.value = true
       singleResult.value = null
-      startGenProgress(['语义解析', '图片生成', '音频合成'])
+      startGenProgress()
       try {
-        const res = await api('/api/single/compile', {method:'POST', body:JSON.stringify({
+        const res = await apiStream('/api/single/compile-stream', {method:'POST', body:JSON.stringify({
           word,
           theme_hint: singleForm.theme_hint,
           image_model: singleForm.image_model,
           art_style: singleForm.art_style,
           generate_audio_immediately: singleForm.generate_audio,
           tts_model: singleForm.tts_model,
-        })})
-        if (res.image_error) {
+        })}, { onStep: applyGenStep })
+        if (res && res.image_error) {
           ElementPlus.ElMessage.warning(`深耕完成但图片失败：${res.image_error}`)
         } else {
           ElementPlus.ElMessage.success('单点深耕完成')
@@ -3304,10 +3386,7 @@ const app = createApp({
       try {
         const r = await api(`/api/scenes/${id}`)
         sceneDetail.value = r
-        // 重置编译表单的默认模型
-        if (!sceneCompileForm.image_model && imageModels.value.length) {
-          sceneCompileForm.image_model = imageModels.value[0].value
-        }
+        // 不自动填充文生图模型：用户需显式选择，避免误走非预期模型
       } catch (e) {
         ElementPlus.ElMessage.error('加载场景详情失败：' + e.message)
       } finally { sceneDetailLoading.value = false }
@@ -3443,9 +3522,14 @@ const app = createApp({
         ElementPlus.ElMessage.warning('该场景下没有单词')
         return
       }
+      if (!sceneCompileForm.image_model) {
+        ElementPlus.ElMessage.warning('请选择文生图模型')
+        return
+      }
       sceneCompileLoading.value = true
+      startGenProgress()
       try {
-        const r = await api(`/api/scenes/${sceneDetail.value.id}/compile`, {
+        const r = await apiStream(`/api/scenes/${sceneDetail.value.id}/compile-stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3455,15 +3539,15 @@ const app = createApp({
             image_model: sceneCompileForm.image_model,
             art_style: sceneCompileForm.art_style,
           }),
-        })
-        ElementPlus.ElMessage.success(r.message || '编译完成')
+        }, { onStep: applyGenStep })
+        ElementPlus.ElMessage.success((r && r.message) || '编译完成')
         // 跳到结果页查看
-        if (r.gen_id) {
+        if (r && r.gen_id) {
           await viewResult({ id: r.gen_id })
         }
       } catch (e) {
         ElementPlus.ElMessage.error('场景编译失败：' + e.message)
-      } finally { sceneCompileLoading.value = false }
+      } finally { sceneCompileLoading.value = false; stopGenProgress() }
     }
 
     // ====== 菜单 ======

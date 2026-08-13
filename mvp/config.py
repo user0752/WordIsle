@@ -39,6 +39,19 @@ TTS_API_KEY  = os.getenv("TTS_API_KEY", "")
 TTS_VOICE    = os.getenv("TTS_VOICE", "loongandy_v3")
 TTS_MODEL    = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
 
+# 模型 → 默认推荐音色。模型与音色必须同系列，避免不兼容（Qwen 系列用 loongmary/loongeva/loongjohn，
+# CosyVoice 系列用 loongandy/loongbeth/loongemily/loongeric）。切换模型时音色应随之切换。
+TTS_DEFAULT_VOICE = {
+    "qwen-audio-3.0-tts-plus": "loongmary",
+    "cosyvoice-v3-plus":       "loongandy_v3",
+    "cosyvoice-v3-flash":      "loongandy_v3",
+}
+
+
+def default_tts_voice(model: str) -> str:
+    """返回某 TTS 模型的默认音色；未知名则回退到全局默认音色。"""
+    return TTS_DEFAULT_VOICE.get(model, TTS_VOICE)
+
 # ========================================================================
 # 文生图（阿里云百炼，复用 TTS_API_KEY）
 # ========================================================================
