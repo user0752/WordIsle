@@ -510,6 +510,9 @@ async def get_generation(gen_id: str):
         if v:
             narration_zh = v["narration_zh"] or ""
             video_model = v["model"] or video_model
+    feedback = [r["rating"] for r in conn.execute(
+        "SELECT rating FROM feedback WHERE generation_id=?", (gen_id,)
+    ).fetchall()]
     conn.close()
     if not gen:
         raise HTTPException(404, "记录不存在")
@@ -538,7 +541,28 @@ async def get_generation(gen_id: str):
         "has_audio": bool(aud) or bool(gen["video_url"]),
         "tts_model": aud["tts_model"] if aud else None,
         "video_url": gen["video_url"] or "",
+        "feedback": feedback,
     }
+
+
+@router.post("/api/generations/{gen_id}/feedback")
+async def submit_feedback(gen_id: str, req: Request):
+    """记录/取消对某条生成结果的 👍/👎 反馈。"""
+    body = await _safe_json(req)
+    rating = (body.get("rating") or "").strip().lower()
+    conn = get_db()
+    exists = conn.execute("SELECT id FROM generations WHERE id=?", (gen_id,)).fetchone()
+    conn.close()
+    if not exists:
+        raise HTTPException(404, "记录不存在")
+    result = upsert_feedback(gen_id, rating)
+    return {"ok": True, "result": result, "stats": get_feedback_stats()}
+
+
+@router.get("/api/feedback")
+async def get_feedback():
+    """反馈满意度统计（供查看用户对生成结果的满意度）。"""
+    return get_feedback_stats()
 
 
 @router.delete("/api/generations/{gen_id}")

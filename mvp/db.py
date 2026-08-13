@@ -22,6 +22,8 @@ __all__ = [
     "VOICE_PATTERN",
     "_migrate_words_table",
     "SCENES_SEED",
+    "upsert_feedback",
+    "get_feedback_stats",
 ]
 
 # ========================================================================
@@ -178,6 +180,13 @@ def init_db():
             example_zh TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            generation_id TEXT NOT NULL,
+            rating TEXT NOT NULL CHECK (rating IN ('up','down')),
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE (generation_id, rating)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique
             ON audios (generation_id, voice, speed, tts_model);
@@ -911,6 +920,54 @@ def consume_daily_quota(category: str, count: int = 1) -> bool:
         conn.execute(f"UPDATE daily_usage SET {col}={col}+? WHERE day=?", (count, today))
         conn.execute("COMMIT")
         return True
+    finally:
+        conn.close()
+
+
+def upsert_feedback(generation_id: str, rating: str) -> dict:
+    """记录用户对某条生成结果的反馈（up/down）。
+    同一 generation 的同一 rating 幂等：重复点击相同值即取消反馈。
+    返回 {generation_id, rating} 或 None（取消时）。"""
+    if rating not in ("up", "down"):
+        raise HTTPException(400, "feedback rating 只能是 up 或 down")
+    conn = get_db()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM feedback WHERE generation_id=? AND rating=?",
+            (generation_id, rating),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM feedback WHERE generation_id=? AND rating=?",
+                (generation_id, rating),
+            )
+            conn.commit()
+            return None
+        conn.execute(
+            "INSERT OR IGNORE INTO feedback (generation_id, rating) VALUES (?,?)",
+            (generation_id, rating),
+        )
+        conn.commit()
+        return {"generation_id": generation_id, "rating": rating}
+    finally:
+        conn.close()
+
+
+def get_feedback_stats() -> dict:
+    """聚合反馈满意度统计。"""
+    conn = get_db()
+    try:
+        up = conn.execute("SELECT COUNT(*) c FROM feedback WHERE rating='up'").fetchone()["c"]
+        down = conn.execute("SELECT COUNT(*) c FROM feedback WHERE rating='down'").fetchone()["c"]
+        rated = conn.execute("SELECT COUNT(DISTINCT generation_id) c FROM feedback").fetchone()["c"]
+        total = up + down
+        return {
+            "up": up,
+            "down": down,
+            "rated": rated,
+            "total": total,
+            "satisfaction": round(up / total, 4) if total else 0.0,
+        }
     finally:
         conn.close()
 

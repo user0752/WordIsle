@@ -6,7 +6,7 @@
 <title>TOEIC 顽固词深度加工系统</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
 <style>
   /* ================================================
@@ -110,8 +110,8 @@
     font-family: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
     font-weight: 600;
   }
-  .english-body, .panel-sentence-en, .single-sentence-en {
-    font-family: 'Playfair Display', Georgia, 'Noto Serif SC', 'Songti SC', serif;
+  .english-body, .panel-sentence-en, .single-sentence-en, .single-collocation .phrase-en, .polysemy-card .meaning-en {
+    font-family: 'Source Serif 4', 'Noto Serif SC', Georgia, 'Songti SC', serif;
   }
 
   /* ===== 滚动条 — 极细书签 ===== */
@@ -605,7 +605,7 @@
   /* ===== 正文排版 ===== */
   .english-body {
     white-space: pre-wrap; line-height: 2.2; font-size: 15px; color: var(--text-primary);
-    font-family: 'Georgia', 'Noto Serif SC', 'Songti SC', serif;
+    font-family: 'Source Serif 4', 'Noto Serif SC', Georgia, 'Songti SC', serif;
     letter-spacing: 0.02em;
   }
   .chinese-body {
@@ -946,7 +946,7 @@
   .panel-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
   .panel-sentence-en {
     font-size: 16px; line-height: 1.8; color: var(--text-primary);
-    font-family: 'Georgia', 'Noto Serif SC', 'Songti SC', serif;
+    font-family: 'Source Serif 4', 'Noto Serif SC', Georgia, 'Songti SC', serif;
   }
   .panel-sentence-zh { font-size: 14px; color: var(--text-secondary); line-height: 1.6; }
   .panel-words { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -971,14 +971,76 @@
   .single-image { width: 100%; height: auto; display: block; }
   .single-section { padding: 14px 0; border-top: 1px dashed var(--border-light, #e5e5e7); }
   .single-section:first-of-type { border-top: none; }
-  .single-section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; flex-wrap: wrap; }
+  .single-section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .single-section-title .el-icon, .card-title .el-icon { color: var(--accent); font-size: 15px; }
   .single-collocation .phrase-en { font-size: 18px; font-weight: 600; color: var(--accent); }
   .single-collocation .phrase-zh { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
-  .single-sentence-en { font-size: 16px; line-height: 1.6; color: var(--text-primary); font-weight: 500; }
+  .single-sentence-en { font-size: 16px; line-height: 1.8; color: var(--text-primary); font-weight: 500; font-family: 'Source Serif 4', 'Noto Serif SC', Georgia, serif; }
   .single-sentence-zh { font-size: 14px; line-height: 1.6; color: var(--text-secondary); margin-top: 6px; }
   .single-derivatives { display: flex; flex-wrap: wrap; gap: 8px; }
   .derivative-tag { padding: 8px 12px !important; height: auto !important; line-height: 1.4 !important; }
-  .single-prompt { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; padding: 8px 12px; background: var(--bg-surface); border-radius: 6px; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+  .single-prompt { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; padding: 8px 12px; background: var(--bg-surface); border-radius: 6px; font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+
+  /* ===== Mono 元数据 ===== */
+  .mono, .panel-index-num, .stat-num, .recent-item-time, .story-card-footer .el-tag,
+  .section-label, .home-card-subtitle, .derivative-tag .pos-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .section-label, .home-card-subtitle { letter-spacing: 0.5px; text-transform: uppercase; }
+
+  /* ===== 交互与无障碍 ===== */
+  a, button, [role="button"], .clickable,
+  .el-button, .el-menu-item, .el-tag, .el-checkbox, .el-radio, .el-switch,
+  .el-select, .el-pagination li, .el-pagination button, .el-dialog__close,
+  .el-table .el-button, .el-link,
+  .recent-item, .scene-card, .story-card, .text-item, .home-card,
+  .single-collocation, .polysemy-card, .story-card-actions .el-button {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* ===== 生成流程增强 ===== */
+  .gen-progress .el-steps { padding: 6px 0; }
+  .gen-progress .el-step__title { font-size: 13px; }
+  .gen-progress .el-step__head.is-process { color: var(--accent); border-color: var(--accent); }
+  .gen-progress .el-step__title.is-process { color: var(--accent); font-weight: 500; }
+
+  /* 图片 shimmer 骨架（加载中占位，避免空白闪跳） */
+  .single-image-wrap, .panel-image-wrap, .recent-item-cover, .story-card-cover {
+    background: linear-gradient(100deg, var(--bg-surface) 40%, #fafbfc 50%, var(--bg-surface) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  .single-image-wrap { aspect-ratio: 4 / 3; min-height: 240px; }
+  .single-image { width: 100%; height: 100%; object-fit: contain; }
+
+  /* AI 结果反馈条 */
+  .feedback-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 0; border-top: 1px dashed var(--border-light, #e5e5e7);
+    margin-top: 12px;
+  }
+  .feedback-label { font-size: 12px; color: var(--text-tertiary); margin-right: 4px; white-space: nowrap; }
+
+  /* 反馈满意度统计条 */
+  .feedback-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .feedback-stats-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .feedback-satisfaction { font-size: 13px; font-weight: 600; color: var(--accent); margin-left: 12px; }
+  .feedback-stats-meta { font-size: 12px; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -1330,6 +1392,13 @@
             </el-form>
           </el-card>
 
+          <!-- 生成进度指示 -->
+          <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
+            <el-steps :active="genProgress.current" align-center finish-status="success" process-status="process">
+              <el-step v-for="(s, i) in genProgress.steps" :key="i" :title="s"></el-step>
+            </el-steps>
+          </el-card>
+
           <!-- 单点深耕结果卡片 -->
           <el-card v-if="singleResult" shadow="never">
             <template #header>
@@ -1356,7 +1425,7 @@
 
             <!-- 词伙搭配 -->
             <div v-if="singleResult.collocation && singleResult.collocation.phrase_en" class="single-section">
-              <div class="single-section-title">📝 词伙搭配</div>
+              <div class="single-section-title"><el-icon><EditPen /></el-icon> 词伙搭配</div>
               <div class="single-collocation">
                 <span class="phrase-en">{{ singleResult.collocation.phrase_en }}</span>
                 <el-tag size="small" type="info" class="ml-sm">{{ singleResult.collocation.collocation_type }}</el-tag>
@@ -1366,7 +1435,7 @@
 
             <!-- 场景句中英 -->
             <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en" class="single-section">
-              <div class="single-section-title">💬 荒诞场景句
+              <div class="single-section-title"><el-icon><ChatDotRound /></el-icon> 荒诞场景句
                 <el-tag v-if="singleResult.scene_sentence.mood" size="small" class="ml-sm" type="warning">{{ singleResult.scene_sentence.mood }}</el-tag>
               </div>
               <div class="single-sentence-en">{{ singleResult.scene_sentence.en }}</div>
@@ -1375,11 +1444,11 @@
 
             <!-- 派生词族 -->
             <div v-if="singleResult.derivatives && singleResult.derivatives.length" class="single-section">
-              <div class="single-section-title">🌳 派生词族</div>
+              <div class="single-section-title"><el-icon><Share /></el-icon> 派生词族</div>
               <div class="single-derivatives">
                 <el-tag v-for="d in singleResult.derivatives" :key="d.word" class="derivative-tag" effect="plain">
                   <span style="font-weight:600">{{ d.word }}</span>
-                  <span style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
+                  <span class="pos-mono" style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
                   <span>{{ d.meaning_zh }}</span>
                 </el-tag>
               </div>
@@ -1387,11 +1456,17 @@
 
             <!-- Image prompt 用于参考 -->
             <div v-if="singleResult.image_prompt" class="single-section">
-              <div class="single-section-title text-secondary" style="font-size:12px">🎨 图像 Prompt（参考）</div>
+              <div class="single-section-title text-secondary" style="font-size:12px"><el-icon><Brush /></el-icon> 图像 Prompt（参考）</div>
               <div class="single-prompt">{{ singleResult.image_prompt }}</div>
             </div>
 
             <div v-if="singleResult.audio_error" class="text-secondary mt-md" style="font-size:12px;color:var(--danger)">{{ singleResult.audio_error }}</div>
+
+            <div class="feedback-bar">
+              <span class="feedback-label">这个结果有帮助吗</span>
+              <el-button size="small" :type="feedbackGiven==='up'?'success':'default'" :icon="ThumbsUp" circle title="有帮助" @click="giveFeedback('up')"></el-button>
+              <el-button size="small" :type="feedbackGiven==='down'?'danger':'default'" :icon="ThumbsDown" circle title="需改进" @click="giveFeedback('down')"></el-button>
+            </div>
           </el-card>
         </div>
 
@@ -1507,6 +1582,13 @@
               </el-form-item>
             </el-form>
           </el-card>
+
+          <!-- 生成进度指示 -->
+          <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
+            <el-steps :active="genProgress.current" align-center finish-status="success" process-status="process">
+              <el-step v-for="(s, i) in genProgress.steps" :key="i" :title="s"></el-step>
+            </el-steps>
+          </el-card>
         </div>
 
         <!-- 视频编译 -->
@@ -1602,11 +1684,19 @@
               </el-form-item>
             </el-form>
           </el-card>
+
+          <!-- 生成进度指示 -->
+          <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
+            <el-steps :active="genProgress.current" align-center finish-status="success" process-status="process">
+              <el-step v-for="(s, i) in genProgress.steps" :key="i" :title="s"></el-step>
+            </el-steps>
+          </el-card>
+
           <!-- 视频编译结果 -->
           <el-card v-if="videoResult" shadow="never" class="mt-md">
             <template #header>
               <div class="flex-between">
-                <span class="card-title">🎬 {{ videoResult.story_title || '视频编译结果' }}</span>
+                <span class="card-title"><el-icon><Film /></el-icon> {{ videoResult.story_title || '视频编译结果' }}</span>
                 <div class="flex gap-sm">
                   <el-tag size="small" type="info" effect="plain">{{ getVideoModelLabel(videoResult.video_model) }}</el-tag>
                   <el-tag size="small">{{ videoResult.duration }} 秒</el-tag>
@@ -1624,6 +1714,11 @@
               <p class="text-secondary"><strong>旁白 (EN)：</strong>{{ videoResult.narration_en }}</p>
               <p class="text-secondary"><strong>旁白 (中)：</strong>{{ videoResult.narration_zh }}</p>
               <p class="text-secondary" style="font-size:12px;color:var(--text-tertiary)"><strong>画面提示词：</strong>{{ videoResult.video_prompt }}</p>
+            </div>
+            <div class="feedback-bar">
+              <span class="feedback-label">这个结果有帮助吗</span>
+              <el-button size="small" :type="feedbackGiven==='up'?'success':'default'" :icon="ThumbsUp" circle title="有帮助" @click="giveFeedback('up')"></el-button>
+              <el-button size="small" :type="feedbackGiven==='down'?'danger':'default'" :icon="ThumbsDown" circle title="需改进" @click="giveFeedback('down')"></el-button>
             </div>
           </el-card>
         </div>
@@ -1663,7 +1758,7 @@
             <el-card v-if="sceneSuggestions.length" shadow="never" class="mb-md" header-color="var(--success)">
               <template #header>
                 <div class="flex-between">
-                  <span class="card-title">✨ 新场景建议（待采纳 {{ sceneSuggestions.length }} 个）</span>
+                  <span class="card-title"><el-icon><MagicStick /></el-icon> 新场景建议（待采纳 {{ sceneSuggestions.length }} 个）</span>
                   <el-button link type="primary" @click="sceneSuggestions=[]">清空建议</el-button>
                 </div>
               </template>
@@ -1693,7 +1788,7 @@
             <el-card shadow="never">
               <template #header>
                 <div class="flex-between">
-                  <span class="card-title">📚 已有场景（{{ scenes.length }}）</span>
+                  <span class="card-title"><el-icon><Collection /></el-icon> 已有场景（{{ scenes.length }}）</span>
                   <el-button link type="primary" :icon="Refresh" @click="loadScenes">刷新</el-button>
                 </div>
               </template>
@@ -1766,7 +1861,7 @@
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">🎬 场景批量编译</span>
+                    <span class="card-title"><el-icon><Film /></el-icon> 场景批量编译</span>
                     <span class="text-secondary" style="font-size:12px">将该场景下 {{ sceneDetail.words?.length || 0 }} 个单词一次性生成连环画</span>
                   </div>
                 </template>
@@ -1794,7 +1889,7 @@
               <el-card shadow="never">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">📖 单词列表（{{ sceneDetail.words?.length || 0 }}）</span>
+                    <span class="card-title"><el-icon><Notebook /></el-icon> 单词列表（{{ sceneDetail.words?.length || 0 }}）</span>
                     <el-button link type="primary" @click="openSceneEdit">添加/移除单词</el-button>
                   </div>
                 </template>
@@ -1814,7 +1909,7 @@
               <el-card shadow="never" class="mt-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">🔗 词伙搭配（{{ sceneDetail.collocations?.length || 0 }}）</span>
+                    <span class="card-title"><el-icon><Connection /></el-icon> 词伙搭配（{{ sceneDetail.collocations?.length || 0 }}）</span>
                     <span class="text-secondary" style="font-size:12px">运行「增量检测」或「全量重扫」自动刷新</span>
                   </div>
                 </template>
@@ -1891,6 +1986,17 @@
               </el-select>
               <el-button :icon="Refresh" @click="loadHistory">刷新</el-button>
               <span v-if="historyTotal>0" class="text-secondary history-total">共 {{ historyTotal }} 条记录</span>
+            </div>
+          </el-card>
+
+          <!-- 反馈满意度 -->
+          <el-card v-if="feedbackStats" shadow="never" class="mb-md">
+            <div class="feedback-stats">
+              <span class="feedback-stats-label">反馈满意度</span>
+              <el-tag type="success" effect="plain" class="ml-sm">{{ feedbackStats.up }} 👍</el-tag>
+              <el-tag type="danger" effect="plain" class="ml-sm">{{ feedbackStats.down }} 👎</el-tag>
+              <span class="feedback-satisfaction">满意度 {{ Math.round(feedbackStats.satisfaction * 100) }}%</span>
+              <span class="text-secondary feedback-stats-meta">（{{ feedbackStats.rated }} 条已反馈）</span>
             </div>
           </el-card>
           <el-card shadow="never" v-loading="historyLoading">
@@ -2139,7 +2245,7 @@
 
                 <!-- 词伙搭配 -->
                 <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].collocation && (resultData.panels||[])[0].collocation.phrase_en" class="single-section">
-                  <div class="single-section-title">📝 词伙搭配</div>
+                  <div class="single-section-title"><el-icon><EditPen /></el-icon> 词伙搭配</div>
                   <div class="single-collocation">
                     <span class="phrase-en">{{ (resultData.panels||[])[0].collocation.phrase_en }}</span>
                     <el-tag size="small" type="info" class="ml-sm">{{ (resultData.panels||[])[0].collocation.collocation_type }}</el-tag>
@@ -2149,7 +2255,7 @@
 
                 <!-- 场景句中英 -->
                 <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].scene_sentence && (resultData.panels||[])[0].scene_sentence.en" class="single-section">
-                  <div class="single-section-title">💬 荒诞场景句
+                  <div class="single-section-title"><el-icon><ChatDotRound /></el-icon> 荒诞场景句
                     <el-tag v-if="(resultData.panels||[])[0].scene_sentence.mood" size="small" class="ml-sm" type="warning">{{ (resultData.panels||[])[0].scene_sentence.mood }}</el-tag>
                   </div>
                   <div class="single-sentence-en">{{ (resultData.panels||[])[0].scene_sentence.en }}</div>
@@ -2158,11 +2264,11 @@
 
                 <!-- 派生词族 -->
                 <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].derivatives && (resultData.panels||[])[0].derivatives.length" class="single-section">
-                  <div class="single-section-title">🌳 派生词族</div>
+                  <div class="single-section-title"><el-icon><Share /></el-icon> 派生词族</div>
                   <div class="single-derivatives">
                     <el-tag v-for="d in (resultData.panels||[])[0].derivatives" :key="d.word" class="derivative-tag" effect="plain">
                       <span style="font-weight:600">{{ d.word }}</span>
-                      <span style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
+                      <span class="pos-mono" style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
                       <span>{{ d.meaning_zh }}</span>
                     </el-tag>
                   </div>
@@ -2170,7 +2276,7 @@
 
                 <!-- Image prompt -->
                 <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].image_prompt" class="single-section">
-                  <div class="single-section-title text-secondary" style="font-size:12px">🎨 图像 Prompt（参考）</div>
+                  <div class="single-section-title text-secondary" style="font-size:12px"><el-icon><Brush /></el-icon> 图像 Prompt（参考）</div>
                   <div class="single-prompt">{{ (resultData.panels||[])[0].image_prompt }}</div>
                 </div>
               </el-card>
@@ -2215,6 +2321,11 @@
                 <el-button :type="resultData.is_favorited?'warning':'default'" :icon="resultData.is_favorited?StarFilled:Star" @click="toggleFavorite">{{ resultData.is_favorited?'已收藏':'收藏' }}</el-button>
                 <el-button type="danger" :icon="Delete" @click="deleteCurrentResult">删除本条记录</el-button>
               </div>
+              <div class="feedback-bar">
+                <span class="feedback-label">这个结果有帮助吗</span>
+                <el-button size="small" :type="feedbackGiven==='up'?'success':'default'" :icon="ThumbsUp" circle title="有帮助" @click="giveFeedback('up')"></el-button>
+                <el-button size="small" :type="feedbackGiven==='down'?'danger':'default'" :icon="ThumbsDown" circle title="需改进" @click="giveFeedback('down')"></el-button>
+              </div>
             </el-card>
             </template>
 
@@ -2223,7 +2334,7 @@
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">🎬 {{ resultData.story_title || '视频编译结果' }}</span>
+                    <span class="card-title"><el-icon><Film /></el-icon> {{ resultData.story_title || '视频编译结果' }}</span>
                     <div class="flex gap-sm">
                       <el-tag size="small" type="info">{{ resultData.image_model || resultData.video_model }}</el-tag>
                       <el-tag v-if="resultData.has_audio" size="small" type="success">已配音</el-tag>
@@ -2253,6 +2364,11 @@
                 <div class="action-buttons">
                   <el-button :type="resultData.is_favorited?'warning':'default'" :icon="resultData.is_favorited?StarFilled:Star" @click="toggleFavorite">{{ resultData.is_favorited?'已收藏':'收藏' }}</el-button>
                   <el-button type="danger" :icon="Delete" @click="deleteCurrentResult">删除本条记录</el-button>
+                </div>
+                <div class="feedback-bar">
+                  <span class="feedback-label">这个结果有帮助吗</span>
+                  <el-button size="small" :type="feedbackGiven==='up'?'success':'default'" :icon="ThumbsUp" circle title="有帮助" @click="giveFeedback('up')"></el-button>
+                  <el-button size="small" :type="feedbackGiven==='down'?'danger':'default'" :icon="ThumbsDown" circle title="需改进" @click="giveFeedback('down')"></el-button>
                 </div>
               </el-card>
             </template>
@@ -2364,6 +2480,11 @@
                 <el-button :type="resultData.is_favorited?'warning':'default'" :icon="resultData.is_favorited?StarFilled:Star" @click="toggleFavorite">{{ resultData.is_favorited?'已收藏':'收藏' }}</el-button>
                 <el-button type="danger" :icon="Delete" @click="deleteCurrentResult">删除本条记录</el-button>
               </div>
+              <div class="feedback-bar">
+                <span class="feedback-label">这个结果有帮助吗</span>
+                <el-button size="small" :type="feedbackGiven==='up'?'success':'default'" :icon="ThumbsUp" circle title="有帮助" @click="giveFeedback('up')"></el-button>
+                <el-button size="small" :type="feedbackGiven==='down'?'danger':'default'" :icon="ThumbsDown" circle title="需改进" @click="giveFeedback('down')"></el-button>
+              </div>
             </el-card>
             </template>
           </template>
@@ -2397,8 +2518,18 @@
 <script src="https://unpkg.com/element-plus"></script>
 <script src="https://unpkg.com/@element-plus/icons-vue"></script>
 <script>
-const {createApp, ref, reactive, computed, watch, nextTick, onMounted} = Vue
+const {createApp, ref, reactive, computed, watch, nextTick, onMounted, h} = Vue
 const ElIcons = ElementPlusIconsVue
+
+// 内联 SVG 点赞/踩图标（CDN 无 ThumbsUp/ThumbsDown，用内联保证显示）
+const ThumbsUp = {
+  name: 'ThumbsUp',
+  render() { return h('svg', { viewBox: '0 0 24 24', width: '1em', height: '1em', fill: 'currentColor', 'aria-hidden': 'true' }, [h('path', { d: 'M1 21h4V9H1v12zM23 10c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-1z' })]) }
+}
+const ThumbsDown = {
+  name: 'ThumbsDown',
+  render() { return h('svg', { viewBox: '0 0 24 24', width: '1em', height: '1em', fill: 'currentColor', 'aria-hidden': 'true' }, [h('path', { d: 'M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v1c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.58-6.59c.37-.36.59-.86.59-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z' })]) }
+}
 
 const app = createApp({
   setup() {
@@ -2409,6 +2540,50 @@ const app = createApp({
 
     const currentPage = ref('home')
     const dailyUsage = ref({ai:0, tts:0, image:0, ai_limit:20, tts_limit:50, image_limit:50})
+
+    // 生成进度指示（同步接口的模拟多步进度）
+    const genProgress = ref({ visible:false, steps:[], current:0 })
+    let genProgressTimer = null
+    function startGenProgress(steps) {
+      genProgress.value = { visible:true, steps, current:0 }
+      clearInterval(genProgressTimer)
+      genProgressTimer = setInterval(() => {
+        if (genProgress.value.current < genProgress.value.steps.length - 1) {
+          genProgress.value.current += 1
+        }
+      }, 2600)
+    }
+    function stopGenProgress() {
+      clearInterval(genProgressTimer)
+      genProgressTimer = null
+      genProgress.value.visible = false
+    }
+
+    // AI 结果反馈（👍/👎）
+    const feedbackGiven = ref('')
+    function giveFeedback(v) {
+      // 从当前结果获取 generation_id
+      let genId = ''
+      if (resultData.value) genId = resultData.value.id
+      else if (singleResult.value) genId = singleResult.value.id
+      else if (videoResult.value) genId = videoResult.value.id
+      if (!genId) { ElementPlus.ElMessage.warning('无相关生成记录'); return }
+
+      api(`/api/generations/${genId}/feedback`, {
+        method: 'POST',
+        body: JSON.stringify({ rating: v }),
+      }).then(res => {
+        if (res.result === null) {
+          feedbackGiven.value = ''
+          ElementPlus.ElMessage.info('已取消反馈')
+        } else {
+          feedbackGiven.value = v
+          if (v === 'up') ElementPlus.ElMessage.success('感谢反馈，将保持该方向')
+          else ElementPlus.ElMessage.info('已记录，后续将优化生成')
+        }
+        loadFeedbackStats()
+      }).catch(e => ElementPlus.ElMessage.error(e.message))
+    }
 
     // 常量
     const TTS_MODELS = [
@@ -2509,7 +2684,7 @@ const app = createApp({
 
     // 单点深耕可配置画风
     const artStyleOptions = [
-      { value:'auto',      label:'🧠 自动(Auto)',    extra:'LLM 按单词与语义自动选最利于记忆的画风' },
+      { value:'auto',      label:'自动 (Auto)',    extra:'LLM 按单词与语义自动选最利于记忆的画风' },
       { value:'comic',     label:'漫画 · 扁平插画', extra:'默认 · 夸张失衡，适合双义碰撞' },
       { value:'realistic', label:'写实',            extra:'真实光影，适合人像/产品' },
       { value:'3d',        label:'3D 渲染',         extra:'Pixar 风格，圆润可爱' },
@@ -2552,6 +2727,7 @@ const app = createApp({
     const historyLoading = ref(false)
     const historySearch = ref('')
     const historyFilter = ref('all')
+    const feedbackStats = ref(null)
 
     // 首页最近生成
     const recentItems = ref([])
@@ -2789,6 +2965,7 @@ const app = createApp({
       if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       compiling.value = true
+      startGenProgress(['剧情生成', `分镜图片 ×${(compileForm.style==='absurd'||compileForm.style==='conflict') ? 3 : compileForm.panel_count}`, '音频合成'])
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
         const res = await api('/api/generate', {method:'POST', body:JSON.stringify({
@@ -2804,9 +2981,10 @@ const app = createApp({
         ElementPlus.ElMessage.success(`编译完成${res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
         resultData.value = res
         regenerateTtsModel.value = res.tts_model || compileForm.tts_model
+        feedbackGiven.value = ''
         currentPage.value = 'result'
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
-      finally { compiling.value = false }
+      finally { compiling.value = false; stopGenProgress() }
     }
 
     // ====== 视频编译 ======
@@ -2820,6 +2998,7 @@ const app = createApp({
       }
       videoCompiling.value = true
       videoResult.value = null
+      startGenProgress(['脚本生成', '视频生成', '配音合成'])
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
         const res = await api('/api/video/generate', {method:'POST', body:JSON.stringify({
@@ -2832,8 +3011,9 @@ const app = createApp({
         })})
         ElementPlus.ElMessage.success('视频编译完成')
         videoResult.value = res
+        feedbackGiven.value = ''
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
-      finally { videoCompiling.value = false }
+      finally { videoCompiling.value = false; stopGenProgress() }
     }
 
     // ====== 单点深耕 ======
@@ -2843,6 +3023,7 @@ const app = createApp({
       if (!singleForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       singleCompiling.value = true
       singleResult.value = null
+      startGenProgress(['语义解析', '图片生成', '音频合成'])
       try {
         const res = await api('/api/single/compile', {method:'POST', body:JSON.stringify({
           word,
@@ -2858,8 +3039,9 @@ const app = createApp({
           ElementPlus.ElMessage.success('单点深耕完成')
         }
         singleResult.value = res
+        feedbackGiven.value = ''
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
-      finally { singleCompiling.value = false }
+      finally { singleCompiling.value = false; stopGenProgress() }
     }
 
     async function regenerateSingleAudio() {
@@ -2905,8 +3087,13 @@ const app = createApp({
         const textsRes = await api(url)
         historyData.value = textsRes.items
         historyTotal.value = textsRes.total
+        loadFeedbackStats()
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
       finally { historyLoading.value = false }
+    }
+    async function loadFeedbackStats() {
+      try { feedbackStats.value = await api('/api/feedback') }
+      catch(e) { feedbackStats.value = null }
     }
     function onHistoryFilterChange() {
       historyPage.value = 1
@@ -2941,6 +3128,7 @@ const app = createApp({
         const res = await api(`/api/generations/${h.id}`)
         resultData.value = res
         regenerateTtsModel.value = res.tts_model || 'qwen-audio-3.0-tts-plus'
+        feedbackGiven.value = (res.feedback||[]).includes('up') ? 'up' : ((res.feedback||[]).includes('down') ? 'down' : '')
       } catch(e) {
         ElementPlus.ElMessage.error(e.message)
         resultData.value = null
@@ -3351,6 +3539,9 @@ const app = createApp({
 
     return {
       currentPage, dailyUsage,
+      genProgress, feedbackGiven, giveFeedback,
+      ThumbsUp, ThumbsDown,
+      feedbackStats,
       TTS_MODELS, groupedTtsModels, imageModels,
       videoModels, videoForm, selectedVideoModel, getVideoModelNote, getVideoModelLabel,
       videoCompiling, videoResult, videoOnError, handleVideoCompile, loadVideoModels,

@@ -113,7 +113,7 @@ IMAGE_MODELS = [
         "note": "角色一致性多图生成，连环画人物统一；2K分辨率",
         "features": "角色一致性多图生成；连环画人物统一；2K分辨率",
         "scenarios": "多画面连环画、需要同一角色贯穿全程时首选",
-        "endpoint": "t2i",
+        "endpoint": "multimodal",
         "size": "1280*720",
     },
     # ============ 免费档（TokenRhythm 平台免费调用） ============

@@ -525,7 +525,8 @@ def _extract_json(content: str) -> dict:
 
 
 async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE):
-    """调用 DeepSeek 生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。"""
+    """调用 DeepSeek 生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。
+    LLM 偶发返回残缺/非 JSON 响应时自动重试一次，避免直接 500。"""
     if not DEEPSEEK_API_KEY:
         raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
@@ -537,24 +538,44 @@ async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str =
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.85,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
         "response_format": {"type": "json_object"},
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    last_err = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{DEEPSEEK_BASE}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
-    content = data["choices"][0]["message"]["content"]
-    result = _extract_json(content)
+            content = data["choices"][0]["message"]["content"]
+            result = _extract_json(content)
+            break
+        except HTTPException as e:
+            # 仅 JSON 解析类错误值得重试；API key 缺失等直接抛出
+            if "JSON" not in str(e.detail) and "有效 JSON" not in str(e.detail):
+                raise
+            last_err = e
+            await asyncio.sleep(1.0)
+            continue
+        except (httpx.HTTPError, KeyError) as e:
+            if attempt == 0:
+                last_err = e
+                await asyncio.sleep(1.0)
+                continue
+            raise HTTPException(500, f"DeepSeek 调用失败: {e}")
+    else:
+        raise last_err if isinstance(last_err, HTTPException) else HTTPException(
+            500, f"DeepSeek 多次返回非 JSON 响应，请重试")
 
     # 容错：保证关键字段存在
     result.setdefault("word", word)
