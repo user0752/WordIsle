@@ -10,3 +10,5 @@ mvp/data/
 *.log
 mvp/_check.py
 mvp/toeic.db
+.codebuddy/
+design-system/
