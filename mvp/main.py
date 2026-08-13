@@ -48,7 +48,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TOEIC MVP", docs_url=None, redoc_url=None, lifespan=lifespan)
 setup_middleware(app)
 
-# 静态文件：音频 + 图片 + 视频目录
+# 静态文件：前端资源 + 音频 + 图片 + 视频目录
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/audios", StaticFiles(directory=str(AUDIOS_DIR)), name="audios")
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 app.mount("/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
