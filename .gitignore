@@ -13,3 +13,4 @@ mvp/toeic.db
 .codebuddy/
 design-system/
 开发过程文件/
+.playwright-cli/
