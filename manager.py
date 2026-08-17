@@ -340,8 +340,8 @@ def read_env_keys():
     except Exception:
         pass
     return [
+        ("LLM(百炼)", bool(values.get("IMAGE_API_KEY") or values.get("TTS_API_KEY"))),
         ("LLM(DeepSeek)", bool(values.get("DEEPSEEK_API_KEY"))),
-        ("廉价LLM(智谱GLM)", bool(values.get("CHEAP_LLM_API_KEY"))),
         ("TTS", bool(values.get("TTS_API_KEY"))),
         ("文生图(百炼)", bool(values.get("IMAGE_API_KEY") or values.get("TTS_API_KEY"))),
         ("文生图(免费TokenRhythm)", bool(values.get("TOKENRHYTHM_API_KEY"))),
@@ -352,9 +352,9 @@ def read_env_keys():
 def keys_summary(h) -> str:
     """把 /api/health 返回的各模型通道密钥状态汇总成一行（全模型通道）。"""
     if not h:
-        return "LLM:?  廉价LLM:?  TTS:?  图(百炼):?  图(免费):?  视频:?"
+        return "LLM(百炼):?  LLM(DeepSeek):?  TTS:?  图(百炼):?  图(免费):?  视频:?"
     def ck(k): return '✓' if h.get(k) else '✗'
-    return (f"LLM:{ck('deepseek_key')}  廉价LLM:{ck('cheap_llm_key')}  "
+    return (f"LLM(百炼):{ck('bailian_llm_key')}  LLM(DeepSeek):{ck('deepseek_key')}  "
             f"TTS:{ck('tts_key')}  图(百炼):{ck('bailian_image_key')}  "
             f"图(免费):{ck('tokenrhythm_key')}  视频:{ck('video_key')}")
 
@@ -431,7 +431,7 @@ def build_self_check_report(svc) -> list[tuple[str, str]]:
         status(True, "后端 /api/health: 正常", "")
         status(bool(health.get("db")), "数据库: 正常", "数据库: 缺失")
         status(bool(health.get("deepseek_key")), "LLM(DeepSeek): 已配置", "LLM(DeepSeek): 未配置")
-        status(bool(health.get("cheap_llm_key")), "廉价LLM(智谱GLM): 已配置", "廉价LLM(智谱GLM): 未配置")
+        status(bool(health.get("bailian_llm_key")), "LLM(百炼): 已配置", "LLM(百炼): 未配置")
         status(bool(health.get("tts_key")), "TTS: 已配置", "TTS: 未配置")
         status(bool(health.get("bailian_image_key")), "文生图(百炼): 已配置", "文生图(百炼): 未配置")
         status(bool(health.get("tokenrhythm_key")), "文生图(免费TokenRhythm): 已配置", "文生图(免费TokenRhythm): 未配置")
@@ -1242,7 +1242,7 @@ def run_cli():
         return (
             f"{int(running)}|{svc.pid or '-'}|{uptime_min}|"
             f"{int(external)}|{int(state['fe'])}|{int(state['be'])}|"
-            f"{int(bool(h.get('deepseek_key')))}|{int(bool(h.get('cheap_llm_key')))}|"
+            f"{int(bool(h.get('deepseek_key')))}|{int(bool(h.get('bailian_llm_key')))}|"
             f"{int(bool(h.get('tts_key')))}|{int(bool(h.get('bailian_image_key')))}|"
             f"{int(bool(h.get('tokenrhythm_key')))}|{int(bool(h.get('video_key')))}"
         )

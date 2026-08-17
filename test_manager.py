@@ -51,7 +51,7 @@ class SelfCheckReportTest(unittest.TestCase):
         self.assertIsInstance(report, list)
         self.assertTrue(report)
         for level, msg in report:
-            self.assertIn(level, ("INFO", "WARNING", "ERROR"))
+            self.assertIn(level, ("GOOD", "BAD", "INFO", "WARNING", "ERROR"))
             self.assertIsInstance(msg, str)
         self.assertIn("Python 解释器", report[0][1])
 
@@ -65,8 +65,10 @@ class SelfCheckReportTest(unittest.TestCase):
                 keys = manager.read_env_keys()
         finally:
             os.unlink(tmp)
-        self.assertEqual(keys[0], ("DeepSeek", True))
-        self.assertEqual(keys[1], ("TTS", False))
+        # 顺序：LLM(百炼) / LLM(DeepSeek) / TTS / ...（智谱廉价模型已移除）
+        self.assertEqual(keys[0], ("LLM(百炼)", False))
+        self.assertEqual(keys[1], ("LLM(DeepSeek)", True))
+        self.assertEqual(keys[2], ("TTS", False))
 
 
 class CliModeTest(unittest.TestCase):

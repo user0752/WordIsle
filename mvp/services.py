@@ -42,6 +42,10 @@ __all__ = [
     "call_video_generation",
     "mux_video_with_audio",
     "_get_video_model_config",
+    "get_route_llm",
+    "route_llm_candidates",
+    "resolve_llm_model",
+    "_chat_completion",
 ]
 
 # ========================================================================
@@ -325,14 +329,12 @@ Output only the JSON object."""
 # ========================================================================
 
 async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = "", style: str = "", collocations: list = None, art_style: str = ""):
-    """调用 DeepSeek API 生成剧情连环画。
+    """调用 LLM（批量编译路由，可切换模型）生成剧情连环画。
+    选定模型调用失败（如限流）时自动降级到默认主模型。
     style: '' 或 'legacy' 走旧版微电影；'absurd' 荒诞三连弹；'conflict' 冲突连环；'scene' 场景编译。
     collocations: 场景编译时传入的已有场景词伙（可选）。
     art_style: 可选画风（comic/realistic/3d/watercolor/pixel），空表示不指定。
     """
-    if not DEEPSEEK_API_KEY:
-        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
-    logger.info("LLM 调用 model=%s style=%s panel_count=%s", DEEPSEEK_MODEL, style, panel_count)
 
     # 根据风格分派 prompt
     if style == "scene":
@@ -354,7 +356,6 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
         effective_panel_count = panel_count
 
     payload = {
-        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -364,17 +365,21 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
         "response_format": {"type": "json_object"},
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    last_err = None
+    for cfg in route_llm_candidates("batch"):
+        if not cfg.get("api_key"):
+            continue
+        logger.info("LLM 调用 model=%s(%s) style=%s panel_count=%s", cfg["model"], cfg["value"], style, panel_count)
+        try:
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+            break
+        except (httpx.HTTPError, KeyError) as e:
+            last_err = e
+            continue
+    else:
+        if last_err is None:
+            raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        raise HTTPException(500, f"LLM 调用失败（已尝试全部候选模型）: {last_err}")
 
     content = data["choices"][0]["message"]["content"]
     result = _extract_json(content)
@@ -535,15 +540,10 @@ def _extract_json(content: str) -> dict:
 
 
 async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE):
-    """调用 DeepSeek 生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。
-    LLM 偶发返回残缺/非 JSON 响应时自动重试一次，避免直接 500。"""
-    if not DEEPSEEK_API_KEY:
-        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
-    logger.info("LLM 单点深耕调用 model=%s word=%s art_style=%s", DEEPSEEK_MODEL, word, art_style)
-
+    """调用 LLM（单点深耕路由，可切换模型）生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。
+    选定模型调用失败（如限流）时自动降级到默认主模型；LLM 偶发返回残缺/非 JSON 响应时自动重试一次。"""
     user_prompt = build_single_user_prompt(word, theme_hint, art_style)
     payload = {
-        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": SINGLE_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -554,39 +554,36 @@ async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str =
     }
 
     last_err = None
-    for attempt in range(2):
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
-                    f"{DEEPSEEK_BASE}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-            content = data["choices"][0]["message"]["content"]
-            result = _extract_json(content)
-            break
-        except HTTPException as e:
-            # 仅 JSON 解析类错误值得重试；API key 缺失等直接抛出
-            if "JSON" not in str(e.detail) and "有效 JSON" not in str(e.detail):
-                raise
-            last_err = e
-            await asyncio.sleep(1.0)
+    result = None
+    for cfg in route_llm_candidates("single"):
+        if not cfg.get("api_key"):
             continue
-        except (httpx.HTTPError, KeyError) as e:
-            if attempt == 0:
+        logger.info("LLM 单点深耕调用 model=%s(%s) word=%s art_style=%s", cfg["model"], cfg["value"], word, art_style)
+        for attempt in range(2):
+            try:
+                data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+                content = data["choices"][0]["message"]["content"]
+                result = _extract_json(content)
+                break  # 本模型成功
+            except HTTPException as e:
+                # 仅 JSON 解析类错误值得重试；API key 缺失等直接抛出
+                if "JSON" not in str(e.detail) and "有效 JSON" not in str(e.detail):
+                    raise
                 last_err = e
                 await asyncio.sleep(1.0)
                 continue
-            raise HTTPException(500, f"DeepSeek 调用失败: {e}")
-    else:
-        raise last_err if isinstance(last_err, HTTPException) else HTTPException(
-            500, f"DeepSeek 多次返回非 JSON 响应，请重试")
+            except (httpx.HTTPError, KeyError) as e:
+                # 模型调用失败（限流/网络等）：记录后尝试下一个候选模型
+                last_err = e
+                break
+        if result is not None:
+            break
+    if result is None:
+        if last_err is None:
+            raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        if isinstance(last_err, HTTPException):
+            raise last_err
+        raise HTTPException(500, f"LLM 调用失败（已尝试全部候选模型）: {last_err}")
 
     # 容错：保证关键字段存在
     result.setdefault("word", word)
@@ -670,12 +667,9 @@ Output only the JSON object."""
 
 
 async def call_video_script(words: list[str], theme_hint: str = "", art_style: str = ""):
-    """调用 DeepSeek 生成视频脚本（旁白 + 视频提示词）。"""
-    if not DEEPSEEK_API_KEY:
-        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
-    logger.info("LLM 视频脚本调用 model=%s words=%s", DEEPSEEK_MODEL, len(words))
+    """调用 LLM（视频脚本路由，可切换模型）生成视频脚本（旁白 + 视频提示词）。
+    选定模型调用失败（如限流）时自动降级到默认主模型。"""
     payload = {
-        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": VIDEO_SYSTEM_PROMPT},
             {"role": "user", "content": build_video_user_prompt(words, theme_hint, art_style)},
@@ -684,17 +678,21 @@ async def call_video_script(words: list[str], theme_hint: str = "", art_style: s
         "max_tokens": 2048,
         "response_format": {"type": "json_object"},
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    last_err = None
+    for cfg in route_llm_candidates("video"):
+        if not cfg.get("api_key"):
+            continue
+        logger.info("LLM 视频脚本调用 model=%s(%s) words=%s", cfg["model"], cfg["value"], len(words))
+        try:
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+            break
+        except (httpx.HTTPError, KeyError) as e:
+            last_err = e
+            continue
+    else:
+        if last_err is None:
+            raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        raise HTTPException(500, f"LLM 视频脚本调用失败（已尝试全部候选模型）: {last_err}")
     content = data["choices"][0]["message"]["content"]
     return _extract_json(content), data.get("usage", {})
 
@@ -852,17 +850,62 @@ async def call_video_generation(prompt: str, model: str, duration: int = 5) -> b
 
 
 # ========================================================================
-# LLM 双模型兜底调用（先试廉价模型，失败降级到 DeepSeek）
+# LLM 模型路由（设置页可切换每个调用点使用的模型）
+# ========================================================================
+
+def resolve_llm_model(model_value: str) -> dict | None:
+    """按模型 value 返回其调用参数 dict（base_url/api_key/model/label/price/note）。"""
+    return LLM_MODEL_BY_VALUE.get(model_value)
+
+
+def get_route_llm(route_key: str) -> dict:
+    """返回某 LLM 调用点当前选定的模型配置；未配置或非法时回退到该调用点的默认模型。"""
+    from db import get_setting
+    value = get_setting(f"llm_route.{route_key}", "") or LLM_ROUTE_DEFAULT.get(route_key, "bailian-qwen3.7-flash")
+    cfg = LLM_MODEL_BY_VALUE.get(value) or LLM_MODEL_BY_VALUE.get(LLM_ROUTE_DEFAULT.get(route_key, "bailian-qwen3.7-flash"))
+    return cfg or LLM_MODELS[0]
+
+
+def route_llm_candidates(route_key: str) -> list[dict]:
+    """返回某调用点的模型候选链：先当前选定，若与默认不同再附加默认模型作为兜底。
+    这样用户把调用点切到其他模型后，一旦其限流或失败，能自动降级到默认模型（百炼 Qwen3.7-Flash），避免直接 500。"""
+    primary = get_route_llm(route_key)
+    default_val = LLM_ROUTE_DEFAULT.get(route_key, "bailian-qwen3.7-flash")
+    if primary["value"] != default_val:
+        fallback = LLM_MODEL_BY_VALUE.get(default_val)
+        if fallback:
+            return [primary, fallback]
+    return [primary]
+
+
+async def _chat_completion(base_url: str, api_key: str, model: str, payload: dict, timeout: float = 120.0) -> dict:
+    """统一的 OpenAI 兼容 chat/completions 调用，返回完整响应 data。"""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={**payload, "model": model},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ========================================================================
+# LLM 双模型兜底调用（先试调用点选定的模型，失败降级到该调用点的默认模型）
 # ========================================================================
 
 async def _call_llm_with_fallback(
     messages: list[dict],
+    route_key: str,
     temperature: float = 0.2,
     max_tokens: int = 2048,
     response_format: dict | None = None,
     timeout: float = 30.0,
 ) -> dict | None:
-    """调用 LLM，先试廉价模型，失败时降级到 DeepSeek。
+    """调用 LLM，先试该调用点选定的模型，失败时降级到该调用点的默认模型（百炼 Qwen3.7-Flash）。
     返回解析后的 data dict；两者都失败时返回 None。"""
     payload: dict = {
         "messages": messages,
@@ -872,46 +915,24 @@ async def _call_llm_with_fallback(
     if response_format:
         payload["response_format"] = response_format
 
-    # 1) 尝试廉价模型（如智谱 GLM-4.7-Flash）
-    if CHEAP_LLM_API_KEY:
-        payload["model"] = CHEAP_LLM_MODEL
+    # 1) 尝试该调用点选定的模型
+    cfg = get_route_llm(route_key)
+    if cfg.get("api_key"):
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    f"{CHEAP_LLM_BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {CHEAP_LLM_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                # 429 限流直接降级，不重试
-                if resp.status_code == 429:
-                    pass
-                else:
-                    resp.raise_for_status()
-                    return resp.json()
+            return await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=timeout)
         except Exception:
             pass
 
-    # 2) 降级到 DeepSeek
-    if not DEEPSEEK_API_KEY:
-        return None
-    payload["model"] = DEEPSEEK_MODEL
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{DEEPSEEK_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            resp.raise_for_status()
-            return resp.json()
-    except Exception:
-        return None
+    # 2) 降级到该调用点的默认模型（百炼 Qwen3.7-Flash）
+    default_value = LLM_ROUTE_DEFAULT.get(route_key)
+    default_cfg = LLM_MODEL_BY_VALUE.get(default_value)
+    if default_cfg and default_cfg.get("api_key") and default_cfg["value"] != cfg["value"]:
+        try:
+            return await _chat_completion(default_cfg["base_url"], default_cfg["api_key"], default_cfg["model"], payload, timeout=timeout)
+        except Exception:
+            pass
+
+    return None
 
 
 # ========================================================================
@@ -1273,15 +1294,13 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_polysemy_detection(words: list[str]):
-    """调用 DeepSeek 批量判断单词是否为托业高频熟词僻意，返回结构化词条。"""
+    """调用 LLM（熟词僻意路由，可切换模型）批量判断单词是否为托业高频熟词僻意，返回结构化词条。
+    选定模型调用失败（如限流）时自动降级到默认主模型。"""
     if not words:
         return {"results": []}
-    if not DEEPSEEK_API_KEY:
-        raise HTTPException(500, "请先设置 DEEPSEEK_API_KEY 环境变量")
 
     user_prompt = _build_polysemy_detect_prompt(words)
     payload = {
-        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": POLYSEMY_DETECT_SYSTEM},
             {"role": "user", "content": user_prompt},
@@ -1291,17 +1310,20 @@ async def call_polysemy_detection(words: list[str]):
         "response_format": {"type": "json_object"},
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    last_err = None
+    for cfg in route_llm_candidates("polysemy"):
+        if not cfg.get("api_key"):
+            continue
+        try:
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+            break
+        except (httpx.HTTPError, KeyError) as e:
+            last_err = e
+            continue
+    else:
+        if last_err is None:
+            raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        raise HTTPException(500, f"LLM 熟词僻意检测失败（已尝试全部候选模型）: {last_err}")
 
     content = data["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):
@@ -1386,10 +1408,10 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_word_enrichment(words: list[str]) -> dict:
-    """调用 LLM 批量补充单词的词性和中文释义（先试廉价模型，失败降级到 DeepSeek）。"""
+    """调用 LLM 批量补充单词的词性和中文释义（走该调用点模型，失败降级默认模型）。"""
     if not words:
         return {"results": []}
-    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
+    if not get_route_llm("enrich").get("api_key"):
         return {"results": [], "skipped": True, "reason": "no_api_key"}
 
     user_prompt = _build_enrich_prompt(words)
@@ -1400,6 +1422,7 @@ async def call_word_enrichment(words: list[str]) -> dict:
 
     data = await _call_llm_with_fallback(
         messages=messages,
+        route_key="enrich",
         temperature=0.2,
         max_tokens=2048,
         response_format={"type": "json_object"},
@@ -1521,8 +1544,8 @@ async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dic
     """
     if not words:
         return {"scene_assignments": [], "new_scenes_suggested": []}
-    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
-        raise HTTPException(500, "未配置 DEEPSEEK_API_KEY 或 CHEAP_LLM_API_KEY")
+    if not get_route_llm("scene_detect").get("api_key"):
+        raise HTTPException(500, "未配置 LLM API Key（默认使用百炼 Qwen3.7-Flash，请配置 IMAGE_API_KEY / TTS_API_KEY）")
 
     # 无已有场景时，切换为"纯分组"模式：让 LLM 直接对所有词做场景分组
     has_existing = len(existing_scenes) > 0
@@ -1540,6 +1563,7 @@ async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dic
 
     data = await _call_llm_with_fallback(
         messages=messages,
+        route_key="scene_detect",
         temperature=0.2,
         max_tokens=8192,
         response_format={"type": "json_object"},
@@ -1640,7 +1664,7 @@ async def call_deepseek_scene_collocations(words: list[str], scene_name: str, sc
     """为场景内单词生成 2-5 条典型 TOEIC 词伙搭配。任何失败都返回 []，不抛异常。"""
     if not words or len(words) < 2:
         return []
-    if not DEEPSEEK_API_KEY and not CHEAP_LLM_API_KEY:
+    if not get_route_llm("scene_collocations").get("api_key"):
         return []
     messages = [
         {"role": "system", "content": SCENE_COLLOCATIONS_SYSTEM_PROMPT},
@@ -1649,6 +1673,7 @@ async def call_deepseek_scene_collocations(words: list[str], scene_name: str, sc
     try:
         data = await _call_llm_with_fallback(
             messages=messages,
+            route_key="scene_collocations",
             temperature=0.3,
             max_tokens=2048,
             response_format={"type": "json_object"},

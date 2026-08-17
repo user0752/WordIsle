@@ -24,6 +24,8 @@ __all__ = [
     "SCENES_SEED",
     "upsert_feedback",
     "get_feedback_stats",
+    "get_setting",
+    "set_setting",
 ]
 
 # ========================================================================
@@ -187,6 +189,10 @@ def init_db():
             rating TEXT NOT NULL CHECK (rating IN ('up','down')),
             created_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE (generation_id, rating)
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT DEFAULT ''
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique
             ON audios (generation_id, voice, speed, tts_model);
@@ -968,6 +974,28 @@ def get_feedback_stats() -> dict:
             "total": total,
             "satisfaction": round(up / total, 4) if total else 0.0,
         }
+    finally:
+        conn.close()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    """从 settings 表读取设置值。若表不存在（DB 未初始化），返回 default。"""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+    except Exception:
+        return default
+    finally:
+        conn.close()
+
+
+def set_setting(key: str, value: str):
+    """写入设置值（INSERT OR REPLACE）。"""
+    conn = get_db()
+    try:
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
+        conn.commit()
     finally:
         conn.close()
 

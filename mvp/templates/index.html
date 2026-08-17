@@ -81,6 +81,13 @@
             <el-icon><Document /></el-icon>
             <span>历史记录</span>
           </el-menu-item>
+
+          <!-- 设置 -->
+          <div class="menu-divider"><span>系统</span></div>
+          <el-menu-item index="settings">
+            <el-icon><Setting /></el-icon>
+            <span>设置</span>
+          </el-menu-item>
         </el-menu>
       </aside>
 
@@ -1483,6 +1490,76 @@
             </template>
           </template>
         </div>
+
+        <!-- 设置 -->
+        <div v-if="currentPage==='settings'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>设置</h2>
+              <p class="page-subtitle">查看所有模型调用点，并为每个调用点选择使用的 LLM 模型</p>
+            </div>
+          </div>
+
+          <!-- 可用 LLM 模型概览 -->
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><Cpu /></el-icon>
+                <span style="font-weight:600">可用 LLM 模型（4 个候选）</span>
+              </div>
+            </template>
+            <el-table :data="llmModels" size="small" stripe>
+              <el-table-column label="模型" min-width="240">
+                <template #default="{ row }">
+                  <div class="flex align-center gap-sm">
+                    <span style="font-weight:600">{{ row.label }}</span>
+                    <el-tag v-if="row.recommended" type="success" size="small" effect="plain">推荐</el-tag>
+                    <el-tag v-if="!row.configured" type="warning" size="small" effect="plain">未配置 Key</el-tag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="档位" width="110">
+                <template #default="{ row }"><el-tag size="small">{{ row.tier }}</el-tag></template>
+              </el-table-column>
+              <el-table-column prop="price" label="价格（每百万token）" min-width="190"></el-table-column>
+              <el-table-column prop="note" label="说明" min-width="280"></el-table-column>
+            </el-table>
+          </el-card>
+
+          <!-- LLM 调用点模型选择 -->
+          <el-card shadow="never">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><Connection /></el-icon>
+                <span style="font-weight:600">LLM 调用点 · 模型选择</span>
+                <span class="text-secondary" style="font-size:12px">保存后立即对后续生成生效</span>
+              </div>
+            </template>
+            <el-table :data="llmRouteList" size="small" stripe>
+              <el-table-column label="调用点" min-width="130">
+                <template #default="{ row }"><span style="font-weight:600">{{ row.label }}</span></template>
+              </el-table-column>
+              <el-table-column prop="desc" label="用途" min-width="240"></el-table-column>
+              <el-table-column label="当前使用模型" min-width="300">
+                <template #default="{ row }">
+                  <el-select v-model="llmRouteForm[row.key]" placeholder="选择模型" size="small" style="width:100%">
+                    <el-option v-for="m in llmModels" :key="m.value" :label="m.label" :value="m.value">
+                      <span>{{ m.label }}</span>
+                      <span class="text-secondary" style="float:right;font-size:12px">{{ m.tier }}</span>
+                    </el-option>
+                  </el-select>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="flex gap-sm mt-md">
+              <el-button type="primary" :loading="llmSaving" @click="saveLlmSettings">保存设置</el-button>
+              <el-button @click="loadLlmSettings">重置为当前值</el-button>
+            </div>
+            <p class="text-secondary" style="font-size:12px;margin-top:10px">
+              提示：全部调用点默认与兜底降级模型统一为百炼 · Qwen3.7 Flash（qwen3.7-flash-2026-07-15），可在此处切换其他模型；选定模型失败（如限流）时自动降级到默认模型。
+            </p>
+          </el-card>
+        </div>
       </main>
     </div>
   </div>
@@ -1630,6 +1707,39 @@ const app = createApp({
     function getVideoModelLabel(model) {
       const m = videoModels.value.find(x => x.value === model)
       return m ? m.label : model || ''
+    }
+
+    // 设置页：LLM 模型路由
+    const llmModels = ref([])        // 可用 LLM 模型列表
+    const llmRouteList = ref([])     // 调用点列表（含当前值）
+    const llmRouteForm = reactive({}) // 调用点 key -> 选中的模型 value
+    const llmSaving = ref(false)
+    async function loadLlmSettings() {
+      try {
+        const res = await api('/api/settings/llm')
+        llmModels.value = res.models || []
+        llmRouteList.value = res.routes || []
+        for (const r of llmRouteList.value) llmRouteForm[r.key] = r.current
+      } catch(e) { /* silent */ }
+    }
+    async function saveLlmSettings() {
+      const payload = {}
+      for (const r of llmRouteList.value) payload[r.key] = llmRouteForm[r.key]
+      llmSaving.value = true
+      try {
+        const res = await api('/api/settings/llm', {
+          method: 'POST',
+          body: JSON.stringify({ routes: payload }),
+        })
+        if (res.errors && res.errors.length) {
+          ElementPlus.ElMessage.warning('部分未保存：' + res.errors.join('；'))
+        } else {
+          ElementPlus.ElMessage.success(`已保存 ${res.saved} 个调用点的模型设置`)
+        }
+        await loadLlmSettings()
+      } catch(e) {
+        ElementPlus.ElMessage.error('保存失败：' + e.message)
+      } finally { llmSaving.value = false }
     }
 
     // 单词库
@@ -2414,6 +2524,7 @@ const app = createApp({
       if (idx==='history') loadHistory()
       if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
       if (idx==='scenes') { sceneView.value='list'; loadScenes() }
+      if (idx==='settings') loadLlmSettings()
     }
 
     // ====== 初始化 ======
@@ -2511,6 +2622,7 @@ const app = createApp({
       toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect,
       loadScenes, openSceneDetail, runSceneDetect, adoptScene,
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,
+      llmModels, llmRouteList, llmRouteForm, llmSaving, loadLlmSettings, saveLlmSettings,
       ...Icons,
     }
   }

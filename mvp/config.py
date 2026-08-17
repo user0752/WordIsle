@@ -273,12 +273,70 @@ TOKENRHYTHM_API_KEY  = os.getenv("TOKENRHYTHM_API_KEY", "")
 TOKENRHYTHM_BASE_URL = os.getenv("TOKENRHYTHM_BASE_URL", "https://tokenrhythm.studio/v1")
 
 # ========================================================================
-# 廉价 LLM（用于简单任务，如单词补充、熟词检测；先试廉价模型，失败降级到 DeepSeek）
+# 百炼 LLM（OpenAI 兼容协议，复用百炼 IMAGE_API_KEY / TTS_API_KEY）
 # ========================================================================
 
-CHEAP_LLM_API_KEY  = os.getenv("CHEAP_LLM_API_KEY", "")
-CHEAP_LLM_BASE_URL = os.getenv("CHEAP_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-CHEAP_LLM_MODEL    = os.getenv("CHEAP_LLM_MODEL", "glm-4.7-flash")
+BAILIAN_LLM_BASE_URL = os.getenv("BAILIAN_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+# ========================================================================
+# LLM 模型路由（设置页可切换每个调用点使用的模型）
+# 三个候选：百炼 Qwen3.7-Flash（默认/兜底）/ 百炼 DeepSeek-V4-Flash / DeepSeek 官方
+# value 为内部标识；base_url/api_key/model 为该模型实际调用参数。
+# ========================================================================
+
+LLM_MODELS = [
+    {
+        "value": "bailian-qwen3.7-flash",
+        "label": "百炼 · Qwen3.7 Flash（默认/性价比最高）",
+        "channel": "bailian",
+        "base_url": BAILIAN_LLM_BASE_URL,
+        "api_key": IMAGE_API_KEY,
+        "model": "qwen3.7-flash-2026-07-15",
+        "tier": "默认",
+        "price": "输入 0.2 / 输出 0.8 元(每百万token)",
+        "note": "千问3.7 Flash（2026-07-15），支持 JSON 结构化输出；免费额度 100 万 token（华北2）；全站默认与兜底降级模型",
+        "recommended": True,
+    },
+    {
+        "value": "bailian-deepseek-v4-flash",
+        "label": "百炼 · DeepSeek V4 Flash",
+        "channel": "bailian",
+        "base_url": BAILIAN_LLM_BASE_URL,
+        "api_key": IMAGE_API_KEY,
+        "model": "deepseek-v4-flash",
+        "tier": "旧价",
+        "price": "输入 1 / 输出 2 元(每百万token)",
+        "note": "百炼渠道 DeepSeek-V4-Flash（旧版快照价），英文文本能力强；注意 8/17 后是否并价",
+        "recommended": False,
+    },
+    {
+        "value": "deepseek-official",
+        "label": "DeepSeek 官方 · V4 Flash",
+        "channel": "deepseek",
+        "base_url": DEEPSEEK_BASE,
+        "api_key": DEEPSEEK_API_KEY,
+        "model": DEEPSEEK_MODEL,
+        "tier": "官方",
+        "price": "涨后 闲时输入 1.5 / 输出 4.5 · 高峰 3 / 9 元(每百万token)",
+        "note": "官方直连，2026-08-17 起峰谷计费（高峰 9-12、14-18 点）",
+        "recommended": False,
+    },
+]
+
+# 每个 LLM 调用点（设置页可独立选择模型）。default 为该调用点的默认模型 value，
+# 同时也是该调用点选定模型失败时的兜底降级模型（默认与兜底统一为百炼 Qwen3.7-Flash）。
+LLM_ROUTES = [
+    {"key": "batch",  "label": "批量编译",      "desc": "剧情连环画生成（荒诞/冲突/场景/微电影）", "default": "bailian-qwen3.7-flash"},
+    {"key": "single", "label": "单点深耕",      "desc": "单词语义记忆卡片生成", "default": "bailian-qwen3.7-flash"},
+    {"key": "video",  "label": "视频脚本",      "desc": "视频编译的旁白与提示词", "default": "bailian-qwen3.7-flash"},
+    {"key": "polysemy", "label": "熟词僻意检测", "desc": "批量判断是否为托业高频熟词僻意", "default": "bailian-qwen3.7-flash"},
+    {"key": "enrich", "label": "单词补充",       "desc": "词性/释义自动补全（失败降级默认模型）", "default": "bailian-qwen3.7-flash"},
+    {"key": "scene_detect", "label": "场景检测", "desc": "单词自动归类到场景", "default": "bailian-qwen3.7-flash"},
+    {"key": "scene_collocations", "label": "场景词伙", "desc": "场景内词伙搭配生成", "default": "bailian-qwen3.7-flash"},
+]
+
+LLM_ROUTE_DEFAULT = {r["key"]: r["default"] for r in LLM_ROUTES}
+LLM_MODEL_BY_VALUE = {m["value"]: m for m in LLM_MODELS}
 
 # ========================================================================
 # 每日限额

@@ -96,6 +96,11 @@ def _image_provider_label(model: str) -> str:
     return _get_image_model_config(model).get("provider", "dashscope")
 
 
+def _llm_route_model(route_key: str) -> str:
+    """返回某 LLM 调用点当前选定的模型名（用于 SSE 进度展示与入库）。"""
+    return get_route_llm(route_key).get("model", "")
+
+
 async def _consume_result(gen):
     """消费生成器，取最后一个 result 事件的数据（供同步接口用）。"""
     result = None
@@ -237,10 +242,10 @@ async def _run_generate(p: dict):
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
-    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成剧情连环画", "status": "running"})
+    yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
     result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style)
-    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成剧情连环画", "status": "ok"})
+    yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "ok"})
 
     if not result.get("panels"):
         raise HTTPException(502, "AI 未能生成画面内容，请重试")
@@ -295,7 +300,7 @@ async def _run_generate(p: dict):
     """, (
         gen_id, json.dumps(words), actual_panel_count, theme_hint,
         result.get("story_title", ""), result.get("theme", ""), result.get("story_synopsis", ""),
-        full_body_en, DEEPSEEK_MODEL, image_model, json.dumps(panels),
+        full_body_en, _llm_route_model("batch"), image_model, json.dumps(panels),
         json.dumps(result.get("polysemy_notes", {})),
         json.dumps(result.get("included_words", [])),
         json.dumps(result.get("missing_words", [])),
@@ -409,10 +414,10 @@ async def _run_single_compile(p: dict):
     if not consume_daily_quota("ai"):
         raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
-    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成记忆卡片", "status": "running"})
+    yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
     result, usage = await call_deepseek_single(word_clean, theme_hint, art_style)
-    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成记忆卡片", "status": "ok"})
+    yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "ok"})
 
     if not consume_daily_quota("image", 1):
         raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
@@ -449,7 +454,7 @@ async def _run_single_compile(p: dict):
     """, (
         gen_id, json.dumps([word_clean]), 1, theme_hint,
         f"{word_clean} · 单点深耕", "单点深耕", scene_sentence.get("zh", ""), body_en,
-        DEEPSEEK_MODEL, image_model,
+        _llm_route_model("single"), image_model,
         json.dumps(panels_payload, ensure_ascii=False),
         json.dumps({}, ensure_ascii=False),
         json.dumps([word_clean], ensure_ascii=False),
@@ -653,8 +658,8 @@ async def health():
         "status": "ok",
         "db": DB_PATH.exists(),
         # 各模型通道密钥状态（供 manager 状态行/自检展示）
-        "deepseek_key":      bool(DEEPSEEK_API_KEY),                     # 主 LLM
-        "cheap_llm_key":     bool(CHEAP_LLM_API_KEY),                    # 廉价 LLM（智谱 GLM）
+        "deepseek_key":      bool(DEEPSEEK_API_KEY),                     # LLM(DeepSeek 官方)
+        "bailian_llm_key":   bool(IMAGE_API_KEY or TTS_API_KEY),         # LLM(百炼, 默认通道 Qwen3.7-Flash)
         "tts_key":           bool(TTS_API_KEY),                          # 语音合成
         "bailian_image_key": bool(IMAGE_API_KEY or TTS_API_KEY),         # 百炼文生图
         "tokenrhythm_key":   bool(TOKENRHYTHM_API_KEY),                  # TokenRhythm 免费文生图
@@ -678,6 +683,56 @@ async def list_image_models():
 async def list_video_models():
     """返回文生视频模型列表（含免费额度标注），供前端下拉选择。"""
     return {"models": VIDEO_MODELS}
+
+
+# ========================================================================
+# 设置 API（LLM 模型路由）
+# ========================================================================
+
+@router.get("/api/settings/llm")
+async def get_llm_settings():
+    """返回可用的 LLM 模型列表与各调用点的当前选择，供设置页展示。"""
+    from db import get_setting
+    routes = []
+    for r in LLM_ROUTES:
+        current = get_setting(f"llm_route.{r['key']}", "") or r["default"]
+        # 非法值回退默认
+        if current not in LLM_MODEL_BY_VALUE:
+            current = r["default"]
+        routes.append({
+            "key": r["key"],
+            "label": r["label"],
+            "desc": r["desc"],
+            "default": r["default"],
+            "current": current,
+        })
+    # 附带各模型是否已配置 key 的状态
+    models = []
+    for m in LLM_MODELS:
+        models.append({**m, "configured": bool(m.get("api_key"))})
+    return {"models": models, "routes": routes}
+
+
+@router.post("/api/settings/llm")
+async def save_llm_settings(req: Request):
+    """保存各 LLM 调用点选择的模型（body: {routes: {route_key: model_value}}）。"""
+    from db import set_setting
+    body = await _safe_json(req)
+    data = body.get("routes") or {}
+    valid_keys = {r["key"] for r in LLM_ROUTES}
+    valid_models = set(LLM_MODEL_BY_VALUE.keys())
+    saved = 0
+    errors = []
+    for k, v in data.items():
+        if k not in valid_keys:
+            errors.append(f"未知调用点: {k}")
+            continue
+        if v not in valid_models:
+            errors.append(f"调用点 {k} 的模型不合法: {v}")
+            continue
+        set_setting(f"llm_route.{k}", v)
+        saved += 1
+    return {"ok": True, "saved": saved, "errors": errors}
 
 
 def _parse_video_body(body: dict) -> dict:
@@ -724,14 +779,14 @@ async def _run_video_generate(p: dict):
     conn.commit()
     conn.close()
 
-    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 编写视频脚本", "status": "running"})
+    yield ("step", {"step": "llm", "model": _llm_route_model("video"), "label": "AI 编写视频脚本", "status": "running"})
     try:
         script, _ = await call_video_script(words, theme_hint, art_style)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(502, f"视频脚本生成失败: {e}")
-    yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 编写视频脚本", "status": "ok"})
+    yield ("step", {"step": "llm", "model": _llm_route_model("video"), "label": "AI 编写视频脚本", "status": "ok"})
 
     video_prompt = (script.get("video_prompt") or "").strip()
     if not video_prompt:
@@ -785,7 +840,7 @@ async def _run_video_generate(p: dict):
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (vid_id, json.dumps(words), duration, theme_hint,
          script.get("story_title", ""), narration_en[:80], narration_en,
-         DEEPSEEK_MODEL, video_model, "[]",
+         _llm_route_model("video"), video_model, "[]",
          json.dumps(script.get("included_words", [])),
          json.dumps(script.get("missing_words", [])),
          "video", "video", f"/videos/{final_name}"),
@@ -1770,9 +1825,9 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
         if not consume_daily_quota("ai"):
             raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
 
-        yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成场景连环画", "status": "running"})
+        yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成场景连环画", "status": "running"})
         story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
-        yield ("step", {"step": "llm", "model": DEEPSEEK_MODEL, "label": "AI 生成场景连环画", "status": "ok"})
+        yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成场景连环画", "status": "ok"})
 
         if not story.get("panels"):
             raise HTTPException(502, "AI 未能生成画面内容，请重试")
@@ -1839,7 +1894,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
         """, (
             gen_id, json.dumps(word_list, ensure_ascii=False), actual_panel_count, theme_hint,
             story.get("story_title", ""), story.get("theme", ""), story.get("story_synopsis", ""),
-            full_body_en, DEEPSEEK_MODEL, image_model,
+            full_body_en, _llm_route_model("batch"), image_model,
             json.dumps(panels_json, ensure_ascii=False),
             json.dumps(story.get("polysemy_notes", {}), ensure_ascii=False),
             json.dumps(story.get("included_words", []), ensure_ascii=False),
