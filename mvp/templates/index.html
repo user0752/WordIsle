@@ -313,6 +313,7 @@
                 <el-input v-model="singleForm.word" placeholder="输入或粘贴一个英文单词，如 submit / tender / address" style="width:360px" clearable @keyup.enter="handleSingleCompile"></el-input>
                 <el-button type="primary" class="ml-md" :icon="Aim" :loading="singleCompiling" @click="handleSingleCompile">深耕</el-button>
                 <el-button class="ml-md" :icon="Collection" @click="openWordPicker">从词库选择</el-button>
+                <span class="ml-md text-secondary" style="font-size:13px">记忆卡片生成 + 文生图约需 15-40 秒，请耐心等待</span>
               </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="singleForm.theme_hint" placeholder="可选，如 finance / law / shipping。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
@@ -360,9 +361,10 @@
             </el-form>
           </el-card>
 
-          <!-- 生成进度指示 -->
+          <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <div class="gen-progress-title">生成进度</div>
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+            <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
             <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
               <span class="gen-step-status" :class="'is-'+s.status">
                 {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
@@ -372,7 +374,8 @@
                       :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
                 {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
               </el-tag>
-              <span v-if="s.status==='failed' && s.message" class="gen-step-msg">{{ s.message }}</span>
+              <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+              <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
             </div>
           </el-card>
 
@@ -555,14 +558,15 @@
               <el-divider></el-divider>
               <el-form-item>
                 <el-button type="primary" size="large" :icon="MagicStick" :loading="compiling" @click="handleCompile">开始 AI 编译</el-button>
-                <span class="ml-md text-secondary" style="font-size:13px">剧情生成 + 文生图约需 20-90 秒（取决于画面数与模型），请耐心等待</span>
+                <span class="ml-md text-secondary" style="font-size:13px">剧情生成 + 文生图通常需要 2-4 分钟（取决于画面数与模型），请耐心等待</span>
               </el-form-item>
             </el-form>
           </el-card>
 
-          <!-- 生成进度指示 -->
+          <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <div class="gen-progress-title">生成进度</div>
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+            <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
             <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
               <span class="gen-step-status" :class="'is-'+s.status">
                 {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
@@ -572,7 +576,8 @@
                       :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
                 {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
               </el-tag>
-              <span v-if="s.status==='failed' && s.message" class="gen-step-msg">{{ s.message }}</span>
+              <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+              <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
             </div>
           </el-card>
         </div>
@@ -671,9 +676,10 @@
             </el-form>
           </el-card>
 
-          <!-- 生成进度指示 -->
+          <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <div class="gen-progress-title">生成进度</div>
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+            <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
             <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
               <span class="gen-step-status" :class="'is-'+s.status">
                 {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
@@ -683,7 +689,8 @@
                       :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
                 {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
               </el-tag>
-              <span v-if="s.status==='failed' && s.message" class="gen-step-msg">{{ s.message }}</span>
+              <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+              <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
             </div>
           </el-card>
 
@@ -877,6 +884,24 @@
                     </el-option>
                   </el-select>
                   <el-button type="primary" :icon="MagicStick" :loading="sceneCompileLoading" @click="compileScene">开始编译</el-button>
+                </div>
+              </el-card>
+
+              <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
+              <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
+                <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+                <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
+                <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+                  <span class="gen-step-status" :class="'is-'+s.status">
+                    {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+                  </span>
+                  <span class="gen-step-label">{{ s.label }}</span>
+                  <el-tag v-if="s.model" size="small" class="ml-sm"
+                          :type="s.status==='failed' ? 'danger' : (s.provider==='tokenrhythm' ? 'success' : 'primary')">
+                    {{ s.provider==='tokenrhythm' ? 'TokenRhythm·' : '' }}{{ s.model }}
+                  </el-tag>
+                  <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+                  <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
                 </div>
               </el-card>
 
@@ -1546,16 +1571,20 @@
             </el-table>
           </el-card>
 
-          <!-- 最近模型调用 -->
+          <!-- 最近模型调用（默认只显示最近 5 条，点击展开显示全部） -->
           <el-card shadow="never">
             <template #header>
               <div class="flex align-center gap-sm">
                 <el-icon><Clock /></el-icon>
                 <span style="font-weight:600">最近模型调用</span>
                 <span class="text-secondary" style="font-size:12px">说明标注该次调用来自哪个编译功能</span>
+                <span style="flex:1"></span>
+                <el-button v-if="recentCalls.length > 5" link type="primary" size="small" @click="recentCallsExpanded = !recentCallsExpanded">
+                  {{ recentCallsExpanded ? '收起全部（显示最近 5 条）' : `展开全部（共 ${recentCalls.length} 条）` }}
+                </el-button>
               </div>
             </template>
-            <el-table :data="recentCalls" size="small" stripe>
+            <el-table :data="recentCallsVisible" size="small" stripe>
               <el-table-column prop="created_at" label="时间" width="160"></el-table-column>
               <el-table-column label="类别" width="90">
                 <template #default="{ row }">
@@ -1703,11 +1732,13 @@ const app = createApp({
 
     const currentPage = ref('home')
 
-    // 用量情况页：统计概览 + 按模型汇总 + 最近模型调用（全部历史）
+    // 用量情况页：统计概览 + 按模型汇总 + 最近模型调用（默认只显示最近 5 条，点击展开全部）
     const usageSummary = ref([])
     const modelSummary = ref([])
     const recentCalls = ref([])
+    const recentCallsExpanded = ref(false)  // false = 只显示最近 5 条，true = 显示全部
     const modelMax = ref(1)
+    const recentCallsVisible = computed(() => recentCallsExpanded.value ? recentCalls.value : recentCalls.value.slice(0, 5))
     async function loadUsage() {
       try {
         const res = await api('/api/usage')
@@ -1721,7 +1752,7 @@ const app = createApp({
         }
         modelSummary.value = res.models || []
         modelMax.value = Math.max(1, ...(res.models || []).map(m => m.cnt || 0))
-        recentCalls.value = res.recent || []
+        recentCalls.value = (res.recent || []).sort((a,b) => (a.created_at > b.created_at ? -1 : 1))
         usageSummary.value = [
           { key: 'llm', label: 'LLM 调用', count: total.llm, usage: tokens.llm, tag: 'primary' },
           { key: 'tts', label: 'TTS 合成', count: total.tts, usage: tokens.tts, tag: 'success' },
@@ -1760,21 +1791,38 @@ const app = createApp({
       return Math.max(4, Math.round((row.cnt || 0) / modelMax.value * 100)) + '%'
     }
 
-    // 生成进度（SSE 流式：展示每步实际调用的模型与状态）
-    // steps: [{ key, label, model, provider, status, message }]
-    const genProgress = ref({ visible:false, steps:[], active:0 })
-    function startGenProgress() {
-      genProgress.value = { visible:true, steps:[], active:0 }
+    // 生成进度（SSE 流式：展示每步实际调用的模型、状态与耗时，统一温馨提示）
+    // steps: [{ key, label, model, provider, status, message, startedAt, elapsed }]
+    const GEN_FEATURES = {
+      batch:  { label: '批量编译', hint: '剧情生成 + 文生图通常需要 2-4 分钟（取决于画面数与模型），请耐心等待' },
+      single: { label: '单点深耕', hint: '记忆卡片生成 + 文生图约需 15-40 秒' },
+      video:  { label: '视频编译', hint: '脚本生成 + 文生视频约需 1-5 分钟' },
+      scene:  { label: '场景编译', hint: '场景连环画生成通常需要 2-4 分钟，请耐心等待' },
+    }
+    const genProgress = ref({ visible:false, steps:[], active:0, feature:'', elapsed:0, timer:null })
+    const genFeatureLabel = computed(() => (GEN_FEATURES[genProgress.value.feature] || {}).label || 'AI')
+    const genFeatureHint = computed(() => (GEN_FEATURES[genProgress.value.feature] || {}).hint || 'AI 处理约需几十秒到几分钟，请耐心等待')
+    function startGenProgress(feature='') {
+      const timer = setInterval(() => { genProgress.value.elapsed++ }, 1000)
+      genProgress.value = { visible:true, steps:[], active:0, feature, elapsed:0, timer }
     }
     function stopGenProgress() {
+      if (genProgress.value.timer) clearInterval(genProgress.value.timer)
       genProgress.value.visible = false
     }
     function applyGenStep(s) {
       const idx = genProgress.value.steps.findIndex(x => x.key === s.step)
+      const prev = idx >= 0 ? genProgress.value.steps[idx] : null
       const item = {
-        key: s.step, label: s.label || s.step,
-        model: s.model || '', provider: s.provider || '',
+        key: s.step, label: s.label || (prev ? prev.label : s.step),
+        model: s.model || (prev ? prev.model : ''), provider: s.provider || (prev ? prev.provider : ''),
         status: s.status || 'running', message: s.message || '',
+        startedAt: prev && prev.startedAt ? prev.startedAt : Date.now(),
+        elapsed: null,
+      }
+      // 步骤结束（成功/失败）时计算该步实际耗时
+      if (item.status === 'ok' || item.status === 'failed') {
+        item.elapsed = Math.round((Date.now() - item.startedAt) / 100) / 10
       }
       if (idx >= 0) genProgress.value.steps[idx] = item
       else genProgress.value.steps.push(item)
@@ -2155,7 +2203,7 @@ const app = createApp({
       if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       compiling.value = true
-      startGenProgress()
+      startGenProgress('batch')
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
         const res = await apiStream('/api/generate-stream', {method:'POST', body:JSON.stringify({
@@ -2188,7 +2236,7 @@ const app = createApp({
       }
       videoCompiling.value = true
       videoResult.value = null
-      startGenProgress()
+      startGenProgress('video')
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
         const res = await apiStream('/api/video/generate-stream', {method:'POST', body:JSON.stringify({
@@ -2213,7 +2261,7 @@ const app = createApp({
       if (!singleForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       singleCompiling.value = true
       singleResult.value = null
-      startGenProgress()
+      startGenProgress('single')
       try {
         const res = await apiStream('/api/single/compile-stream', {method:'POST', body:JSON.stringify({
           word,
@@ -2635,7 +2683,7 @@ const app = createApp({
         return
       }
       sceneCompileLoading.value = true
-      startGenProgress()
+      startGenProgress('scene')
       try {
         const r = await apiStream(`/api/scenes/${sceneDetail.value.id}/compile-stream`, {
           method: 'POST',
@@ -2722,10 +2770,10 @@ const app = createApp({
 
     return {
       currentPage,
-      usageSummary, modelSummary, recentCalls, modelMax,
+      usageSummary, modelSummary, recentCalls, recentCallsVisible, recentCallsExpanded, modelMax,
       loadUsage, usageLabel, usageTag, usageColor, usageUnit,
       fmtUsage, usageDetail, modelBarWidth,
-      genProgress, feedbackGiven, giveFeedback,
+      genProgress, genFeatureLabel, genFeatureHint, feedbackGiven, giveFeedback,
       ThumbsUp, ThumbsDown,
       feedbackStats,
       TTS_MODELS, groupedTtsModels, imageModels,

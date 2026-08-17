@@ -145,8 +145,8 @@ def _delete_generation(gen_id: str, not_found_msg: str = "记录不存在") -> d
     return {"ok": True}
 
 
-async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str, not_found_msg: str = "记录不存在") -> dict:
-    """为指定生成记录合成 TTS 音频（含去重、配额检查、落盘）。"""
+async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str, not_found_msg: str = "记录不存在", feature: str = "音频合成") -> dict:
+    """为指定生成记录合成 TTS 音频（含去重、配额检查、落盘）。feature 用于日志标注调用来源功能。"""
     conn = get_db()
     gen = conn.execute("SELECT * FROM generations WHERE id=?", (gen_id,)).fetchone()
     conn.close()
@@ -172,7 +172,7 @@ async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str,
     if not consume_daily_quota("tts"):
         raise HTTPException(429, "今日 TTS 合成已达上限")
 
-    audio_bytes = await call_tts(gen["body_en"], voice, speed, tts_model)
+    audio_bytes = await call_tts(gen["body_en"], voice, speed, tts_model, feature=feature)
     file_name = f"{gen_id}_{voice}_{int(speed*100)}.mp3"
     (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
 
@@ -245,7 +245,10 @@ async def _run_generate(p: dict):
     yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
     result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style)
-    yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "ok"})
+    actual_llm = result.pop("_llm_model", None) or _llm_route_model("batch")
+    degraded = actual_llm != _llm_route_model("batch")
+    yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 生成剧情连环画", "status": "ok",
+                    "message": f"选定模型不可用，已自动降级到 {actual_llm}" if degraded else ""})
 
     if not result.get("panels"):
         raise HTTPException(502, "AI 未能生成画面内容，请重试")
@@ -300,7 +303,7 @@ async def _run_generate(p: dict):
     """, (
         gen_id, json.dumps(words), actual_panel_count, theme_hint,
         result.get("story_title", ""), result.get("theme", ""), result.get("story_synopsis", ""),
-        full_body_en, _llm_route_model("batch"), image_model, json.dumps(panels),
+        full_body_en, actual_llm, image_model, json.dumps(panels),
         json.dumps(result.get("polysemy_notes", {})),
         json.dumps(result.get("included_words", [])),
         json.dumps(result.get("missing_words", [])),
@@ -331,7 +334,7 @@ async def _run_generate(p: dict):
         else:
             try:
                 voice = default_tts_voice(tts_model)
-                audio_bytes = await call_tts(full_body_en, voice, 1.0, tts_model)
+                audio_bytes = await call_tts(full_body_en, voice, 1.0, tts_model, feature="批量编译音频")
                 file_name = f"{gen_id}_{voice}_100.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
                 conn = get_db()
@@ -380,7 +383,7 @@ async def generate_audio(gen_id: str, req: Request):
     voice = body.get("voice") or default_tts_voice(tts_model)
     speed = body.get("speed", 1.0)
     voice, speed = validate_tts_params(voice, speed)
-    return await _generate_audio(gen_id, voice, speed, tts_model, "生成记录不存在")
+    return await _generate_audio(gen_id, voice, speed, tts_model, "生成记录不存在", feature="剧情音频生成")
 
 
 # ========================================================================
@@ -417,7 +420,10 @@ async def _run_single_compile(p: dict):
     yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
     result, usage = await call_deepseek_single(word_clean, theme_hint, art_style)
-    yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "ok"})
+    actual_llm = result.pop("_llm_model", None) or _llm_route_model("single")
+    degraded = actual_llm != _llm_route_model("single")
+    yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 生成记忆卡片", "status": "ok",
+                    "message": f"选定模型不可用，已自动降级到 {actual_llm}" if degraded else ""})
 
     if not consume_daily_quota("image", 1):
         raise HTTPException(429, "今日文生图已达上限")
@@ -454,7 +460,7 @@ async def _run_single_compile(p: dict):
     """, (
         gen_id, json.dumps([word_clean]), 1, theme_hint,
         f"{word_clean} · 单点深耕", "单点深耕", scene_sentence.get("zh", ""), body_en,
-        _llm_route_model("single"), image_model,
+        actual_llm, image_model,
         json.dumps(panels_payload, ensure_ascii=False),
         json.dumps({}, ensure_ascii=False),
         json.dumps([word_clean], ensure_ascii=False),
@@ -483,7 +489,7 @@ async def _run_single_compile(p: dict):
         else:
             try:
                 voice = default_tts_voice(tts_model)
-                audio_bytes = await call_tts(body_en, voice, 1.0, tts_model)
+                audio_bytes = await call_tts(body_en, voice, 1.0, tts_model, feature="单点深耕音频")
                 file_name = f"{gen_id}_{voice}_100.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
                 conn = get_db()
@@ -533,7 +539,7 @@ async def single_generate_audio(gen_id: str, req: Request):
     voice = body.get("voice") or default_tts_voice(tts_model)
     speed = body.get("speed", 1.0)
     voice, speed = validate_tts_params(voice, speed)
-    return await _generate_audio(gen_id, voice, speed, tts_model, "单点深耕记录不存在")
+    return await _generate_audio(gen_id, voice, speed, tts_model, "单点深耕记录不存在", feature="单点深耕朗读")
 
 
 @router.get("/api/generations")
@@ -793,7 +799,10 @@ async def _run_video_generate(p: dict):
         raise
     except Exception as e:
         raise HTTPException(502, f"视频脚本生成失败: {e}")
-    yield ("step", {"step": "llm", "model": _llm_route_model("video"), "label": "AI 编写视频脚本", "status": "ok"})
+    actual_llm = script.pop("_llm_model", None) or _llm_route_model("video")
+    degraded = actual_llm != _llm_route_model("video")
+    yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 编写视频脚本", "status": "ok",
+                    "message": f"选定模型不可用，已自动降级到 {actual_llm}" if degraded else ""})
 
     video_prompt = (script.get("video_prompt") or "").strip()
     if not video_prompt:
@@ -820,7 +829,7 @@ async def _run_video_generate(p: dict):
     if narration_en:
         yield ("step", {"step": "tts", "model": tts_model, "voice": voice, "label": "合成旁白并烧录字幕", "status": "running"})
         try:
-            audio_bytes = await call_tts(narration_en, voice=voice, speed=1.0, model=tts_model)
+            audio_bytes = await call_tts(narration_en, voice=voice, speed=1.0, model=tts_model, feature="视频配音")
             mux_video_with_audio(raw_video_path, audio_bytes, narration_en, final_path)
             yield ("step", {"step": "tts", "model": tts_model, "status": "ok"})
         except Exception as e:
@@ -847,7 +856,7 @@ async def _run_video_generate(p: dict):
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (vid_id, json.dumps(words), duration, theme_hint,
          script.get("story_title", ""), narration_en[:80], narration_en,
-         _llm_route_model("video"), video_model, "[]",
+         actual_llm, video_model, "[]",
          json.dumps(script.get("included_words", [])),
          json.dumps(script.get("missing_words", [])),
          "video", "video", f"/videos/{final_name}"),
@@ -1223,7 +1232,7 @@ async def regenerate_audio_for_text(text_id: str, req: Request):
     voice = body.get("voice") or default_tts_voice(tts_model)
     speed = body.get("speed", 1.0)
     voice, speed = validate_tts_params(voice, speed)
-    return await _generate_audio(text_id, voice, speed, tts_model, "文本不存在")
+    return await _generate_audio(text_id, voice, speed, tts_model, "文本不存在", feature="文本音频重新生成")
 
 
 # ========================================================================
@@ -1834,7 +1843,10 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
 
         yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成场景连环画", "status": "running"})
         story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
-        yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成场景连环画", "status": "ok"})
+        actual_llm = story.pop("_llm_model", None) or _llm_route_model("batch")
+        degraded = actual_llm != _llm_route_model("batch")
+        yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 生成场景连环画", "status": "ok",
+                        "message": f"选定模型不可用，已自动降级到 {actual_llm}" if degraded else ""})
 
         if not story.get("panels"):
             raise HTTPException(502, "AI 未能生成画面内容，请重试")
@@ -1901,7 +1913,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
         """, (
             gen_id, json.dumps(word_list, ensure_ascii=False), actual_panel_count, theme_hint,
             story.get("story_title", ""), story.get("theme", ""), story.get("story_synopsis", ""),
-            full_body_en, _llm_route_model("batch"), image_model,
+            full_body_en, actual_llm, image_model,
             json.dumps(panels_json, ensure_ascii=False),
             json.dumps(story.get("polysemy_notes", {}), ensure_ascii=False),
             json.dumps(story.get("included_words", []), ensure_ascii=False),

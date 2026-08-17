@@ -131,7 +131,7 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_regenerate_audio_accepts_string_id(self):
         _seed_generation()
-        async def fake_tts(text, voice=None, speed=1.0, tts_model=None):
+        async def fake_tts(text, voice=None, speed=1.0, tts_model=None, feature=None):
             return b"fake-mp3"
 
         with mock.patch.object(routes_module, "call_tts", fake_tts):
@@ -148,7 +148,7 @@ class MainAppTestCase(unittest.TestCase):
     def test_audio_rejects_path_traversal_voice(self):
         _seed_generation()
 
-        async def fake_tts(text, voice=None, speed=1.0):
+        async def fake_tts(text, voice=None, speed=1.0, feature=None):
             return b"fake-mp3"
 
         with mock.patch.object(routes_module, "call_tts", fake_tts):
@@ -162,7 +162,7 @@ class MainAppTestCase(unittest.TestCase):
     def test_audio_rejects_speed_out_of_range(self):
         _seed_generation()
 
-        async def fake_tts(text, voice=None, speed=1.0):
+        async def fake_tts(text, voice=None, speed=1.0, feature=None):
             return b"fake-mp3"
 
         with mock.patch.object(routes_module, "call_tts", fake_tts):
@@ -175,7 +175,7 @@ class MainAppTestCase(unittest.TestCase):
     def test_audio_accepts_valid_voice_and_speed(self):
         _seed_generation()
 
-        async def fake_tts(text, voice=None, speed=1.0, tts_model=None):
+        async def fake_tts(text, voice=None, speed=1.0, tts_model=None, feature=None):
             return b"fake-mp3"
 
         with mock.patch.object(routes_module, "call_tts", fake_tts):
@@ -261,7 +261,7 @@ class MainAppTestCase(unittest.TestCase):
     def test_regenerate_audio_dedup_reuses_existing(self):
         _seed_generation()
 
-        async def fake_tts(text, voice=None, speed=1.0, tts_model=None):
+        async def fake_tts(text, voice=None, speed=1.0, tts_model=None, feature=None):
             return b"fake-mp3"
 
         with mock.patch.object(routes_module, "call_tts", fake_tts):

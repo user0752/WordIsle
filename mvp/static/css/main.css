@@ -997,7 +997,14 @@
   .gen-progress .el-step__title { font-size: 13px; }
   .gen-progress .el-step__head.is-process { color: var(--accent); border-color: var(--accent); }
   .gen-progress .el-step__title.is-process { color: var(--accent); font-weight: 500; }
-  .gen-progress-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+  .gen-progress-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
+  .gen-progress-elapsed { font-size: 12px; font-weight: 400; color: var(--text-tertiary); }
+  .gen-progress-hint {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.6;
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: 6px 10px; margin-bottom: 8px;
+  }
   .gen-step { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
   .gen-step-status { flex: 0 0 auto; min-width: 44px; text-align: center; font-size: 12px; padding: 1px 6px; border-radius: 10px; }
   .gen-step-status.is-running { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); animation: pulse 1.2s infinite; }
@@ -1005,7 +1012,9 @@
   .gen-step-status.is-failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
   .gen-step-status.is-pending { color: var(--text-tertiary); background: var(--bg-surface); }
   .gen-step-label { font-weight: 500; }
+  .gen-step-elapsed { flex: 0 0 auto; font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
   .gen-step-msg { color: var(--danger); font-size: 12px; }
+  .gen-step-msg.is-ok { color: var(--warning-color, #e6a23c); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
   /* 图片 shimmer 骨架（加载中占位，避免空白闪跳） */

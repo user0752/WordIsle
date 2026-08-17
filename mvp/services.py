@@ -8,6 +8,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 
 import dashscope
 import httpx
@@ -367,23 +368,29 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
     }
 
     last_err = None
+    actual_model = None
     for cfg in route_llm_candidates("batch"):
         if not cfg.get("api_key"):
             continue
-        logger.info("LLM 调用 model=%s(%s) style=%s panel_count=%s", cfg["model"], cfg["value"], style, panel_count)
+        logger.info("LLM 批量编译调用 model=%s(%s) style=%s panel_count=%s", cfg["model"], cfg["value"], style, panel_count)
         try:
             data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="批量编译")
+            actual_model = cfg["model"]
             break
         except (httpx.HTTPError, KeyError) as e:
+            logger.warning("LLM 批量编译调用失败 model=%s error=%r，尝试下一候选模型", cfg["model"], e)
             last_err = e
             continue
     else:
         if last_err is None:
+            logger.error("LLM 批量编译失败：未找到已配置 API Key 的可用模型")
             raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        logger.error("LLM 批量编译失败（已尝试全部候选模型）: %r", last_err)
         raise HTTPException(500, f"LLM 调用失败（已尝试全部候选模型）: {last_err}")
 
     content = data["choices"][0]["message"]["content"]
     result = _extract_json(content)
+    result["_llm_model"] = actual_model
 
     # 兼容：确保 panels 数量与 effective_panel_count 一致
     panels = result.get("panels", [])
@@ -571,19 +578,24 @@ async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str =
                 if "JSON" not in str(e.detail) and "有效 JSON" not in str(e.detail):
                     raise
                 last_err = e
+                logger.warning("LLM 单点深耕返回无效 JSON（第 %s 次）model=%s，重试中", attempt + 1, cfg["model"])
                 await asyncio.sleep(1.0)
                 continue
             except (httpx.HTTPError, KeyError) as e:
                 # 模型调用失败（限流/网络等）：记录后尝试下一个候选模型
+                logger.warning("LLM 单点深耕调用失败 model=%s error=%r，尝试下一候选模型", cfg["model"], e)
                 last_err = e
                 break
         if result is not None:
+            result["_llm_model"] = cfg["model"]
             break
     if result is None:
         if last_err is None:
+            logger.error("LLM 单点深耕失败：未找到已配置 API Key 的可用模型")
             raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
         if isinstance(last_err, HTTPException):
             raise last_err
+        logger.error("LLM 单点深耕失败（已尝试全部候选模型）: %r", last_err)
         raise HTTPException(500, f"LLM 调用失败（已尝试全部候选模型）: {last_err}")
 
     # 容错：保证关键字段存在
@@ -688,14 +700,19 @@ async def call_video_script(words: list[str], theme_hint: str = "", art_style: s
             data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="视频脚本")
             break
         except (httpx.HTTPError, KeyError) as e:
+            logger.warning("LLM 视频脚本调用失败 model=%s error=%r，尝试下一候选模型", cfg["model"], e)
             last_err = e
             continue
     else:
         if last_err is None:
+            logger.error("LLM 视频脚本失败：未找到已配置 API Key 的可用模型")
             raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        logger.error("LLM 视频脚本失败（已尝试全部候选模型）: %r", last_err)
         raise HTTPException(500, f"LLM 视频脚本调用失败（已尝试全部候选模型）: {last_err}")
     content = data["choices"][0]["message"]["content"]
-    return _extract_json(content), data.get("usage", {})
+    parsed = _extract_json(content)
+    parsed["_llm_model"] = cfg["model"]
+    return parsed, data.get("usage", {})
 
 
 def _get_video_model_config(model_name: str) -> dict:
@@ -806,7 +823,8 @@ async def call_video_generation(prompt: str, model: str, duration: int = 5) -> b
     resolution = cfg.get("resolution", "480P")
     size = _VIDEO_RES_SIZE.get(resolution, "832*480")
     eff_duration = _VIDEO_FIXED_DURATION.get(model, duration)
-    logger.info("文生视频调用 model=%s resolution=%s duration=%s", model, resolution, eff_duration)
+    t0 = time.monotonic()
+    logger.info("文生视频调用 [视频编译] model=%s resolution=%s duration=%s", model, resolution, eff_duration)
 
     submit_url = f"{VIDEO_BASE_URL}/services/aigc/video-generation/video-synthesis"
     payload = {
@@ -845,10 +863,13 @@ async def call_video_generation(prompt: str, model: str, duration: int = 5) -> b
                 vresp.raise_for_status()
             # 视频用量：按本次实际生成秒数记录
             record_model_usage("video", model, resolution, eff_duration)
+            logger.info("文生视频成功 [视频编译] model=%s resolution=%s duration=%s 耗时=%.0fs", model, resolution, eff_duration, time.monotonic() - t0)
             return vresp.content
         elif status == "FAILED":
             msg = tdata.get("output", {}).get("message", "未知错误")
+            logger.error("文生视频任务失败 [视频编译] model=%s error=%s", model, msg)
             raise RuntimeError(f"文生视频任务失败: {msg}")
+    logger.error("文生视频任务超时 [视频编译] model=%s（10分钟未完成）", model)
     raise RuntimeError("文生视频任务超时（10分钟未完成）")
 
 
@@ -891,7 +912,9 @@ def _estimate_tokens(text: str) -> int:
 
 
 async def _chat_completion(base_url: str, api_key: str, model: str, payload: dict, timeout: float = 120.0, detail: str = "") -> dict:
-    """统一的 OpenAI 兼容 chat/completions 调用，返回完整响应 data。"""
+    """统一的 OpenAI 兼容 chat/completions 调用，返回完整响应 data。
+    所有 LLM 调用的日志收口：成功时统一输出 [功能] + 模型 + tokens + 耗时。"""
+    t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             f"{base_url}/chat/completions",
@@ -908,6 +931,7 @@ async def _chat_completion(base_url: str, api_key: str, model: str, payload: dic
         if not tokens:
             tokens = _estimate_tokens(" ".join(str(m.get("content", "")) for m in payload.get("messages", [])))
         record_model_usage("llm", model, detail, tokens)
+        logger.info("LLM 调用成功 [%s] model=%s tokens=%s 耗时=%.1fs", detail or "未标注功能", model, tokens, time.monotonic() - t0)
         return data
 
 
@@ -933,24 +957,28 @@ async def _call_llm_with_fallback(
     }
     if response_format:
         payload["response_format"] = response_format
+    feature = detail or route_key
 
     # 1) 尝试该调用点选定的模型
     cfg = get_route_llm(route_key)
     if cfg.get("api_key"):
+        logger.info("LLM 调用开始 [%s] model=%s(%s) route=%s", feature, cfg["model"], cfg["value"], route_key)
         try:
             return await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=timeout, detail=detail)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("LLM 调用失败 [%s] model=%s error=%r，准备降级", feature, cfg["model"], e)
 
     # 2) 降级到该调用点的默认模型（百炼 Qwen3.7-Flash）
     default_value = LLM_ROUTE_DEFAULT.get(route_key)
     default_cfg = LLM_MODEL_BY_VALUE.get(default_value)
     if default_cfg and default_cfg.get("api_key") and default_cfg["value"] != cfg["value"]:
+        logger.warning("LLM 降级 [%s] model=%s -> 默认兜底模型 %s", feature, cfg["model"], default_cfg["model"])
         try:
             return await _chat_completion(default_cfg["base_url"], default_cfg["api_key"], default_cfg["model"], payload, timeout=timeout, detail=detail)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("LLM 调用失败 [%s] 默认兜底模型 %s 也失败 error=%r", feature, default_cfg["model"], e)
 
+    logger.error("LLM 调用失败 [%s] 全部候选模型均无响应（route=%s）", feature, route_key)
     return None
 
 
@@ -958,15 +986,15 @@ async def _call_llm_with_fallback(
 # 百炼 TTS 语音合成
 # ========================================================================
 
-async def call_tts(text: str, voice=None, speed=1.0, model=None):
-    """调用百炼 HTTP TTS API 合成语音，返回 mp3 二进制。"""
+async def call_tts(text: str, voice=None, speed=1.0, model=None, feature: str = "音频合成"):
+    """调用百炼 HTTP TTS API 合成语音，返回 mp3 二进制。feature 用于日志标注调用来源功能。"""
     if not TTS_API_KEY:
         raise HTTPException(500, "请先设置 TTS_API_KEY 环境变量")
 
     dashscope.api_key = TTS_API_KEY
     voice_name = voice or TTS_VOICE
     model_name = model or TTS_MODEL
-    logger.info("TTS 合成调用 model=%s voice=%s", model_name, voice_name)
+    logger.info("TTS 合成调用 [%s] model=%s voice=%s 字数=%s", feature, model_name, voice_name, len(text))
 
     loop = asyncio.get_running_loop()
     try:
@@ -982,21 +1010,24 @@ async def call_tts(text: str, voice=None, speed=1.0, model=None):
             ),
         )
     except Exception as e:
-        logger.error("TTS 合成请求失败 model=%s voice=%s error=%r", model_name, voice_name, e)
+        logger.error("TTS 合成请求失败 [%s] model=%s voice=%s error=%r", feature, model_name, voice_name, e)
         raise HTTPException(500, f"TTS 合成请求失败 ({model_name}/{voice_name}): {e}")
 
     if not result or not result.audio_url:
         msg = (result.message or "返回空结果") if result else "返回空结果"
         raise HTTPException(500, f"TTS 合成失败: {msg}")
 
+    t0 = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             audio_resp = await client.get(result.audio_url)
             audio_resp.raise_for_status()
             # TTS 用量按合成文本预估 token 数
-            record_model_usage("tts", model_name, f"音色 {voice_name}", _estimate_tokens(text))
+            record_model_usage("tts", model_name, f"{feature} · 音色 {voice_name}", _estimate_tokens(text))
+            logger.info("TTS 合成成功 [%s] model=%s voice=%s 耗时=%.1fs", feature, model_name, voice_name, time.monotonic() - t0)
             return audio_resp.content
     except Exception as e:
+        logger.error("TTS 音频下载失败 [%s] model=%s error=%r", feature, model_name, e)
         raise HTTPException(500, f"TTS 音频下载失败: {e}")
 
 
@@ -1184,7 +1215,8 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
     endpoint = cfg.get("endpoint", "t2i")
     provider = cfg.get("provider", "dashscope")
     api_model = cfg.get("api_model", model_name)
-    logger.info("文生图调用 value=%s -> 实际模型=%s provider=%s endpoint=%s", model_name, api_model, provider, endpoint)
+    t0 = time.monotonic()
+    logger.info("文生图调用 model=%s(value=%s) provider=%s endpoint=%s", api_model, model_name, provider, endpoint)
     try:
         if endpoint == "openai":
             # OpenAI 兼容协议（TokenRhythm 免费调用 qwen-image-2.0 / wan2.7-image）
@@ -1210,10 +1242,11 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("文生图调用失败 model=%s endpoint=%s provider=%s error=%r", model_name, endpoint, provider, e)
+        logger.error("文生图调用失败 model=%s(value=%s) endpoint=%s provider=%s error=%r", api_model, model_name, endpoint, provider, e)
         raise HTTPException(500, f"文生图失败 ({model_name}): {e}")
     # 文生图用量：1 次调用 = 生成 1 张图
     record_model_usage("image", model_name, "", 1)
+    logger.info("文生图成功 model=%s(value=%s) 耗时=%.1fs", api_model, model_name, time.monotonic() - t0)
     return data
 
 
@@ -1339,15 +1372,19 @@ async def call_polysemy_detection(words: list[str]):
     for cfg in route_llm_candidates("polysemy"):
         if not cfg.get("api_key"):
             continue
+        logger.info("LLM 熟词僻意检测调用 model=%s(%s) words=%s", cfg["model"], cfg["value"], len(words))
         try:
             data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="熟词僻意检测")
             break
         except (httpx.HTTPError, KeyError) as e:
+            logger.warning("LLM 熟词僻意检测调用失败 model=%s error=%r，尝试下一候选模型", cfg["model"], e)
             last_err = e
             continue
     else:
         if last_err is None:
+            logger.error("LLM 熟词僻意检测失败：未找到已配置 API Key 的可用模型")
             raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        logger.error("LLM 熟词僻意检测失败（已尝试全部候选模型）: %r", last_err)
         raise HTTPException(500, f"LLM 熟词僻意检测失败（已尝试全部候选模型）: {last_err}")
 
     content = data["choices"][0]["message"]["content"].strip()
