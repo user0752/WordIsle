@@ -170,7 +170,7 @@ async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str,
         }
 
     if not consume_daily_quota("tts"):
-        raise HTTPException(429, f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)")
+        raise HTTPException(429, "今日 TTS 合成已达上限")
 
     audio_bytes = await call_tts(gen["body_en"], voice, speed, tts_model)
     file_name = f"{gen_id}_{voice}_{int(speed*100)}.mp3"
@@ -240,7 +240,7 @@ async def _run_generate(p: dict):
     style, art_style = p["style"], p["art_style"]
 
     if not consume_daily_quota("ai"):
-        raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+        raise HTTPException(429, "今日 AI 生成已达上限")
 
     yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
@@ -254,7 +254,7 @@ async def _run_generate(p: dict):
     panels = result.get("panels", [])
 
     if len(panels) > 0 and not consume_daily_quota("image", len(panels)):
-        raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
+        raise HTTPException(429, "今日文生图已达上限")
 
     # 批量文生图：失败即整体中止（fail-fast），绝不静默替换模型或给出残缺结果
     if panels:
@@ -326,7 +326,7 @@ async def _run_generate(p: dict):
     if generate_audio and full_body_en:
         yield ("step", {"step": "tts", "model": tts_model, "label": "合成整段剧情音频", "status": "running"})
         if not consume_daily_quota("tts"):
-            resp["audio_error"] = f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)，未生成音频"
+            resp["audio_error"] = "今日 TTS 合成已达上限，未生成音频"
             yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": resp["audio_error"]})
         else:
             try:
@@ -412,7 +412,7 @@ async def _run_single_compile(p: dict):
     generate_audio, tts_model = p["generate_audio"], p["tts_model"]
 
     if not consume_daily_quota("ai"):
-        raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+        raise HTTPException(429, "今日 AI 生成已达上限")
 
     yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
@@ -420,7 +420,7 @@ async def _run_single_compile(p: dict):
     yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "ok"})
 
     if not consume_daily_quota("image", 1):
-        raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
+        raise HTTPException(429, "今日文生图已达上限")
     yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
                     "label": "生成记忆钩子图", "status": "running"})
     ir = await generate_single_image(result.get("image_prompt", ""), image_model, gen_id)
@@ -478,7 +478,7 @@ async def _run_single_compile(p: dict):
     if generate_audio and body_en:
         yield ("step", {"step": "tts", "model": tts_model, "label": "合成朗读音频", "status": "running"})
         if not consume_daily_quota("tts"):
-            resp["audio_error"] = f"今日 TTS 合成已达上限 ({DAILY_TTS_LIMIT} 次)，未生成音频"
+            resp["audio_error"] = "今日 TTS 合成已达上限，未生成音频"
             yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": resp["audio_error"]})
         else:
             try:
@@ -665,8 +665,15 @@ async def health():
         "tokenrhythm_key":   bool(TOKENRHYTHM_API_KEY),                  # TokenRhythm 免费文生图
         "image_key":         bool(IMAGE_API_KEY or TTS_API_KEY or TOKENRHYTHM_API_KEY),  # 文生图(任一通道)
         "video_key":         bool(VIDEO_API_KEY or IMAGE_API_KEY or TTS_API_KEY),        # 文生视频(百炼)
-        "daily_usage": {**usage, "ai_limit": DAILY_AI_LIMIT, "tts_limit": DAILY_TTS_LIMIT, "image_limit": DAILY_IMAGE_LIMIT},
+        "daily_usage": usage,
     }
+
+
+@router.get("/api/usage")
+async def usage_stats(days: int = 0):
+    """返回模型调用统计（按日汇总、按模型汇总、最近明细），供用量情况页面展示。
+    days=0（缺省）返回全部历史；days>0 仅返回近 days 天。"""
+    return get_model_usage_stats(days)
 
 
 # ========================================================================
@@ -767,7 +774,7 @@ async def _run_video_generate(p: dict):
     tts_model, voice, art_style = p["tts_model"], p["voice"], p["art_style"]
 
     if not consume_daily_quota("ai"):
-        raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+        raise HTTPException(429, "今日 AI 生成已达上限")
 
     vid_id = str(uuid.uuid4())[:8]
     conn = get_db()
@@ -1366,7 +1373,7 @@ async def polysemy_auto_detect(req: Request):
             return {
                 "ok": False,
                 "skipped_reason": "ai_quota_exceeded",
-                "message": f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)，请明天再试。",
+                "message": "今日 AI 生成已达上限，请明天再试。",
                 "candidate_count": len(candidates),
                 "added_count": len(added_words),
                 "rejected_count": len(rejected_words),
@@ -1585,7 +1592,7 @@ async def detect_scenes(request: Request):
 
         # 3) 调用 LLM（消耗 AI 配额）
         if not consume_daily_quota("ai"):
-            raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+            raise HTTPException(429, "今日 AI 生成已达上限")
         result = await call_deepseek_scene_detect(words_to_assign, existing_scenes)
         assignments = result["scene_assignments"]
         new_scenes = result["new_scenes_suggested"]
@@ -1635,7 +1642,7 @@ async def detect_scenes(request: Request):
                          c["example_en"], c["example_zh"]),
                     )
                 collocations_generated += len(cols)
-        if collocations_generated:
+            # 每轮立即提交，释放写锁：避免 conn 的未提交写事务阻塞循环内 consume_daily_quota / record_model_usage
             conn.commit()
 
         msg = f"扫描 {len(words_to_assign)} 词，已归类 {assigned} 词，低置信度 {low_conf_count} 词，建议新场景 {len(new_scenes)} 个"
@@ -1823,7 +1830,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
         ).fetchall()
         collocations = [r["phrase_en"] for r in scene_cols] if scene_cols else None
         if not consume_daily_quota("ai"):
-            raise HTTPException(429, f"今日 AI 生成已达上限 ({DAILY_AI_LIMIT} 次)")
+            raise HTTPException(429, "今日 AI 生成已达上限")
 
         yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成场景连环画", "status": "running"})
         story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
@@ -1854,7 +1861,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
         panels = story.get("panels", [])
         image_ok_count = 0
         if panels and not consume_daily_quota("image", len(panels)):
-            raise HTTPException(429, f"今日文生图已达上限 ({DAILY_IMAGE_LIMIT} 次)")
+            raise HTTPException(429, "今日文生图已达上限")
         elif panels:
             yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
                             "label": f"生成 {len(panels)} 张图", "status": "running"})

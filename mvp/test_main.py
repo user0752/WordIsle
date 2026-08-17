@@ -2,9 +2,8 @@
 
 覆盖：
   1. /api/texts/{id} 系列接口应接受字符串 id（generations.id 为 uuid 字符串）
-  2. TTS/AI 每日限额必须生效（生成接口立即音频、regenerate-audio、新的一天限额为 0）
-  3. voice/speed 参数校验（防路径遍历与非法值）
-  4. 剧情连环画模式：build_user_prompt 注入画面数与主题；/api/generate 返回 panels
+  2. voice/speed 参数校验（防路径遍历与非法值）
+  3. 剧情连环画模式：build_user_prompt 注入画面数与主题；/api/generate 返回 panels
 
 运行：cd mvp && python -m unittest test_main -v
 """
@@ -144,55 +143,6 @@ class MainAppTestCase(unittest.TestCase):
         self.assertEqual(r.json()["url"], "/audios/abc12345_loongandy_v3_100.mp3")
         self.assertTrue((main.AUDIOS_DIR / "abc12345_loongandy_v3_100.mp3").exists())
 
-    # ================= Bug #2: 每日限额必须生效 =================
-
-    def test_generate_respects_ai_limit_zero(self):
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
-            return dict(FAKE_RESULT), {"total_tokens": 5}
-
-        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
-             mock.patch.object(db_module, "DAILY_AI_LIMIT", 0):
-            r = self.client.post("/api/generate", json={"words": "accommodate", "image_model": "z-image-turbo"})
-        self.assertEqual(r.status_code, 429)
-
-    def test_generate_immediate_audio_respects_tts_limit(self):
-        _seed_tts_usage(tts_count=1)
-
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
-            return dict(FAKE_RESULT), {"total_tokens": 5}
-
-        tts_calls = []
-
-        async def fake_tts(text, voice=None, speed=1.0):
-            tts_calls.append(1)
-            return b"fake-mp3"
-
-        with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
-             mock.patch.object(routes_module, "call_tts", fake_tts), \
-             mock.patch.object(db_module, "DAILY_TTS_LIMIT", 1), \
-             _mock_image_success():
-            r = self.client.post(
-                "/api/generate",
-                json={"words": "accommodate", "generate_audio_immediately": True, "image_model": "z-image-turbo"},
-            )
-        self.assertEqual(r.status_code, 200)
-        data = r.json()
-        self.assertFalse(data["has_audio"])
-        self.assertIn("audio_error", data)
-        self.assertEqual(tts_calls, [])
-
-    def test_regenerate_audio_respects_tts_limit(self):
-        _seed_generation()
-        _seed_tts_usage(tts_count=1)
-
-        async def fake_tts(text, voice=None, speed=1.0):
-            return b"fake-mp3"
-
-        with mock.patch.object(routes_module, "call_tts", fake_tts), \
-             mock.patch.object(db_module, "DAILY_TTS_LIMIT", 1):
-            r = self.client.post("/api/texts/abc12345/regenerate-audio", json={})
-        self.assertEqual(r.status_code, 429)
-
     # ================= Bug #4: voice/speed 参数校验 =================
 
     def test_audio_rejects_path_traversal_voice(self):
@@ -283,7 +233,7 @@ class MainAppTestCase(unittest.TestCase):
         p = main.build_user_prompt(["accommodate"])
         self.assertIn("4", p)  # 默认画面数
 
-    # ================= #16: 每日限额应原子占用、并发不超限 =================
+    # ================= #16: 用量统计应原子累加、并发不丢 =================
 
     def test_consume_quota_atomic_no_overcount(self):
         _seed_tts_usage(tts_count=0, ai_count=0)
@@ -292,19 +242,19 @@ class MainAppTestCase(unittest.TestCase):
         def worker():
             results.append(main.consume_daily_quota("ai"))
 
-        with mock.patch.object(db_module, "DAILY_AI_LIMIT", 30):
-            threads = [threading.Thread(target=worker) for _ in range(60)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
+        threads = [threading.Thread(target=worker) for _ in range(60)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
-        self.assertEqual(results.count(True), 30)
-        self.assertEqual(results.count(False), 30)
+        # 不再设上限：60 次调用全部记录成功
+        self.assertEqual(results.count(True), 60)
+        self.assertEqual(results.count(False), 0)
         conn = sqlite3.connect(str(main.DB_PATH))
         row = conn.execute("SELECT ai_count FROM daily_usage WHERE day=?", (date.today().isoformat(),)).fetchone()
         conn.close()
-        self.assertEqual(row[0], 30)
+        self.assertEqual(row[0], 60)
 
     # ================= #13: 重新生成音频应去重复用 =================
 
@@ -339,9 +289,6 @@ class MainAppTestCase(unittest.TestCase):
         self.assertEqual(du["ai"], 2)
         self.assertEqual(du["tts"], 3)
         self.assertEqual(du["image"], 0)
-        self.assertEqual(du["ai_limit"], main.DAILY_AI_LIMIT)
-        self.assertEqual(du["tts_limit"], main.DAILY_TTS_LIMIT)
-        self.assertEqual(du["image_limit"], main.DAILY_IMAGE_LIMIT)
 
     # ================= #17: /api/image-models 返回多档模型阶梯 =================
 

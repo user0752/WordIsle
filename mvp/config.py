@@ -337,11 +337,3 @@ LLM_ROUTES = [
 
 LLM_ROUTE_DEFAULT = {r["key"]: r["default"] for r in LLM_ROUTES}
 LLM_MODEL_BY_VALUE = {m["value"]: m for m in LLM_MODELS}
-
-# ========================================================================
-# 每日限额
-# ========================================================================
-
-DAILY_AI_LIMIT    = int(os.getenv("DAILY_AI_LIMIT", "20"))
-DAILY_TTS_LIMIT   = int(os.getenv("DAILY_TTS_LIMIT", "50"))
-DAILY_IMAGE_LIMIT = int(os.getenv("DAILY_IMAGE_LIMIT", "50"))

@@ -26,6 +26,8 @@ __all__ = [
     "get_feedback_stats",
     "get_setting",
     "set_setting",
+    "record_model_usage",
+    "get_model_usage_stats",
 ]
 
 # ========================================================================
@@ -35,6 +37,7 @@ __all__ = [
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
@@ -121,6 +124,16 @@ def init_db():
             ai_count  INTEGER DEFAULT 0,
             tts_count INTEGER DEFAULT 0,
             image_count INTEGER DEFAULT 0
+        );
+        -- 模型调用明细日志（无上限，供「用量情况」页面展示近期模型调用）
+        -- tokens 语义：LLM/TTS 为预估 token 数；图片为生成张数；视频为生成秒数
+        CREATE TABLE IF NOT EXISTS model_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            detail TEXT DEFAULT '',
+            tokens INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE TABLE IF NOT EXISTS videos (
             id TEXT PRIMARY KEY,
@@ -234,6 +247,11 @@ def init_db():
     # 迁移：为 daily_usage 添加 image_count 列
     try:
         conn.execute("ALTER TABLE daily_usage ADD COLUMN image_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    # 迁移：为 model_usage 添加 tokens 列（LLM/TTS 预估 token，图=张数，视频=秒数）
+    try:
+        conn.execute("ALTER TABLE model_usage ADD COLUMN tokens INTEGER DEFAULT 0")
     except Exception:
         pass
     # 迁移：为 word_scenes 添加 source 列（detect/adopt/manual），用于一词可入多场景时按来源清理
@@ -903,29 +921,78 @@ def normalize_words(raw: str) -> list[str]:
 
 
 def consume_daily_quota(category: str, count: int = 1) -> bool:
-    """原子地检查并占用一次当日配额（BEGIN IMMEDIATE 事务，超限返回 False）。"""
+    """记录一次当日用量（不再设上限，始终返回 True，仅用于用量统计）。
+    使用单条 UPSERT 原子累加，避免显式 BEGIN IMMEDIATE 造成锁冲突。"""
     today = date.today().isoformat()
     col_map = {"ai": "ai_count", "tts": "tts_count", "image": "image_count"}
-    limit_map = {"ai": DAILY_AI_LIMIT, "tts": DAILY_TTS_LIMIT, "image": DAILY_IMAGE_LIMIT}
     col = col_map.get(category, "ai_count")
-    limit = limit_map.get(category, DAILY_AI_LIMIT)
-    conn = sqlite3.connect(str(DB_PATH), timeout=10.0, isolation_level=None)
-    conn.row_factory = sqlite3.Row
+    conn = get_db()
     try:
-        conn.execute("PRAGMA busy_timeout=10000")
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT * FROM daily_usage WHERE day=?", (today,)).fetchone()
-        if row is None:
-            conn.execute("INSERT INTO daily_usage(day) VALUES(?)", (today,))
-            used = 0
-        else:
-            used = row[col]
-        if used + count > limit:
-            conn.execute("ROLLBACK")
-            return False
-        conn.execute(f"UPDATE daily_usage SET {col}={col}+? WHERE day=?", (count, today))
-        conn.execute("COMMIT")
+        conn.execute(
+            f"INSERT INTO daily_usage (day, {col}) VALUES (?, ?) "
+            f"ON CONFLICT(day) DO UPDATE SET {col} = {col} + excluded.{col}",
+            (today, count),
+        )
+        conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def record_model_usage(category: str, model: str, detail: str = "", tokens: int = 0):
+    """记录一次模型调用明细（category: llm/tts/image/video，无上限）。"""
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO model_usage (category, model, detail, tokens) VALUES (?,?,?,?)",
+            (category, model, detail, tokens),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def get_model_usage_stats(days: int = 0) -> dict:
+    """返回模型调用统计：按日汇总、按模型汇总、最近明细、总量汇总。
+    days>0 仅统计近 days 天；days<=0 统计全部历史。"""
+    conn = get_db()
+    try:
+        where, params = "", ()
+        if days and days > 0:
+            where = "WHERE created_at >= date('now','localtime',?)"
+            params = (f"-{days} days",)
+        calendar = [
+            dict(r) for r in conn.execute(
+                f"""SELECT substr(created_at,1,10) AS day, category, COUNT(*) AS cnt
+                    FROM model_usage
+                    {where}
+                    GROUP BY day, category ORDER BY day, category""",
+                params,
+            ).fetchall()
+        ]
+        models = [
+            dict(r) for r in conn.execute(
+                f"""SELECT category, model, COUNT(*) AS cnt, SUM(tokens) AS tokens
+                    FROM model_usage
+                    {where}
+                    GROUP BY category, model ORDER BY cnt DESC, model""",
+                params,
+            ).fetchall()
+        ]
+        recent = [
+            dict(r) for r in conn.execute(
+                "SELECT id, category, model, detail, tokens, created_at FROM model_usage ORDER BY id DESC LIMIT 100",
+            ).fetchall()
+        ]
+        # 总量汇总（calls=调用次数，tokens=用量：LLM/TTS 为预估 token，图=张数，视频=秒数）
+        summary = {"calls": {"llm": 0, "tts": 0, "image": 0, "video": 0},
+                   "tokens": {"llm": 0, "tts": 0, "image": 0, "video": 0}}
+        for m in models:
+            summary["calls"][m["category"]] = summary["calls"].get(m["category"], 0) + m["cnt"]
+            summary["tokens"][m["category"]] = summary["tokens"].get(m["category"], 0) + (m["tokens"] or 0)
+        return {"calendar": calendar, "models": models, "recent": recent, "summary": summary}
     finally:
         conn.close()
 

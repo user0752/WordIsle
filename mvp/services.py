@@ -15,6 +15,7 @@ from dashscope.audio.http_tts import HttpSpeechSynthesizer
 from fastapi import HTTPException
 
 from config import *
+from db import record_model_usage
 
 # 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）
 logger = logging.getLogger("toeic.services")
@@ -371,7 +372,7 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
             continue
         logger.info("LLM 调用 model=%s(%s) style=%s panel_count=%s", cfg["model"], cfg["value"], style, panel_count)
         try:
-            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="批量编译")
             break
         except (httpx.HTTPError, KeyError) as e:
             last_err = e
@@ -561,7 +562,7 @@ async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str =
         logger.info("LLM 单点深耕调用 model=%s(%s) word=%s art_style=%s", cfg["model"], cfg["value"], word, art_style)
         for attempt in range(2):
             try:
-                data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+                data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="单点深耕")
                 content = data["choices"][0]["message"]["content"]
                 result = _extract_json(content)
                 break  # 本模型成功
@@ -684,7 +685,7 @@ async def call_video_script(words: list[str], theme_hint: str = "", art_style: s
             continue
         logger.info("LLM 视频脚本调用 model=%s(%s) words=%s", cfg["model"], cfg["value"], len(words))
         try:
-            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="视频脚本")
             break
         except (httpx.HTTPError, KeyError) as e:
             last_err = e
@@ -842,7 +843,9 @@ async def call_video_generation(prompt: str, model: str, duration: int = 5) -> b
             async with httpx.AsyncClient(timeout=120.0) as client:
                 vresp = await client.get(video_url)
                 vresp.raise_for_status()
-                return vresp.content
+            # 视频用量：按本次实际生成秒数记录
+            record_model_usage("video", model, resolution, eff_duration)
+            return vresp.content
         elif status == "FAILED":
             msg = tdata.get("output", {}).get("message", "未知错误")
             raise RuntimeError(f"文生视频任务失败: {msg}")
@@ -878,7 +881,16 @@ def route_llm_candidates(route_key: str) -> list[dict]:
     return [primary]
 
 
-async def _chat_completion(base_url: str, api_key: str, model: str, payload: dict, timeout: float = 120.0) -> dict:
+def _estimate_tokens(text: str) -> int:
+    """粗略预估文本 token 数：中文约 1.5 token/字，英文约 4 字符/token。"""
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+    other = len(text) - cjk
+    return max(1, int(cjk * 1.5 + other / 4))
+
+
+async def _chat_completion(base_url: str, api_key: str, model: str, payload: dict, timeout: float = 120.0, detail: str = "") -> dict:
     """统一的 OpenAI 兼容 chat/completions 调用，返回完整响应 data。"""
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
@@ -890,7 +902,13 @@ async def _chat_completion(base_url: str, api_key: str, model: str, payload: dic
             json={**payload, "model": model},
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        # 优先取真实 usage，缺省时按输入文本粗估
+        tokens = (data.get("usage", {}) or {}).get("total_tokens") or 0
+        if not tokens:
+            tokens = _estimate_tokens(" ".join(str(m.get("content", "")) for m in payload.get("messages", [])))
+        record_model_usage("llm", model, detail, tokens)
+        return data
 
 
 # ========================================================================
@@ -904,6 +922,7 @@ async def _call_llm_with_fallback(
     max_tokens: int = 2048,
     response_format: dict | None = None,
     timeout: float = 30.0,
+    detail: str = "",
 ) -> dict | None:
     """调用 LLM，先试该调用点选定的模型，失败时降级到该调用点的默认模型（百炼 Qwen3.7-Flash）。
     返回解析后的 data dict；两者都失败时返回 None。"""
@@ -919,7 +938,7 @@ async def _call_llm_with_fallback(
     cfg = get_route_llm(route_key)
     if cfg.get("api_key"):
         try:
-            return await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=timeout)
+            return await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=timeout, detail=detail)
         except Exception:
             pass
 
@@ -928,7 +947,7 @@ async def _call_llm_with_fallback(
     default_cfg = LLM_MODEL_BY_VALUE.get(default_value)
     if default_cfg and default_cfg.get("api_key") and default_cfg["value"] != cfg["value"]:
         try:
-            return await _chat_completion(default_cfg["base_url"], default_cfg["api_key"], default_cfg["model"], payload, timeout=timeout)
+            return await _chat_completion(default_cfg["base_url"], default_cfg["api_key"], default_cfg["model"], payload, timeout=timeout, detail=detail)
         except Exception:
             pass
 
@@ -974,6 +993,8 @@ async def call_tts(text: str, voice=None, speed=1.0, model=None):
         async with httpx.AsyncClient(timeout=60.0) as client:
             audio_resp = await client.get(result.audio_url)
             audio_resp.raise_for_status()
+            # TTS 用量按合成文本预估 token 数
+            record_model_usage("tts", model_name, f"音色 {voice_name}", _estimate_tokens(text))
             return audio_resp.content
     except Exception as e:
         raise HTTPException(500, f"TTS 音频下载失败: {e}")
@@ -1176,20 +1197,24 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
                 if not IMAGE_API_KEY:
                     raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
                 api_key, base_url = IMAGE_API_KEY, IMAGE_BASE_URL
-            return await _generate_image_openai_compat(
+            data = await _generate_image_openai_compat(
                 prompt, api_model, api_key, base_url, cfg.get("size", "1024x1024")
             )
-        if not IMAGE_API_KEY:
+        elif not IMAGE_API_KEY:
             logger.error("文生图缺少 IMAGE_API_KEY/TTS_API_KEY（model=%s）", model_name)
             raise HTTPException(500, "请先设置 IMAGE_API_KEY 或 TTS_API_KEY 环境变量")
-        if endpoint == "multimodal":
-            return await _generate_image_qwen_multimodal(prompt, model_name)
-        return await _generate_image_wan_t2i(prompt, model_name)
+        elif endpoint == "multimodal":
+            data = await _generate_image_qwen_multimodal(prompt, model_name)
+        else:
+            data = await _generate_image_wan_t2i(prompt, model_name)
     except HTTPException:
         raise
     except Exception as e:
         logger.error("文生图调用失败 model=%s endpoint=%s provider=%s error=%r", model_name, endpoint, provider, e)
         raise HTTPException(500, f"文生图失败 ({model_name}): {e}")
+    # 文生图用量：1 次调用 = 生成 1 张图
+    record_model_usage("image", model_name, "", 1)
+    return data
 
 
 _STYLE_IMAGE_PROMPT_PREFIX = {
@@ -1315,7 +1340,7 @@ async def call_polysemy_detection(words: list[str]):
         if not cfg.get("api_key"):
             continue
         try:
-            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0)
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="熟词僻意检测")
             break
         except (httpx.HTTPError, KeyError) as e:
             last_err = e
@@ -1427,6 +1452,7 @@ async def call_word_enrichment(words: list[str]) -> dict:
         max_tokens=2048,
         response_format={"type": "json_object"},
         timeout=30.0,
+        detail="单词补充",
     )
 
     if data is None:
@@ -1568,6 +1594,7 @@ async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dic
         max_tokens=8192,
         response_format={"type": "json_object"},
         timeout=90.0,
+        detail="场景检测",
     )
     if data is None:
         raise HTTPException(500, "LLM 调用失败（双模型均无响应）")
@@ -1678,6 +1705,7 @@ async def call_deepseek_scene_collocations(words: list[str], scene_name: str, sc
             max_tokens=2048,
             response_format={"type": "json_object"},
             timeout=60.0,
+            detail="场景词伙",
         )
         if data is None:
             return []

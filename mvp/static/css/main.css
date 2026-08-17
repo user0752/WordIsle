@@ -151,16 +151,6 @@
     color: var(--text-primary);
     font-family: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
   }
-  .app-header .header-right {
-    display: flex; align-items: center; gap: 10px;
-  }
-  .app-header .usage-tag {
-    background: var(--bg-surface);
-    color: var(--text-tertiary);
-    font-size: 11px; padding: 4px 12px;
-    border-radius: 20px; letter-spacing: 0.2px;
-    border: 1px solid var(--border-subtle);
-  }
 
   /* ===== 主体 ===== */
   .app-body { flex: 1; display: flex; overflow: hidden; }
@@ -1041,3 +1031,38 @@
   .feedback-stats-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
   .feedback-satisfaction { font-size: 13px; font-weight: 600; color: var(--accent); margin-left: 12px; }
   .feedback-stats-meta { font-size: 12px; margin-left: 8px; }
+
+  /* ===== 用量情况 ===== */
+  /* 用量统计卡片 */
+  .usage-stat-card {
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    transition: all var(--transition-base);
+    border: 1px solid transparent;
+    background: var(--bg-card);
+  }
+  .usage-stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+  .usage-stat-card .el-card__body { padding: 16px; }
+  .usage-stat-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .usage-stat-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .usage-stat-num {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  }
+  .usage-stat-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 6px; }
+  .usage-stat-sub b { color: var(--text-primary); font-weight: 600; }
+
+  /* 按模型汇总条形占比 + tokens 列 */
+  .usage-bar-cell { display: flex; align-items: center; gap: 8px; }
+  .usage-bar-track { flex: 1; height: 10px; background: var(--bg-soft); border-radius: 5px; overflow: hidden; }
+  .usage-bar-fill { height: 100%; border-radius: 5px; transition: width .25s ease; }
+  .usage-tokens-cell {
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: nowrap;
+    text-align: right;
+    min-width: 70px;
+  }
+

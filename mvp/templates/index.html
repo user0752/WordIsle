@@ -21,11 +21,6 @@
         </div>
         <span class="logo-text">TOEIC 顽固词</span>
       </div>
-      <div class="header-right">
-        <span class="usage-tag">
-          AI {{ dailyUsage.ai }}/{{ dailyUsage.ai_limit }} · TTS {{ dailyUsage.tts }}/{{ dailyUsage.tts_limit }}
-        </span>
-      </div>
     </header>
 
     <div class="app-body">
@@ -84,6 +79,10 @@
 
           <!-- 设置 -->
           <div class="menu-divider"><span>系统</span></div>
+          <el-menu-item index="usage">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>用量情况</span>
+          </el-menu-item>
           <el-menu-item index="settings">
             <el-icon><Setting /></el-icon>
             <span>设置</span>
@@ -99,11 +98,6 @@
             <div>
               <h2 class="page-title"><span class="title-accent"></span>TOEIC 顽固词深度加工</h2>
               <p class="page-subtitle">三种编译方式，把死记硬背变成场景记忆</p>
-            </div>
-            <div class="flex gap-sm">
-              <el-tag v-if="dailyUsage" type="info" effect="plain" size="large">
-                今日 AI {{ dailyUsage.ai }}/{{ dailyUsage.ai_limit }} · 图片 {{ dailyUsage.image }}/{{ dailyUsage.image_limit }} · TTS {{ dailyUsage.tts }}/{{ dailyUsage.tts_limit }}
-              </el-tag>
             </div>
           </div>
 
@@ -1491,6 +1485,98 @@
           </template>
         </div>
 
+        <!-- 用量情况 -->
+        <div v-if="currentPage==='usage'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>用量情况</h2>
+              <p class="page-subtitle">历史用量情况 · LLM/TTS 记 tokens，文生图记张数，文生视频记秒数</p>
+            </div>
+          </div>
+
+          <!-- 统计概览：调用次数 + 用量（tokens/张/秒） -->
+          <el-row :gutter="12" class="mb-md">
+            <el-col :span="6" v-for="s in usageSummary" :key="s.key">
+              <el-card shadow="never" class="usage-stat-card">
+                <div class="usage-stat-head">
+                  <span class="usage-stat-label" :style="{color: usageColor(s.key)}">{{ s.label }}</span>
+                  <el-tag :type="s.tag" size="small" effect="plain">{{ usageUnit(s.key) }}</el-tag>
+                </div>
+                <div class="usage-stat-num">{{ s.count }}</div>
+                <div class="usage-stat-sub">
+                  <template v-if="s.key==='image'">累计生成 <b>{{ s.usage }}</b> 张</template>
+                  <template v-else-if="s.key==='video'">累计生成 <b>{{ s.usage }}</b> 秒</template>
+                  <template v-else>预估 <b>{{ s.usage.toLocaleString() }}</b> tokens</template>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+
+          <!-- 按模型汇总 -->
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><Cpu /></el-icon>
+                <span style="font-weight:600">按模型汇总（历史用量）</span>
+                <span class="text-secondary" style="font-size:12px">用量：LLM/TTS 为预估 tokens，文生图=张数，文生视频=秒数</span>
+              </div>
+            </template>
+            <el-table :data="modelSummary" size="small" stripe>
+              <el-table-column label="类别" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="usageTag(row.category)">{{ usageLabel(row.category) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="model" label="模型" min-width="260"></el-table-column>
+              <el-table-column label="调用占比" min-width="220">
+                <template #default="{ row }">
+                  <div class="usage-bar-cell">
+                    <div class="usage-bar-track">
+                      <div class="usage-bar-fill" :style="{width: modelBarWidth(row), background: usageColor(row.category)}"></div>
+                    </div>
+                    <span class="usage-tokens-cell" style="color:var(--text-secondary)">{{ row.cnt }} 次</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="Tokens 用量" width="150" align="right">
+                <template #default="{ row }">
+                  <span class="usage-tokens-cell" :style="{color: usageColor(row.category)}">{{ fmtUsage(row) }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+
+          <!-- 最近模型调用 -->
+          <el-card shadow="never">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><Clock /></el-icon>
+                <span style="font-weight:600">最近模型调用</span>
+                <span class="text-secondary" style="font-size:12px">说明标注该次调用来自哪个编译功能</span>
+              </div>
+            </template>
+            <el-table :data="recentCalls" size="small" stripe>
+              <el-table-column prop="created_at" label="时间" width="160"></el-table-column>
+              <el-table-column label="类别" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="usageTag(row.category)">{{ usageLabel(row.category) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="model" label="模型" min-width="250"></el-table-column>
+              <el-table-column label="说明" min-width="150">
+                <template #default="{ row }">
+                  <span>{{ usageDetail(row) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Tokens 用量" width="140" align="right">
+                <template #default="{ row }">
+                  <span class="usage-tokens-cell" :style="{color: usageColor(row.category)}">{{ fmtUsage(row) }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </div>
+
         <!-- 设置 -->
         <div v-if="currentPage==='settings'" class="page-container">
           <div class="page-header">
@@ -1505,7 +1591,7 @@
             <template #header>
               <div class="flex align-center gap-sm">
                 <el-icon><Cpu /></el-icon>
-                <span style="font-weight:600">可用 LLM 模型（4 个候选）</span>
+                <span style="font-weight:600">可用 LLM 模型（3 个候选）</span>
               </div>
             </template>
             <el-table :data="llmModels" size="small" stripe>
@@ -1616,7 +1702,63 @@ const app = createApp({
     }
 
     const currentPage = ref('home')
-    const dailyUsage = ref({ai:0, tts:0, image:0, ai_limit:20, tts_limit:50, image_limit:50})
+
+    // 用量情况页：统计概览 + 按模型汇总 + 最近模型调用（全部历史）
+    const usageSummary = ref([])
+    const modelSummary = ref([])
+    const recentCalls = ref([])
+    const modelMax = ref(1)
+    async function loadUsage() {
+      try {
+        const res = await api('/api/usage')
+        const total = { llm: 0, tts: 0, image: 0, video: 0 }
+        const tokens = { llm: 0, tts: 0, image: 0, video: 0 }
+        for (const c of (res.calendar || [])) {
+          total[c.category] = (total[c.category] || 0) + c.cnt
+        }
+        for (const m of (res.models || [])) {
+          tokens[m.category] = (tokens[m.category] || 0) + (m.tokens || 0)
+        }
+        modelSummary.value = res.models || []
+        modelMax.value = Math.max(1, ...(res.models || []).map(m => m.cnt || 0))
+        recentCalls.value = res.recent || []
+        usageSummary.value = [
+          { key: 'llm', label: 'LLM 调用', count: total.llm, usage: tokens.llm, tag: 'primary' },
+          { key: 'tts', label: 'TTS 合成', count: total.tts, usage: tokens.tts, tag: 'success' },
+          { key: 'image', label: '文生图', count: total.image, usage: tokens.image, tag: 'warning' },
+          { key: 'video', label: '文生视频', count: total.video, usage: tokens.video, tag: 'danger' },
+        ]
+      } catch (e) { /* silent */ }
+    }
+    function usageLabel(cat) {
+      return { llm: 'LLM', tts: 'TTS', image: '图', video: '视频' }[cat] || cat
+    }
+    function usageTag(cat) {
+      return { llm: 'primary', tts: 'success', image: 'warning', video: 'danger' }[cat] || 'info'
+    }
+    function usageColor(cat) {
+      return { llm: '#409eff', tts: '#67c23a', image: '#e6a23c', video: '#f56c6c' }[cat] || '#909399'
+    }
+    function usageUnit(cat) {
+      return { llm: 'tokens', tts: 'tokens', image: '张', video: '秒' }[cat] || '次'
+    }
+    // 用量格式化：LLM/TTS 为预估 token 数，图=张数，视频=秒数
+    function fmtUsage(row) {
+      const v = row.tokens || 0
+      if (row.category === 'image') return v + ' 张'
+      if (row.category === 'video') return v + ' 秒'
+      return v.toLocaleString() + ' tokens'
+    }
+    // 说明：优先展示后端记录的编译功能名，空则按类别兜底
+    function usageDetail(row) {
+      if (row.detail) return row.detail
+      if (row.category === 'image') return '文生图'
+      if (row.category === 'video') return '文生视频'
+      return '—'
+    }
+    function modelBarWidth(row) {
+      return Math.max(4, Math.round((row.cnt || 0) / modelMax.value * 100)) + '%'
+    }
 
     // 生成进度（SSE 流式：展示每步实际调用的模型与状态）
     // steps: [{ key, label, model, provider, status, message }]
@@ -2524,6 +2666,7 @@ const app = createApp({
       if (idx==='history') loadHistory()
       if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
       if (idx==='scenes') { sceneView.value='list'; loadScenes() }
+      if (idx==='usage') loadUsage()
       if (idx==='settings') loadLlmSettings()
     }
 
@@ -2535,18 +2678,7 @@ const app = createApp({
       loadImageModels()
       loadVideoModels()
       loadRecentItems()
-      api('/api/health').then(r => {
-        if (r && r.daily_usage) {
-          dailyUsage.value = {
-            ai: r.daily_usage.ai,
-            tts: r.daily_usage.tts,
-            image: r.daily_usage.image,
-            ai_limit: r.daily_usage.ai_limit,
-            tts_limit: r.daily_usage.tts_limit,
-            image_limit: r.daily_usage.image_limit,
-          }
-        }
-      }).catch(()=>{})
+      loadUsage()
     })
 
     // ====== 监听单词搜索（防抖 300ms，避免每次击键都触发请求） ======
@@ -2589,7 +2721,10 @@ const app = createApp({
     }
 
     return {
-      currentPage, dailyUsage,
+      currentPage,
+      usageSummary, modelSummary, recentCalls, modelMax,
+      loadUsage, usageLabel, usageTag, usageColor, usageUnit,
+      fmtUsage, usageDetail, modelBarWidth,
       genProgress, feedbackGiven, giveFeedback,
       ThumbsUp, ThumbsDown,
       feedbackStats,

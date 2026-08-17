@@ -439,9 +439,7 @@ def build_self_check_report(svc) -> list[tuple[str, str]]:
         usage = health.get("daily_usage", {})
         if usage:
             add("INFO",
-                f"今日用量: AI {usage.get('ai', 0)}/{usage.get('ai_limit', 0)} · "
-                f"TTS {usage.get('tts', 0)}/{usage.get('tts_limit', 0)} · "
-                f"图片 {usage.get('image', 0)}/{usage.get('image_limit', 0)}")
+                f"今日用量: AI {usage.get('ai', 0)} 次 · TTS {usage.get('tts', 0)} 次 · 图片 {usage.get('image', 0)} 次")
     else:
         status(False, "", "后端 /api/health: 不可访问（服务未启动或端口异常）")
 
