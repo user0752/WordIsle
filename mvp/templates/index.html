@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#3a7d6a">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a7d6a'/%3E%3Cpath d='M16 9c-2-1.4-4.6-2-8-2v16c3.4 0 6 .6 8 2 2-1.4 4.6-2 8-2V7c-3.4 0-6 .6-8 2z' fill='%23f5f5f7'/%3E%3Cpath d='M16 11v12' stroke='%23b8953a' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <title>TOEIC 顽固词深度加工系统</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -101,9 +103,29 @@
             </div>
           </div>
 
+          <!-- 数据概览 -->
+          <div class="home-stats" v-if="homeStatsLoaded">
+            <div class="home-stat-item">
+              <span class="home-stat-label">词库单词</span>
+              <span class="home-stat-num is-accent">{{ homeStats.words ?? '—' }}</span>
+              <span class="home-stat-sub">顽固词汇库</span>
+            </div>
+            <div class="home-stat-item">
+              <span class="home-stat-label">已生成故事</span>
+              <span class="home-stat-num">{{ homeStats.texts ?? '—' }}</span>
+              <span class="home-stat-sub">单点深耕 / 连环画 / 视频</span>
+            </div>
+            <div class="home-stat-item">
+              <span class="home-stat-label">反馈满意度</span>
+              <span class="home-stat-num is-gold">{{ homeStats.satisfaction != null ? homeStats.satisfaction + '%' : '—' }}</span>
+              <span class="home-stat-sub">已反馈 {{ homeStats.rated ?? 0 }} 条</span>
+            </div>
+          </div>
+
           <!-- 三卡片入口 -->
           <div class="home-cards">
-            <div class="home-card home-card-single" @click="currentPage='single'">
+            <div class="home-card home-card-single" role="button" tabindex="0" @click="currentPage='single'" @keyup.enter="currentPage='single'">
+              <span class="home-card-index">01</span>
               <div class="home-card-icon">
                 <el-icon :size="32"><Aim /></el-icon>
               </div>
@@ -112,7 +134,8 @@
               <div class="home-card-desc">词伙 + 场景句 + 派生词 + 1 张记忆钩子图，字面义与商务义冲突</div>
               <el-button type="primary" plain class="home-card-btn">进入深耕</el-button>
             </div>
-            <div class="home-card home-card-scenes" @click="currentPage='scenes'">
+            <div class="home-card home-card-scenes" role="button" tabindex="0" @click="currentPage='scenes'" @keyup.enter="currentPage='scenes'">
+              <span class="home-card-index">02</span>
               <div class="home-card-icon">
                 <el-icon :size="32"><Grid /></el-icon>
               </div>
@@ -121,7 +144,8 @@
               <div class="home-card-desc">自动聚类单词到商务场景，按场景批量编译连环画</div>
               <el-button type="primary" plain class="home-card-btn">查看场景</el-button>
             </div>
-            <div class="home-card home-card-batch" @click="currentPage='compile'">
+            <div class="home-card home-card-batch" role="button" tabindex="0" @click="currentPage='compile'" @keyup.enter="currentPage='compile'">
+              <span class="home-card-index">03</span>
               <div class="home-card-icon">
                 <el-icon :size="32"><List /></el-icon>
               </div>
@@ -138,8 +162,17 @@
               <h3 class="home-section-title"><span class="title-accent"></span>最近生成</h3>
               <el-button link type="primary" @click="currentPage='history'; loadHistory()">查看全部 →</el-button>
             </div>
-            <el-card shadow="never" v-loading="recentLoading">
-              <div v-if="recentItems.length===0 && !recentLoading" class="empty-state">
+            <el-card shadow="never">
+              <div v-if="recentLoading" class="skeleton-recent">
+                <div v-for="n in 3" :key="n" class="skeleton-recent-row">
+                  <div class="skeleton-recent-cover skeleton"></div>
+                  <div class="skeleton-recent-body">
+                    <div class="skeleton skeleton-line w60"></div>
+                    <div class="skeleton skeleton-line w80"></div>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="recentItems.length===0" class="empty-state">
                 <el-icon><document-remove /></el-icon>
                 <p>暂无生成记录，从上方三卡片入口开始吧</p>
               </div>
@@ -794,9 +827,12 @@
                   <el-button link type="primary" :icon="Refresh" @click="loadScenes">刷新</el-button>
                 </div>
               </template>
-              <div v-if="scenesLoading" class="flex-center" style="padding:60px 0">
-                <el-icon class="rotating" :size="24" color="var(--accent)"><Loading /></el-icon>
-                <span class="ml-sm text-secondary">加载中...</span>
+              <div v-if="scenesLoading" class="skeleton-scene-grid">
+                <div v-for="n in 6" :key="n" class="skeleton-card skeleton-scene-card">
+                  <div class="skeleton skeleton-line w60"></div>
+                  <div class="skeleton skeleton-line w40"></div>
+                  <div class="skeleton skeleton-line w80"></div>
+                </div>
               </div>
               <div v-else-if="scenes.length===0" class="empty-state">
                 <el-icon :size="32"><warning-filled /></el-icon>
@@ -868,7 +904,7 @@
                   </div>
                 </template>
                 <div class="flex gap-sm" style="flex-wrap:wrap;align-items:center">
-                  <span class="text-secondary" style="font-size:12px;border:1px solid var(--border-color);border-radius:4px;padding:2px 8px">自然覆盖 · 高关联场景词连贯成故事</span>
+                  <span class="text-secondary" style="font-size:12px;border:1px solid var(--border-default);border-radius:4px;padding:2px 8px">自然覆盖 · 高关联场景词连贯成故事</span>
                   <span class="text-secondary" style="font-size:12px">固定 3 画面</span>
                   <el-select v-model="sceneCompileForm.art_style" placeholder="画风" clearable style="width:130px" size="small">
                     <el-option v-for="s in artStyleOptions" :key="s.value" :label="s.label" :value="s.value"></el-option>
@@ -1013,8 +1049,8 @@
           <el-card v-if="feedbackStats" shadow="never" class="mb-md">
             <div class="feedback-stats">
               <span class="feedback-stats-label">反馈满意度</span>
-              <el-tag type="success" effect="plain" class="ml-sm">{{ feedbackStats.up }} 👍</el-tag>
-              <el-tag type="danger" effect="plain" class="ml-sm">{{ feedbackStats.down }} 👎</el-tag>
+              <el-tag type="success" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><ThumbsUp /></el-icon>{{ feedbackStats.up }} 有帮助</el-tag>
+              <el-tag type="danger" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><ThumbsDown /></el-icon>{{ feedbackStats.down }} 需改进</el-tag>
               <span class="feedback-satisfaction">满意度 {{ Math.round(feedbackStats.satisfaction * 100) }}%</span>
               <span class="text-secondary feedback-stats-meta">（{{ feedbackStats.rated }} 条已反馈）</span>
             </div>
@@ -1234,9 +1270,13 @@
             </div>
             <el-button :icon="Back" @click="currentPage='history'; loadHistory()">返回历史记录</el-button>
           </div>
-          <div v-if="resultLoading" class="flex-center" style="padding:100px 0">
-            <el-icon class="rotating" :size="32" color="var(--accent)"><Loading /></el-icon>
-            <span class="ml-sm text-secondary">正在加载...</span>
+          <div v-if="resultLoading" class="skeleton-result">
+            <div class="skeleton-result-image skeleton"></div>
+            <div class="skeleton-result-lines">
+              <div class="skeleton skeleton-line w60"></div>
+              <div class="skeleton skeleton-line w80"></div>
+              <div class="skeleton skeleton-line w40"></div>
+            </div>
           </div>
           <template v-else-if="resultData">
             <!-- 单点深耕结果 -->
@@ -1768,7 +1808,8 @@ const app = createApp({
       return { llm: 'primary', tts: 'success', image: 'warning', video: 'danger' }[cat] || 'info'
     }
     function usageColor(cat) {
-      return { llm: '#409eff', tts: '#67c23a', image: '#e6a23c', video: '#f56c6c' }[cat] || '#909399'
+      // 品牌绿金体系：LLM=主绿 / TTS=成功绿 / 图=暖金 / 视频=警示红
+      return { llm: '#3a7d6a', tts: '#2d7a5a', image: '#b8953a', video: '#c24a3a' }[cat] || '#5b5b6b'
     }
     function usageUnit(cat) {
       return { llm: 'tokens', tts: 'tokens', image: '张', video: '秒' }[cat] || '次'
@@ -1829,7 +1870,7 @@ const app = createApp({
       if (item.status === 'running') genProgress.value.active = genProgress.value.steps.indexOf(item)
     }
 
-    // AI 结果反馈（👍/👎）
+    // AI 结果反馈（有帮助 / 需改进）
     const feedbackGiven = ref('')
     function giveFeedback(v) {
       // 从当前结果获取 generation_id
@@ -2029,6 +2070,26 @@ const app = createApp({
     // 首页最近生成
     const recentItems = ref([])
     const recentLoading = ref(false)
+
+    // 首页数据概览（词库 / 已生成故事 / 反馈满意度）
+    const homeStats = ref({ words: null, texts: null, satisfaction: null, rated: 0 })
+    const homeStatsLoaded = ref(false)
+    async function loadHomeStats() {
+      try {
+        const [w, t, f] = await Promise.all([
+          api('/api/words?page=1&page_size=1'),
+          api('/api/texts?page=1&page_size=1'),
+          api('/api/feedback'),
+        ])
+        homeStats.value = {
+          words: w.total || 0,
+          texts: t.total || 0,
+          satisfaction: f && f.satisfaction != null ? Math.round(f.satisfaction * 100) : null,
+          rated: (f && f.rated) || 0,
+        }
+        homeStatsLoaded.value = true
+      } catch(e) { homeStatsLoaded.value = false }
+    }
 
     // 熟词僻意
     const polysemySearch = ref('')
@@ -2709,7 +2770,7 @@ const app = createApp({
     // ====== 菜单 ======
     function handleMenuSelect(idx) {
       currentPage.value = idx
-      if (idx==='home') loadRecentItems()
+      if (idx==='home') { loadRecentItems(); loadHomeStats() }
       if (idx==='words') loadWords()
       if (idx==='history') loadHistory()
       if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
@@ -2726,6 +2787,7 @@ const app = createApp({
       loadImageModels()
       loadVideoModels()
       loadRecentItems()
+      loadHomeStats()
       loadUsage()
     })
 
@@ -2788,7 +2850,7 @@ const app = createApp({
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
       openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
-      recentItems, recentLoading,
+      recentItems, recentLoading, homeStats, homeStatsLoaded, loadHomeStats,
       polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
       candidateTotal, autoDetectRunning, autoDetectResult,
       polysemySelectedSet, polysemySelectedCount, polysemyAllSelected, polysemyIndeterminate,

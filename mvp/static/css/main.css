@@ -15,6 +15,7 @@
     --accent: #3a7d6a;
     --accent-light: #4a9a82;
     --accent-dark: #2a6654;
+    --accent-active: #1a5a48;
     --accent-bg: rgba(58, 125, 106, 0.06);
     --accent-border: rgba(58, 125, 106, 0.14);
     --accent-glow: rgba(58, 125, 106, 0.12);
@@ -47,6 +48,10 @@
     --border-subtle: rgba(0, 0, 0, 0.04);
     --border-default: rgba(0, 0, 0, 0.07);
     --border-strong: rgba(0, 0, 0, 0.12);
+    --border-light: #e5e5e7;
+
+    /* 兼容旧引用：模型价格/轮次标签等金色点缀 */
+    --warning-color: var(--warning);
 
     /* 阴影 — 极淡，几乎不可见 */
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
@@ -287,7 +292,7 @@
     --el-button-border-color: var(--accent);
     --el-button-hover-bg-color: var(--accent-dark);
     --el-button-hover-border-color: var(--accent-dark);
-    --el-button-active-bg-color: #1a5a48;
+    --el-button-active-bg-color: var(--accent-active);
     --el-button-text-color: #ffffff;
     font-weight: 500;
     border-radius: 8px;
@@ -600,7 +605,7 @@
   /* ===== 场景聚汇 ===== */
   .scene-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
   .scene-card { cursor: pointer; transition: var(--transition-fast); border: 1px solid var(--border-light); }
-  .scene-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(212,144,102,0.15); }
+  .scene-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px var(--accent-glow); }
   .scene-card :deep(.el-card__body) { padding: 14px; }
   .scene-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
   .scene-name-en { font-size: 15px; font-weight: 600; color: var(--text-primary); }
@@ -755,7 +760,7 @@
   .home-card:hover::before { transform: scaleX(1); }
   .home-card-single::before { background: var(--success, #3a7d6a); }
   .home-card-scenes::before { background: var(--accent); }
-  .home-card-batch::before { background: var(--warning-color, #d97706); }
+  .home-card-batch::before { background: var(--gold); }
   .home-card-icon {
     width: 56px; height: 56px; border-radius: 50%;
     background: var(--bg-surface);
@@ -763,7 +768,7 @@
     color: var(--accent);
   }
   .home-card-single .home-card-icon { color: var(--success, #3a7d6a); }
-  .home-card-batch .home-card-icon { color: var(--warning-color, #d97706); }
+  .home-card-batch .home-card-icon { color: var(--gold); }
   .home-card-title {
     font-size: 20px; font-weight: 700; color: var(--text-primary);
     margin-top: 4px; letter-spacing: -0.2px;
@@ -1014,12 +1019,12 @@
   .gen-step-label { font-weight: 500; }
   .gen-step-elapsed { flex: 0 0 auto; font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
   .gen-step-msg { color: var(--danger); font-size: 12px; }
-  .gen-step-msg.is-ok { color: var(--warning-color, #e6a23c); }
+  .gen-step-msg.is-ok { color: var(--gold); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
   /* 图片 shimmer 骨架（加载中占位，避免空白闪跳） */
   .single-image-wrap, .panel-image-wrap, .recent-item-cover, .story-card-cover {
-    background: linear-gradient(100deg, var(--bg-surface) 40%, #fafbfc 50%, var(--bg-surface) 60%);
+    background: linear-gradient(100deg, var(--bg-surface) 40%, var(--bg-soft) 50%, var(--bg-surface) 60%);
     background-size: 200% 100%;
     animation: shimmer 1.4s ease-in-out infinite;
   }
@@ -1073,5 +1078,147 @@
     white-space: nowrap;
     text-align: right;
     min-width: 70px;
+  }
+
+  /* ===== 骨架屏（加载占位，替代白屏/纯 spinner） ===== */
+  .skeleton {
+    position: relative; overflow: hidden;
+    background: linear-gradient(100deg, var(--bg-surface) 40%, var(--bg-soft) 50%, var(--bg-surface) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: var(--radius-sm);
+  }
+  .skeleton-card {
+    border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+    padding: 20px; background: var(--bg-card);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .skeleton-line { height: 12px; border-radius: 4px; }
+  .skeleton-line.w40 { width: 40%; }
+  .skeleton-line.w60 { width: 60%; }
+  .skeleton-line.w80 { width: 80%; }
+  .skeleton-block { border-radius: var(--radius-md); }
+
+  /* 首页最近生成 · 骨架列表行 */
+  .skeleton-recent { display: flex; flex-direction: column; gap: 10px; }
+  .skeleton-recent-row {
+    display: flex; gap: 14px; padding: 12px 14px;
+    border: 1px solid var(--border-default); border-radius: var(--radius-md);
+    background: var(--bg-card);
+  }
+  .skeleton-recent-cover { width: 80px; height: 56px; border-radius: var(--radius-md); flex-shrink: 0; }
+  .skeleton-recent-body { flex: 1; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+
+  /* 场景网格 · 骨架卡 */
+  .skeleton-scene-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px;
+  }
+  .skeleton-scene-card { min-height: 120px; }
+
+  /* 结果页 · 骨架布局 */
+  .skeleton-result { display: flex; flex-direction: column; gap: 20px; }
+  .skeleton-result-image { width: 100%; max-width: 600px; aspect-ratio: 4 / 3; border-radius: var(--radius-md); }
+  .skeleton-result-lines { display: flex; flex-direction: column; gap: 10px; }
+
+  /* ===== 首页 hero 重做 ===== */
+  .home-card .home-card-index {
+    position: absolute; top: 20px; right: 22px;
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px; color: var(--text-muted);
+    letter-spacing: 0.5px;
+    transition: color var(--transition-fast);
+  }
+  .home-card:hover .home-card-index { color: var(--accent); }
+  .home-card-single:hover .home-card-index { color: var(--success, #3a7d6a); }
+  .home-card-batch:hover .home-card-index { color: var(--gold); }
+  .home-card-subtitle { text-transform: uppercase; }
+
+  /* 首页数据概览纸带 */
+  .home-stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+    margin-bottom: 32px;
+  }
+  .home-stat-item {
+    position: relative; overflow: hidden;
+    padding: 18px 22px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xs);
+  }
+  .home-stat-item::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(135deg, transparent 60%, var(--accent-bg));
+  }
+  .home-stat-label {
+    font-size: 12px; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.8px;
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    margin-bottom: 6px;
+  }
+  .home-stat-num {
+    display: block; font-size: 30px; font-weight: 700; line-height: 1.1;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .home-stat-num.is-gold { color: var(--gold); }
+  .home-stat-num.is-accent { color: var(--accent); }
+  .home-stat-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+  /* ===== 单点深耕图 · 纸面装裱 ===== */
+  /* 保留容器上的 shimmer 背景（加载占位），仅叠加纸感边框与留白 */
+  .single-image-wrap {
+    border: 1px solid var(--border-subtle);
+    padding: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  }
+  .single-image-wrap .single-image { border-radius: 4px; }
+
+  /* ===== 连环画面板 · 交替左右阅读 ===== */
+  .panel-card:nth-child(even) { flex-direction: row-reverse; }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 768px) {
+    .app-main { overflow-x: hidden; }
+
+    /* 表单纵向堆叠，压住内联固定宽度 */
+    .el-form-item { display: block; margin-bottom: 16px; }
+    .el-form-item__label {
+      display: block; width: auto !important; text-align: left;
+      line-height: 1.6; padding-bottom: 4px; margin-bottom: 4px;
+    }
+    .el-form-item__content { margin-left: 0 !important; }
+    .el-input, .el-select, .el-textarea, .el-autocomplete { max-width: 100% !important; }
+    .el-radio-group { display: flex; flex-wrap: wrap; }
+
+    /* 弹窗贴近屏幕边缘 */
+    .el-dialog { width: calc(100vw - 24px) !important; max-width: calc(100vw - 24px) !important; }
+    .el-dialog .el-dialog__body { max-height: 70vh; overflow-y: auto; }
+
+    /* 连环画面板纵向堆叠 */
+    .panel-card, .panel-card:nth-child(even) { flex-direction: column; }
+    .panel-image-wrap, .panel-image-fallback { width: 100%; }
+    .panel-index { flex-direction: row; width: auto; align-items: center; gap: 8px; }
+
+    /* 首页 */
+    .home-stats { grid-template-columns: 1fr; gap: 10px; }
+    .home-cards { gap: 12px; }
+    .home-card { padding: 22px 18px; }
+    .home-card .home-card-index { top: 16px; right: 16px; }
+
+    /* 历史/最近列表封面收缩 */
+    .story-card { flex-direction: row; }
+    .story-card-cover { width: 84px; min-height: 60px; }
+    .story-cover-placeholder { width: 84px; height: 60px; }
+  }
+
+  /* 更窄屏幕微调 */
+  @media (max-width: 480px) {
+    .page-header { flex-direction: column; gap: 12px; }
+    .page-title { font-size: 18px; }
+    .home-card-title { font-size: 18px; }
+    .single-image-wrap { min-height: 200px; }
+    .skeleton-result-image { min-height: 200px; }
   }
 
