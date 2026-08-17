@@ -59,7 +59,7 @@
             <span>批量编译</span>
           </el-menu-item>
           <el-menu-item index="video">
-            <el-icon><VideoCamera /></el-icon>
+            <el-icon><video-camera /></el-icon>
             <span>视频编译</span>
           </el-menu-item>
 
@@ -80,7 +80,7 @@
           <!-- 设置 -->
           <div class="menu-divider"><span>系统</span></div>
           <el-menu-item index="usage">
-            <el-icon><DataAnalysis /></el-icon>
+            <el-icon><data-analysis /></el-icon>
             <span>用量情况</span>
           </el-menu-item>
           <el-menu-item index="settings">
@@ -140,14 +140,14 @@
             </div>
             <el-card shadow="never" v-loading="recentLoading">
               <div v-if="recentItems.length===0 && !recentLoading" class="empty-state">
-                <el-icon><DocumentRemove /></el-icon>
+                <el-icon><document-remove /></el-icon>
                 <p>暂无生成记录，从上方三卡片入口开始吧</p>
               </div>
               <div v-else class="recent-list">
                 <div v-for="r in recentItems" :key="r.id" class="recent-item" @click="viewResult(r)">
                   <div class="recent-item-cover">
                     <img v-if="r.first_image_url" :src="r.first_image_url" alt="cover" loading="lazy" />
-                    <div v-else-if="r.video_url" class="recent-cover-placeholder"><el-icon :size="22"><VideoCamera /></el-icon></div>
+                    <div v-else-if="r.video_url" class="recent-cover-placeholder"><el-icon :size="22"><video-camera /></el-icon></div>
                     <div v-else class="recent-cover-placeholder"><el-icon :size="22"><Picture /></el-icon></div>
                   </div>
                   <div class="recent-item-body">
@@ -253,7 +253,7 @@
               <el-card shadow="never" style="min-height:400px">
                 <template #header><span class="card-title">解析结果</span></template>
                 <div v-if="!parseResult" class="empty-state">
-                  <el-icon><DocumentRemove /></el-icon>
+                  <el-icon><document-remove /></el-icon>
                   <p>输入单词后点击"预览解析"查看结果</p>
                 </div>
                 <div v-else class="parse-result">
@@ -399,13 +399,13 @@
               <img :src="singleResult.image_url" :alt="singleResult.word" class="single-image" />
             </div>
             <div v-else-if="singleResult.image_error" class="empty-state">
-              <el-icon><WarningFilled /></el-icon>
+              <el-icon><warning-filled /></el-icon>
               <p>{{ singleResult.image_error }}</p>
             </div>
 
             <!-- 词伙搭配 -->
             <div v-if="singleResult.collocation && singleResult.collocation.phrase_en" class="single-section">
-              <div class="single-section-title"><el-icon><EditPen /></el-icon> 词伙搭配</div>
+              <div class="single-section-title"><el-icon><edit-pen /></el-icon> 词伙搭配</div>
               <div class="single-collocation">
                 <span class="phrase-en">{{ singleResult.collocation.phrase_en }}</span>
                 <el-tag size="small" type="info" class="ml-sm">{{ singleResult.collocation.collocation_type }}</el-tag>
@@ -415,7 +415,7 @@
 
             <!-- 场景句中英 -->
             <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en" class="single-section">
-              <div class="single-section-title"><el-icon><ChatDotRound /></el-icon> 荒诞场景句
+              <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句
                 <el-tag v-if="singleResult.scene_sentence.mood" size="small" class="ml-sm" type="warning">{{ singleResult.scene_sentence.mood }}</el-tag>
               </div>
               <div class="single-sentence-en">{{ singleResult.scene_sentence.en }}</div>
@@ -479,7 +479,7 @@
               </div>
             </template>
             <div v-if="compileWords.length===0" class="empty-state">
-              <el-icon><WarningFilled /></el-icon>
+              <el-icon><warning-filled /></el-icon>
               <p>未选择任何单词，请返回单词库选择</p>
               <el-button type="primary" class="mt-md" @click="currentPage='words'">去选择单词</el-button>
             </div>
@@ -599,7 +599,7 @@
               </div>
             </template>
             <div v-if="compileWords.length===0" class="empty-state">
-              <el-icon><WarningFilled /></el-icon>
+              <el-icon><warning-filled /></el-icon>
               <p>未选择任何单词，请返回单词库选择</p>
               <el-button type="primary" class="mt-md" @click="currentPage='words'">去选择单词</el-button>
             </div>
@@ -709,7 +709,7 @@
               <video :src="videoResult.video_url" controls playsinline style="width:100%;max-width:640px;border-radius:8px" @error="videoOnError"></video>
             </div>
             <div v-else class="empty-state">
-              <el-icon><WarningFilled /></el-icon>
+              <el-icon><warning-filled /></el-icon>
               <p>视频生成失败或仍在处理中</p>
             </div>
             <div class="mt-md" style="font-size:13px">
@@ -760,7 +760,7 @@
             <el-card v-if="sceneSuggestions.length" shadow="never" class="mb-md" header-color="var(--success)">
               <template #header>
                 <div class="flex-between">
-                  <span class="card-title"><el-icon><MagicStick /></el-icon> 新场景建议（待采纳 {{ sceneSuggestions.length }} 个）</span>
+                  <span class="card-title"><el-icon><magic-stick /></el-icon> 新场景建议（待采纳 {{ sceneSuggestions.length }} 个）</span>
                   <el-button link type="primary" @click="sceneSuggestions=[]">清空建议</el-button>
                 </div>
               </template>
@@ -799,7 +799,7 @@
                 <span class="ml-sm text-secondary">加载中...</span>
               </div>
               <div v-else-if="scenes.length===0" class="empty-state">
-                <el-icon :size="32"><WarningFilled /></el-icon>
+                <el-icon :size="32"><warning-filled /></el-icon>
                 <p>暂无场景，点击右上角"增量检测"开始</p>
               </div>
               <div v-else class="scene-grid">
@@ -914,7 +914,7 @@
                   </div>
                 </template>
                 <div v-if="!sceneDetail.words || sceneDetail.words.length===0" class="empty-state">
-                  <el-icon :size="32"><WarningFilled /></el-icon>
+                  <el-icon :size="32"><warning-filled /></el-icon>
                   <p>该场景下暂无单词</p>
                 </div>
                 <el-table v-else :data="sceneDetail.words" stripe size="small">
@@ -934,7 +934,7 @@
                   </div>
                 </template>
                 <div v-if="!sceneDetail.collocations || sceneDetail.collocations.length===0" class="empty-state">
-                  <el-icon :size="32"><WarningFilled /></el-icon>
+                  <el-icon :size="32"><warning-filled /></el-icon>
                   <p>暂无词伙，运行「增量检测」或「全量重扫」后自动生成</p>
                 </div>
                 <div v-else class="collocations-grid">
@@ -1021,14 +1021,14 @@
           </el-card>
           <el-card shadow="never" v-loading="historyLoading">
             <div v-if="historyData.length===0 && !historyLoading" class="empty-state">
-              <el-icon><DocumentRemove /></el-icon>
+              <el-icon><document-remove /></el-icon>
               <p>暂无历史记录</p>
             </div>
             <div v-else class="story-list">
               <div v-for="h in historyData" :key="h.id" class="story-card" @click="viewResult(h)">
                 <div class="story-card-cover">
                   <img v-if="h.first_image_url" :src="h.first_image_url" alt="cover" loading="lazy" />
-                  <div v-else-if="h.video_url" class="story-cover-placeholder"><el-icon :size="28"><VideoCamera /></el-icon></div>
+                  <div v-else-if="h.video_url" class="story-cover-placeholder"><el-icon :size="28"><video-camera /></el-icon></div>
                   <div v-else class="story-cover-placeholder"><el-icon :size="28"><Picture /></el-icon></div>
                 </div>
                 <div class="story-card-body">
@@ -1084,7 +1084,7 @@
           <el-card v-if="autoDetectResult" shadow="never" class="mb-md" :class="autoDetectResult.ok?'card-border-success':'card-border-danger'">
             <template #header>
               <div class="flex-between" style="width:100%">
-                <span class="card-title"><el-icon><MagicStick /></el-icon> 自动检测结果</span>
+                <span class="card-title"><el-icon><magic-stick /></el-icon> 自动检测结果</span>
                 <el-button link @click="autoDetectResult=null; loadCandidates()"><el-icon><Close /></el-icon></el-button>
               </div>
             </template>
@@ -1179,7 +1179,7 @@
             </template>
             <div v-loading="polysemyLoading">
               <div v-if="polysemyHot.length===0 && !polysemyLoading" class="empty-state">
-                <el-icon><DocumentRemove /></el-icon>
+                <el-icon><document-remove /></el-icon>
                 <p>暂无数据</p>
               </div>
               <el-row v-else :gutter="16">
@@ -1259,13 +1259,13 @@
                   <img :src="(resultData.panels||[])[0].image_url" :alt="(resultData.words||[])[0]||'word'" class="single-image" />
                 </div>
                 <div v-else-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].image_error" class="empty-state">
-                  <el-icon><WarningFilled /></el-icon>
+                  <el-icon><warning-filled /></el-icon>
                   <p>{{ (resultData.panels||[])[0].image_error }}</p>
                 </div>
 
                 <!-- 词伙搭配 -->
                 <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].collocation && (resultData.panels||[])[0].collocation.phrase_en" class="single-section">
-                  <div class="single-section-title"><el-icon><EditPen /></el-icon> 词伙搭配</div>
+                  <div class="single-section-title"><el-icon><edit-pen /></el-icon> 词伙搭配</div>
                   <div class="single-collocation">
                     <span class="phrase-en">{{ (resultData.panels||[])[0].collocation.phrase_en }}</span>
                     <el-tag size="small" type="info" class="ml-sm">{{ (resultData.panels||[])[0].collocation.collocation_type }}</el-tag>
@@ -1275,7 +1275,7 @@
 
                 <!-- 场景句中英 -->
                 <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].scene_sentence && (resultData.panels||[])[0].scene_sentence.en" class="single-section">
-                  <div class="single-section-title"><el-icon><ChatDotRound /></el-icon> 荒诞场景句
+                  <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句
                     <el-tag v-if="(resultData.panels||[])[0].scene_sentence.mood" size="small" class="ml-sm" type="warning">{{ (resultData.panels||[])[0].scene_sentence.mood }}</el-tag>
                   </div>
                   <div class="single-sentence-en">{{ (resultData.panels||[])[0].scene_sentence.en }}</div>
@@ -1365,7 +1365,7 @@
                   <video :src="resultData.video_url" controls playsinline style="width:100%;max-width:640px;border-radius:8px" @error="videoOnError"></video>
                 </div>
                 <div v-else class="empty-state">
-                  <el-icon><WarningFilled /></el-icon>
+                  <el-icon><warning-filled /></el-icon>
                   <p>视频不存在或已被删除</p>
                 </div>
                 <div class="mt-md" style="font-size:13px">
@@ -1447,7 +1447,7 @@
             </div>
 
             <el-card v-if="resultData.ending_moral" shadow="never" class="mb-md story-moral">
-              <template #header><span class="card-title"><el-icon><MagicStick /></el-icon> 故事寓意</span></template>
+              <template #header><span class="card-title"><el-icon><magic-stick /></el-icon> 故事寓意</span></template>
               <p class="story-moral-text">{{ resultData.ending_moral }}</p>
             </el-card>
 
