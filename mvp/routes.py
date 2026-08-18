@@ -1035,6 +1035,35 @@ async def batch_delete_words(req: Request):
     return {"ok": True, "deleted": deleted, "count": len(cleaned)}
 
 
+@router.post("/api/words/restore")
+async def restore_words(req: Request):
+    """撤销删除：重新插入被删的单词（已存在的自动忽略，恢复时保留原词性/释义）。"""
+    body = await _safe_json(req)
+    words = body.get("words", []) or []
+    conn = get_db()
+    restored = 0
+    try:
+        for item in words:
+            if isinstance(item, dict):
+                w = str(item.get("word", "")).strip().lower()
+                pos = _coerce_str(item.get("pos", ""))
+                meaning_zh = _coerce_str(item.get("meaning_zh", ""))
+            else:
+                w = str(item).strip().lower()
+                pos, meaning_zh = "", ""
+            if not w or len(w) < 2:
+                continue
+            try:
+                conn.execute("INSERT INTO words (word, pos, meaning_zh) VALUES (?,?,?)", (w, pos, meaning_zh))
+                restored += 1
+            except sqlite3.IntegrityError:
+                continue
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "restored": restored}
+
+
 @router.post("/api/words/parse")
 async def parse_words(req: Request):
     body = await _safe_json(req)
@@ -1104,6 +1133,77 @@ async def import_words(req: Request):
     finally:
         conn.close()
     return {"imported": imported, "duplicated": duplicated, "total_input": len(word_list), "enriched": enriched}
+
+
+async def _run_import_stream(word_list):
+    """单词导入核心流程（生成器）：入库 → 分批 LLM 补全词性释义，逐步 yield 状态。"""
+    cleaned = []
+    for w in word_list:
+        w = str(w).strip().lower()
+        if w and len(w) >= 2:
+            cleaned.append(w)
+    if not cleaned:
+        yield ("step", {"step": "import", "label": "写入单词", "status": "failed", "message": "未解析到有效单词"})
+        yield ("result", {"imported": 0, "duplicated": 0, "total_input": len(word_list), "enriched": 0})
+        return
+
+    yield ("step", {"step": "import", "model": "", "label": f"写入 {len(cleaned)} 个单词", "status": "running"})
+    conn = get_db()
+    imported = 0
+    duplicated = 0
+    new_words = []
+    try:
+        for w in cleaned:
+            try:
+                conn.execute("INSERT INTO words (word) VALUES (?)", (w,))
+                imported += 1
+                new_words.append(w)
+            except sqlite3.IntegrityError:
+                duplicated += 1
+        conn.commit()
+        yield ("step", {"step": "import", "model": "", "label": f"写入 {len(cleaned)} 个单词", "status": "ok",
+                        "message": f"成功 {imported} 个，重复 {duplicated} 个"})
+
+        enriched = 0
+        if new_words:
+            batch_size = 20
+            total_batches = (len(new_words) + batch_size - 1) // batch_size
+            for bi, i in enumerate(range(0, len(new_words), batch_size)):
+                batch = new_words[i:i + batch_size]
+                step_key = f"enrich_{bi}"
+                step_label = f"AI 补充词性释义（第 {bi + 1}/{total_batches} 批）"
+                yield ("step", {"step": step_key, "label": step_label, "status": "running"})
+                try:
+                    enrich = await call_word_enrichment(batch)
+                except Exception:
+                    yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": "该批补全失败，已跳过"})
+                    continue
+                ok = 0
+                if not enrich.get("skipped") and enrich.get("results"):
+                    for r in enrich["results"]:
+                        if r.get("pos") or r.get("meaning_zh"):
+                            conn.execute(
+                                "UPDATE words SET pos=?, meaning_zh=? WHERE word=?",
+                                (r.get("pos", ""), r.get("meaning_zh", ""), r.get("word", "")),
+                            )
+                            ok += 1
+                conn.commit()
+                enriched += ok
+                yield ("step", {"step": step_key, "label": step_label, "status": "ok", "message": f"补全 {ok} 个"})
+    finally:
+        conn.close()
+
+    yield ("result", {"imported": imported, "duplicated": duplicated, "total_input": len(word_list), "enriched": enriched})
+
+
+@router.post("/api/words/import-stream")
+async def import_words_stream(req: Request):
+    """单词导入（SSE 流式）：逐批反馈入库与 LLM 补全进度。"""
+    body = await _safe_json(req)
+    word_list = body.get("words", [])
+    if not isinstance(word_list, list):
+        word_list = []
+    return StreamingResponse(_sse_stream(_run_import_stream(word_list)), media_type="text/event-stream")
 
 
 # ========================================================================
@@ -1477,6 +1577,127 @@ async def polysemy_auto_detect(req: Request):
     }
 
 
+async def _run_polysemy_detect_stream(batch_size: int, max_batches: int):
+    """熟词僻意自动检测核心流程（生成器）：分批 LLM 检测 → 入库，逐步 yield 状态。"""
+    conn = get_db()
+    candidates = [
+        r["word"] for r in conn.execute(
+            """SELECT w.word FROM words w
+               LEFT JOIN polysemy p ON p.word = w.word
+               WHERE p.word IS NULL
+               ORDER BY w.created_at DESC
+               LIMIT ?""",
+            (batch_size * max_batches,),
+        ).fetchall()
+    ]
+    conn.close()
+
+    if not candidates:
+        yield ("step", {"step": "candidates", "label": "扫描候选词", "status": "failed", "message": "没有新的候选词"})
+        yield ("result", {
+            "ok": True, "skipped_reason": "no_candidates",
+            "message": "单词库中所有单词均已在熟词僻意表中，没有新的候选词。",
+            "candidate_count": 0, "added_count": 0, "rejected_count": 0, "added_words": [], "rejected_words": [],
+        })
+        return
+
+    yield ("step", {"step": "candidates", "label": f"扫描候选词（{len(candidates)} 个）", "status": "ok"})
+
+    added_words = []
+    rejected_words = []
+    total_ai_cost = 0
+    batches_processed = 0
+    total_batches = min(max_batches, (len(candidates) + batch_size - 1) // batch_size)
+
+    def _result(ok, reason=None, msg=""):
+        return {
+            "ok": ok, "skipped_reason": reason, "message": msg,
+            "candidate_count": len(candidates), "batches_processed": batches_processed,
+            "ai_quota_used": total_ai_cost,
+            "added_count": len(added_words), "rejected_count": len(rejected_words),
+            "added_words": added_words, "rejected_words": rejected_words,
+        }
+
+    for i in range(0, len(candidates), batch_size):
+        if batches_processed >= max_batches:
+            break
+        batch = candidates[i:i + batch_size]
+        if not batch:
+            break
+        batches_processed += 1
+        step_key = f"llm_{batches_processed}"
+        step_label = f"AI 判定熟词僻意（第 {batches_processed}/{total_batches} 批）"
+
+        if not consume_daily_quota("ai"):
+            yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": "今日 AI 生成已达上限"})
+            yield ("result", _result(False, "ai_quota_exceeded", "今日 AI 生成已达上限，请明天再试。"))
+            return
+        total_ai_cost += 1
+        yield ("step", {"step": step_key, "label": step_label, "status": "running"})
+
+        try:
+            detect_res = await call_polysemy_detection(batch)
+        except HTTPException as e:
+            yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": f"LLM 调用失败: {e.detail}"})
+            yield ("result", _result(False, "llm_error", f"LLM 调用失败: {e.detail}"))
+            return
+        except Exception as e:
+            yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": f"LLM 调用异常: {e}"})
+            yield ("result", _result(False, "llm_error", f"LLM 调用异常: {e}"))
+            return
+
+        results = detect_res.get("results", [])
+        conn = get_db()
+        try:
+            added = 0
+            for item in results:
+                w = item.get("word", "").strip().lower()
+                if not w or w not in batch:
+                    continue
+                if item.get("is_polysemy") is True:
+                    col = json.dumps(item.get("collocations") or [], ensure_ascii=False)
+                    try:
+                        conn.execute(
+                            """INSERT OR IGNORE INTO polysemy
+                               (word, common_meaning_zh, common_meaning_en,
+                                business_meaning_zh, business_meaning_en,
+                                example_en, example_zh, collocations,
+                                toc_part, frequency_level)
+                               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                            (w, item.get("common_meaning_zh", ""), item.get("common_meaning_en", ""),
+                             item.get("business_meaning_zh", ""), item.get("business_meaning_en", ""),
+                             item.get("example_en", ""), item.get("example_zh", ""), col,
+                             item.get("toc_part", ""), item.get("frequency_level", "")),
+                        )
+                        added_words.append(w)
+                        added += 1
+                    except Exception:
+                        rejected_words.append(w)
+                else:
+                    rejected_words.append(w)
+            conn.commit()
+        finally:
+            conn.close()
+        yield ("step", {"step": step_key, "label": step_label, "status": "ok", "message": f"新增 {added} 个"})
+
+    yield ("result", _result(True, None, (
+        f"完成！共检测候选词 {len(candidates)} 个（{batches_processed} 批 / AI 配额消耗 {total_ai_cost} 次），"
+        f"新增熟词僻意 {len(added_words)} 个，判定不匹配 {len(rejected_words)} 个。"
+    )))
+
+
+@router.post("/api/polysemy/auto-detect-stream")
+async def polysemy_auto_detect_stream(req: Request):
+    """熟词僻意自动检测（SSE 流式）：逐批反馈 LLM 判定与入库进度。"""
+    body = await _safe_json(req)
+    batch_size = _clamp_int(body.get("batch_size", 20), 5, 50, 20)
+    max_batches = _clamp_int(body.get("max_batches", 5), 1, 20, 5)
+    return StreamingResponse(
+        _sse_stream(_run_polysemy_detect_stream(batch_size, max_batches)),
+        media_type="text/event-stream",
+    )
+
+
 # ========================================================================
 # 场景聚汇 API
 # ========================================================================
@@ -1668,6 +1889,129 @@ async def detect_scenes(request: Request):
         }
     finally:
         conn.close()
+
+
+async def _run_scene_detect_stream(limit: int, force: bool):
+    """场景自动检测核心流程（生成器）：扫描 → LLM 分类 → 写库 → 生成词伙，逐步 yield 状态。"""
+    conn = get_db()
+    try:
+        existing = conn.execute(
+            "SELECT id, name_en, name_zh, description FROM scenes WHERE status = 'active'"
+        ).fetchall()
+        existing_scenes = [dict(r) for r in existing]
+
+        if force:
+            unassigned = conn.execute("""
+                SELECT w.id, w.word FROM words w WHERE w.word IS NOT NULL AND w.word != ''
+                ORDER BY w.id LIMIT ?
+            """, (limit,)).fetchall()
+        else:
+            unassigned = conn.execute("""
+                SELECT w.id, w.word FROM words w
+                LEFT JOIN word_scenes ws ON ws.word_id = w.id
+                WHERE ws.word_id IS NULL AND w.word IS NOT NULL AND w.word != ''
+                ORDER BY w.id LIMIT ?
+            """, (limit,)).fetchall()
+
+        words_to_assign = [r["word"] for r in unassigned]
+        word_id_map = {r["word"].lower(): r["id"] for r in unassigned}
+
+        if not words_to_assign:
+            yield ("step", {"step": "scan", "label": "扫描待分类单词", "status": "failed", "message": "没有待分类的单词"})
+            yield ("result", {"scanned": 0, "assigned_count": 0, "low_confidence_count": 0,
+                              "new_scenes_suggested": [], "warning": "", "collocations_generated": 0,
+                              "message": "没有待分类的单词"})
+            return
+
+        yield ("step", {"step": "scan", "label": f"扫描待分类单词（{len(words_to_assign)} 个）", "status": "ok"})
+
+        if not consume_daily_quota("ai"):
+            raise HTTPException(429, "今日 AI 生成已达上限")
+
+        yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 分类单词到场景", "status": "running"})
+        result = await call_deepseek_scene_detect(words_to_assign, existing_scenes)
+        assignments = result["scene_assignments"]
+        new_scenes = result["new_scenes_suggested"]
+        warning = result.get("warning", "")
+        yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 分类单词到场景", "status": "ok",
+                        "message": f"归类 {len(assignments)} 词，建议新场景 {len(new_scenes)} 个"})
+
+        assigned = 0
+        low_conf_count = 0
+        involved_scene_ids = set()
+        for a in assignments:
+            wid = word_id_map.get(a["word"].lower())
+            if wid is None:
+                continue
+            conn.execute("DELETE FROM word_scenes WHERE word_id = ? AND source = 'detect'", (wid,))
+            conn.execute(
+                "INSERT OR IGNORE INTO word_scenes (word_id, scene_id, source) VALUES (?,?,?)",
+                (wid, a["scene_id"], "detect"),
+            )
+            involved_scene_ids.add(a["scene_id"])
+            assigned += 1
+            if a.get("low_confidence", False):
+                low_conf_count += 1
+        conn.commit()
+
+        collocations_generated = 0
+        total_colloc = len(involved_scene_ids)
+        for ci, sid in enumerate(involved_scene_ids):
+            if not consume_daily_quota("ai"):
+                break
+            scene_row = conn.execute("SELECT name_en, name_zh FROM scenes WHERE id = ?", (sid,)).fetchone()
+            if not scene_row:
+                continue
+            scene_words = [r["word"] for r in conn.execute(
+                "SELECT w.word FROM word_scenes ws JOIN words w ON w.id = ws.word_id WHERE ws.scene_id = ?",
+                (sid,),
+            ).fetchall()]
+            step_key = f"colloc_{ci}"
+            step_label = f"生成词伙搭配（第 {ci + 1}/{total_colloc} 个场景）"
+            yield ("step", {"step": step_key, "label": step_label, "status": "running"})
+            try:
+                cols = await call_deepseek_scene_collocations(scene_words, scene_row["name_en"], scene_row["name_zh"] or "")
+            except Exception:
+                yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": "该场景词伙生成失败，已跳过"})
+                continue
+            if cols:
+                conn.execute("DELETE FROM scene_collocations WHERE scene_id = ?", (sid,))
+                for c in cols:
+                    conn.execute(
+                        "INSERT INTO scene_collocations (scene_id, phrase_en, phrase_zh, words, example_en, example_zh) VALUES (?,?,?,?,?,?)",
+                        (sid, c["phrase_en"], c["phrase_zh"], json.dumps(c["words"], ensure_ascii=False),
+                         c["example_en"], c["example_zh"]),
+                    )
+                collocations_generated += len(cols)
+            conn.commit()
+            yield ("step", {"step": step_key, "label": step_label, "status": "ok", "message": f"生成 {len(cols)} 条"})
+    finally:
+        conn.close()
+
+    msg = f"扫描 {len(words_to_assign)} 词，已归类 {assigned} 词，低置信度 {low_conf_count} 词，建议新场景 {len(new_scenes)} 个"
+    if warning:
+        msg = f"⚠️ {warning}"
+    yield ("result", {
+        "scanned": len(words_to_assign),
+        "assigned_count": assigned,
+        "low_confidence_count": low_conf_count,
+        "new_scenes_suggested": new_scenes,
+        "warning": warning,
+        "collocations_generated": collocations_generated,
+        "message": msg,
+    })
+
+
+@router.post("/api/scenes/detect-stream")
+async def detect_scenes_stream(request: Request):
+    """场景自动检测（SSE 流式）：扫描 → LLM 分类 → 词伙搭配，逐步反馈进度。"""
+    body = await _safe_json(request)
+    limit = _clamp_int(body.get("limit", 50), 1, 500, 50)
+    force = _to_bool(body.get("force", False))
+    return StreamingResponse(
+        _sse_stream(_run_scene_detect_stream(limit, force)),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/api/scenes/adopt")

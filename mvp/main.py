@@ -7,6 +7,7 @@ TOEIC 顽固词深度加工系统 - MVP 个人版
 访问: http://localhost:8000
 """
 
+import re
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -28,11 +29,26 @@ VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 # ========================================================================
 
 def _load_index_html() -> str:
-    """从 templates/index.html 读取前端页面。"""
+    """从 templates/index.html 读取前端页面。
+
+    给 /static 下的 js/css 引用自动追加版本号（基于文件修改时间），
+    避免浏览器缓存旧文件导致 ES Module 加载失败（如 import 不存在的导出）。
+    """
     path = TEMPLATES_DIR / "index.html"
     if not path.exists():
         return "<h1>前端文件未找到</h1>"
-    return path.read_text(encoding="utf-8")
+    html = path.read_text(encoding="utf-8")
+
+    def _versioned(m: "re.Match[str]") -> str:
+        quote, url = m.group(1), m.group(2)
+        fp = STATIC_DIR / url[len("/static/"):]
+        try:
+            ver = int(fp.stat().st_mtime)
+        except OSError:
+            ver = 0
+        return f"{quote}{url}?v={ver}{quote}"
+
+    return re.sub(r'(["\'])(/static/(?:js|css)/[^"\']+)\1', _versioned, html)
 
 # ========================================================================
 # FastAPI 应用
@@ -63,7 +79,8 @@ app.include_router(router)
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(_load_index_html())
+    # no-store：HTML 永不缓存，保证每次都能拿到带最新版本号的静态资源引用
+    return HTMLResponse(_load_index_html(), headers={"Cache-Control": "no-store"})
 
 # ========================================================================
 # 日志落盘：toeic.* 业务日志 JSON 单行，按天轮转

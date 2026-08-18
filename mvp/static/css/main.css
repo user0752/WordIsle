@@ -229,6 +229,14 @@
   .app-sidebar .el-menu-item:active {
     transform: scale(0.97);
   }
+  /* 页签忙碌圈圈：文字与旋转 Loading 图标水平排列 */
+  .app-sidebar .menu-item-with-busy {
+    display: inline-flex;
+    align-items: center;
+  }
+  .app-sidebar .menu-item-with-busy .rotating {
+    color: var(--accent);
+  }
 
   /* ===== 主内容区 ===== */
   .app-main { flex: 1; overflow-y: auto; }
@@ -1004,6 +1012,7 @@
   .gen-progress .el-step__title.is-process { color: var(--accent); font-weight: 500; }
   .gen-progress-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
   .gen-progress-elapsed { font-size: 12px; font-weight: 400; color: var(--text-tertiary); }
+  .gen-cancel-btn { flex: 0 0 auto; margin-left: auto; }
   .gen-progress-hint {
     font-size: 12px; color: var(--text-secondary); line-height: 1.6;
     background: color-mix(in srgb, var(--accent) 6%, transparent);

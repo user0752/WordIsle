@@ -43,33 +43,33 @@
           </el-menu-item>
           <el-menu-item index="import">
             <el-icon><Upload /></el-icon>
-            <span>导入单词</span>
+            <span class="menu-item-with-busy"><span>导入单词</span><el-icon v-if="menuBusy('import')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
 
           <!-- 内容编译 -->
           <div class="menu-divider"><span>内容编译</span></div>
           <el-menu-item index="single">
             <el-icon><Aim /></el-icon>
-            <span>单点深耕</span>
+            <span class="menu-item-with-busy"><span>单点深耕</span><el-icon v-if="menuBusy('single')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
           <el-menu-item index="scenes">
             <el-icon><Grid /></el-icon>
-            <span>场景聚汇</span>
+            <span class="menu-item-with-busy"><span>场景聚汇</span><el-icon v-if="menuBusy('scenes')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
           <el-menu-item index="compile">
             <el-icon><List /></el-icon>
-            <span>批量编译</span>
+            <span class="menu-item-with-busy"><span>批量编译</span><el-icon v-if="menuBusy('compile')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
           <el-menu-item index="video">
             <el-icon><video-camera /></el-icon>
-            <span>视频编译</span>
+            <span class="menu-item-with-busy"><span>视频编译</span><el-icon v-if="menuBusy('video')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
 
           <!-- 知识库 -->
           <div class="menu-divider"><span>知识库</span></div>
           <el-menu-item index="polysemy">
             <el-icon><Discount /></el-icon>
-            <span>熟词僻意</span>
+            <span class="menu-item-with-busy"><span>熟词僻意</span><el-icon v-if="menuBusy('polysemy')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
 
           <!-- 回顾 -->
@@ -322,6 +322,21 @@
                   <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="importing" :disabled="!parseResult.words.length" @click="doImport">
                     确认导入 ({{ parseResult.words.length }} 个单词)
                   </el-button>
+
+                  <!-- 生成进度指示（单词导入：入库 + AI 补全词性释义） -->
+                  <el-card v-if="genProgress.visible && genProgress.feature==='import'" shadow="never" class="mb-md gen-progress" style="margin-top:12px">
+                    <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
+                    <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用与耗时：</div>
+                    <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+                      <span class="gen-step-status" :class="'is-'+s.status">
+                        {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+                      </span>
+                      <span class="gen-step-label">{{ s.label }}</span>
+                      <el-tag v-if="s.model" size="small" class="ml-sm" :type="s.status==='failed' ? 'danger' : 'primary'">{{ s.model }}</el-tag>
+                      <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+                      <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
+                    </div>
+                  </el-card>
                 </div>
               </el-card>
             </el-col>
@@ -346,7 +361,7 @@
                 <el-input v-model="singleForm.word" placeholder="输入或粘贴一个英文单词，如 submit / tender / address" style="width:360px" clearable @keyup.enter="handleSingleCompile"></el-input>
                 <el-button type="primary" class="ml-md" :icon="Aim" :loading="singleCompiling" @click="handleSingleCompile">深耕</el-button>
                 <el-button class="ml-md" :icon="Collection" @click="openWordPicker">从词库选择</el-button>
-                <span class="ml-md text-secondary" style="font-size:13px">记忆卡片生成 + 文生图约需 15-40 秒，请耐心等待</span>
+                <span class="ml-md text-secondary" style="font-size:13px">记忆卡片生成 + 文生图约需 1-2 分钟，请耐心等待</span>
               </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="singleForm.theme_hint" placeholder="可选，如 finance / law / shipping。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
@@ -396,7 +411,7 @@
 
           <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
             <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
             <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
               <span class="gen-step-status" :class="'is-'+s.status">
@@ -598,7 +613,7 @@
 
           <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
             <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
             <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
               <span class="gen-step-status" :class="'is-'+s.status">
@@ -711,7 +726,7 @@
 
           <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
           <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
             <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
             <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
               <span class="gen-step-status" :class="'is-'+s.status">
@@ -780,6 +795,21 @@
                 </el-tooltip>
               </div>
             </div>
+
+            <!-- 检测进度（场景检测 SSE） -->
+            <el-card v-if="genProgress.visible && genProgress.feature==='scene-detect'" shadow="never" class="mb-md gen-progress">
+              <div class="gen-progress-title">{{ genFeatureLabel }} · 检测进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消检测</el-button></div>
+              <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用与耗时：</div>
+              <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+                <span class="gen-step-status" :class="'is-'+s.status">
+                  {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+                </span>
+                <span class="gen-step-label">{{ s.label }}</span>
+                <el-tag v-if="s.model" size="small" class="ml-sm" :type="s.status==='failed' ? 'danger' : 'primary'">{{ s.model }}</el-tag>
+                <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+                <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
+              </div>
+            </el-card>
 
             <!-- 检测结果提示 -->
             <el-alert v-if="sceneDetectResult" :type="sceneDetectResult.low_confidence_count>0?'warning':'success'" show-icon :closable="false" class="mb-md">
@@ -925,7 +955,7 @@
 
               <!-- 生成进度指示（统一：功能名 + 温馨提示与预计时长 + 已等待计时 + 每步实际模型与耗时） -->
               <el-card v-if="genProgress.visible" shadow="never" class="mb-md gen-progress">
-                <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span></div>
+                <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
                 <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用的模型与耗时：</div>
                 <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
                   <span class="gen-step-status" :class="'is-'+s.status">
@@ -1117,6 +1147,20 @@
               </el-tooltip>
             </div>
           </div>
+          <!-- 检测进度（熟词僻意 SSE） -->
+          <el-card v-if="genProgress.visible && genProgress.feature==='polysemy'" shadow="never" class="mb-md gen-progress">
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 检测进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消检测</el-button></div>
+            <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用与耗时：</div>
+            <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+              <span class="gen-step-status" :class="'is-'+s.status">
+                {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+              </span>
+              <span class="gen-step-label">{{ s.label }}</span>
+              <el-tag v-if="s.model" size="small" class="ml-sm" :type="s.status==='failed' ? 'danger' : 'primary'">{{ s.model }}</el-tag>
+              <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+              <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
+            </div>
+          </el-card>
           <el-card v-if="autoDetectResult" shadow="never" class="mb-md" :class="autoDetectResult.ok?'card-border-success':'card-border-danger'">
             <template #header>
               <div class="flex-between" style="width:100%">
@@ -1748,7 +1792,7 @@
 import { api, apiStream } from '/static/js/api.js'
 // 纯数据常量 + 纯函数工具（不依赖页面状态，可复用）
 import { TTS_MODELS } from '/static/js/constants.js'
-import { formatDate, sceneRoleText, getModelDefaultVoice, highlightPanelWords } from '/static/js/utils.js'
+import { formatDate, sceneRoleText, getModelDefaultVoice, highlightPanelWords, humanizeError } from '/static/js/utils.js'
 
 const {createApp, ref, reactive, computed, watch, nextTick, onMounted, h} = Vue
 const ElIcons = ElementPlusIconsVue
@@ -1836,20 +1880,102 @@ const app = createApp({
     // steps: [{ key, label, model, provider, status, message, startedAt, elapsed }]
     const GEN_FEATURES = {
       batch:  { label: '批量编译', hint: '剧情生成 + 文生图通常需要 2-4 分钟（取决于画面数与模型），请耐心等待' },
-      single: { label: '单点深耕', hint: '记忆卡片生成 + 文生图约需 15-40 秒' },
+      single: { label: '单点深耕', hint: '记忆卡片生成 + 文生图约需 1-2 分钟' },
       video:  { label: '视频编译', hint: '脚本生成 + 文生视频约需 1-5 分钟' },
       scene:  { label: '场景编译', hint: '场景连环画生成通常需要 2-4 分钟，请耐心等待' },
+      import: { label: '单词导入', hint: '写入单词库并调用 AI 补充词性与中文释义（每 20 个一批），单词较多时通常需要 30 秒 - 2 分钟' },
+      'scene-detect': { label: '场景检测', hint: 'AI 分析未分类单词并归入场景、生成词伙搭配，通常需要 30-60 秒，请耐心等待' },
+      polysemy: { label: '熟词僻意检测', hint: '分批调用 AI 判定熟词僻意并入库，通常需要 30 秒 - 2 分钟，请耐心等待' },
     }
-    const genProgress = ref({ visible:false, steps:[], active:0, feature:'', elapsed:0, timer:null })
+    const genProgress = ref({ visible:false, steps:[], active:0, feature:'', elapsed:0, timer:null, controller:null, cancelled:false })
     const genFeatureLabel = computed(() => (GEN_FEATURES[genProgress.value.feature] || {}).label || 'AI')
     const genFeatureHint = computed(() => (GEN_FEATURES[genProgress.value.feature] || {}).hint || 'AI 处理约需几十秒到几分钟，请耐心等待')
-    function startGenProgress(feature='') {
-      const timer = setInterval(() => { genProgress.value.elapsed++ }, 1000)
-      genProgress.value = { visible:true, steps:[], active:0, feature, elapsed:0, timer }
+
+    // ---- 侧边栏页签忙碌圈圈：菜单 index -> 对应的生成进度 feature ----
+    const MENU_FEATURE_MAP = {
+      single: ['single'],
+      scenes: ['scene', 'scene-detect'],
+      compile: ['batch'],
+      video: ['video'],
+      polysemy: ['polysemy'],
+      import: ['import'],
+      words: ['import'],
     }
-    function stopGenProgress() {
+    function menuBusy(menuIndex) {
+      const f = genProgress.value.feature
+      if (!genProgress.value.visible || !f) return false
+      return (MENU_FEATURE_MAP[menuIndex] || []).includes(f)
+    }
+
+    // ---- 跨页面完成提醒：页面标题动态化 + 浏览器系统通知 ----
+    const DEFAULT_TITLE = 'TOEIC 顽固词深度加工系统'
+    function _fmtClock(s) {
+      const m = String(Math.floor(s / 60)).padStart(2, '0')
+      const ss = String(s % 60).padStart(2, '0')
+      return `${m}:${ss}`
+    }
+    function requestNotifyPermission() {
+      try {
+        if (typeof Notification === 'undefined' || Notification.permission === 'granted') return
+        if (Notification.permission === 'default') Notification.requestPermission()
+      } catch (_) { /* 非安全上下文或浏览器不支持时静默忽略 */ }
+    }
+    function notifyResult(success, label) {
+      try {
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+        if (!document.hidden) return // 页面在前台时不弹系统通知，避免打扰
+        new Notification(`${success ? '✅' : '❌'} ${label}${success ? '完成' : '失败'}`, {
+          body: success ? '生成结果已就绪，可以回来查看啦' : '生成过程出现问题，请回到页面查看详情',
+        })
+      } catch (_) {}
+    }
+    function restoreTitleSoon() {
+      setTimeout(() => { if (!genProgress.value.visible && document.title !== DEFAULT_TITLE) document.title = DEFAULT_TITLE }, 4000)
+    }
+
+    function startGenProgress(feature='') {
+      const controller = new AbortController()
+      const timer = setInterval(() => {
+        genProgress.value.elapsed++
+        document.title = `[生成中 ${_fmtClock(genProgress.value.elapsed)}] ${genFeatureLabel.value}`
+      }, 1000)
+      genProgress.value = { visible:true, steps:[], active:0, feature, elapsed:0, timer, controller, cancelled:false }
+      requestNotifyPermission()
+    }
+    function cancelGenProgress() {
+      const p = genProgress.value
+      if (!p.visible || !p.controller) return
+      p.cancelled = true
+      p.controller.abort()
+      ElementPlus.ElMessage.info('已请求取消，正在停止生成…')
+    }
+    function stopGenProgress(success = false) {
       if (genProgress.value.timer) clearInterval(genProgress.value.timer)
+      const p = genProgress.value
+      const wasVisible = p.visible
+      const cancelled = !!p.cancelled
+      const label = genFeatureLabel.value || 'AI'
       genProgress.value.visible = false
+      genProgress.value.controller = null
+      if (!wasVisible) return
+      const stateText = cancelled ? '已取消' : (success ? '完成' : '失败')
+      const emoji = cancelled ? '⏹' : (success ? '✅' : '❌')
+      document.title = `${emoji} ${label}${stateText}`
+      restoreTitleSoon()
+      if (!cancelled) notifyResult(success, label)
+    }
+
+    // ---- AI 失败友好诊断：原始错误 + 可操作建议 + 一键复制详情 ----
+    function showModelError(e, title = '生成失败', prefix = '') {
+      const { msg, tip } = humanizeError(e)
+      const text = (prefix ? prefix + '：' : '') + msg
+      ElementPlus.ElMessageBox.alert(
+        text + (tip ? '\n\n💡 建议：' + tip : ''),
+        title,
+        { confirmButtonText: '复制错误详情', cancelButtonText: '关闭', showCancelButton: true, type: 'error' }
+      ).then(() => {
+        navigator.clipboard.writeText(text).then(() => ElementPlus.ElMessage.success('错误详情已复制')).catch(() => {})
+      }).catch(() => { /* 用户关闭弹窗 */ })
     }
     function applyGenStep(s) {
       const idx = genProgress.value.steps.findIndex(x => x.key === s.step)
@@ -2133,6 +2259,39 @@ const app = createApp({
     const sceneAdoptingIdx = ref(-1)
     const sceneCompileForm = reactive({ style: 'scene', panel_count: 4, theme_hint: '', image_model: '', art_style: '' })
     const sceneCompileLoading = ref(false)
+
+    // ---- 表单偏好记忆（localStorage）：记住各编译表单的模型/风格/画面数等，刷新不丢 ----
+    const FORM_PREFS_KEY = 'toeic_form_prefs_v1'
+    function saveFormPrefs() {
+      try {
+        const data = {
+          compile: { image_model: compileForm.image_model, art_style: compileForm.art_style, style: compileForm.style, panel_count: compileForm.panel_count, generate_audio: compileForm.generate_audio, tts_model: compileForm.tts_model },
+          single: { image_model: singleForm.image_model, art_style: singleForm.art_style, generate_audio: singleForm.generate_audio, tts_model: singleForm.tts_model },
+          video: { video_model: videoForm.video_model, duration: videoForm.duration, art_style: videoForm.art_style, tts_model: videoForm.tts_model },
+          scene: { image_model: sceneCompileForm.image_model, art_style: sceneCompileForm.art_style, style: sceneCompileForm.style, panel_count: sceneCompileForm.panel_count },
+        }
+        localStorage.setItem(FORM_PREFS_KEY, JSON.stringify(data))
+      } catch (_) { /* localStorage 不可用时静默忽略 */ }
+    }
+    function _applyFormPref(form, prefs, fields) {
+      if (!prefs) return
+      for (const f of fields) if (prefs[f] !== undefined) form[f] = prefs[f]
+    }
+    function restoreFormPrefs() {
+      try {
+        const raw = localStorage.getItem(FORM_PREFS_KEY)
+        if (!raw) return
+        const data = JSON.parse(raw) || {}
+        // 严格校验：文生图/视频模型必须仍存在于当前选项，否则忽略该字段（不兜底自动选）
+        const imgOk = v => imageModels.value.some(m => m.value === v)
+        const vidOk = v => videoModels.value.some(m => m.value === v)
+        const c = data.compile, s = data.single, v = data.video, sc = data.scene
+        if (c) { _applyFormPref(compileForm, c, ['style','panel_count','generate_audio','tts_model']); if (imgOk(c.image_model)) compileForm.image_model = c.image_model; if (c.art_style !== undefined) compileForm.art_style = c.art_style }
+        if (s) { _applyFormPref(singleForm, s, ['generate_audio','tts_model']); if (imgOk(s.image_model)) singleForm.image_model = s.image_model; if (s.art_style !== undefined) singleForm.art_style = s.art_style }
+        if (v) { _applyFormPref(videoForm, v, ['duration','tts_model']); if (vidOk(v.video_model)) videoForm.video_model = v.video_model; if (v.art_style !== undefined) videoForm.art_style = v.art_style }
+        if (sc) { _applyFormPref(sceneCompileForm, sc, ['style','panel_count']); if (imgOk(sc.image_model)) sceneCompileForm.image_model = sc.image_model; if (sc.art_style !== undefined) sceneCompileForm.art_style = sc.art_style }
+      } catch (_) {}
+    }
     const sceneEditVisible = ref(false)
     const sceneEditForm = reactive({ name_en: '', name_zh: '', description: '', add_words: [], remove_words: [] })
     const sceneEditFormRef = ref(null)
@@ -2175,8 +2334,28 @@ const app = createApp({
     async function deleteWord(row) {
       try {
         await ElementPlus.ElMessageBox.confirm(`确定删除单词 "${row.word}" 吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
+        const deletedInfo = { word: row.word, pos: row.pos || '', meaning_zh: row.meaning_zh || '' }
         await api(`/api/words/${row.id}`, {method:'DELETE'})
-        ElementPlus.ElMessage.success('删除成功')
+        // 删除后弹出撤销确认框（10 秒内可恢复）
+        ElementPlus.ElMessageBox.alert(
+          `已删除单词 "${row.word}"，10 秒内可撤销`,
+          '删除成功',
+          {
+            confirmButtonText: '撤销删除',
+            showCancelButton: true,
+            cancelButtonText: '关闭',
+            type: 'warning',
+            callback: async (action) => {
+              if (action === 'confirm') {
+                try {
+                  await api('/api/words/restore', {method:'POST', body:JSON.stringify({words:[deletedInfo]})})
+                  ElementPlus.ElMessage.success(`已撤销删除 "${row.word}"`)
+                  loadWords()
+                } catch(e) { ElementPlus.ElMessage.error('撤销失败：' + e.message) }
+              }
+            }
+          }
+        )
         loadWords()
       } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
     }
@@ -2210,14 +2389,34 @@ const app = createApp({
     async function batchDeleteWords() {
       if (selectedWords.value.length===0) return
       const ids = selectedWords.value.map(w=>w.id)
+      const rows = selectedWords.value.map(w => ({ word: w.word, pos: w.pos || '', meaning_zh: w.meaning_zh || '' }))
       try {
         await ElementPlus.ElMessageBox.confirm(`确定批量删除选中的 ${ids.length} 个单词吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
         const res = await api('/api/words/batch-delete', {method:'POST', body: JSON.stringify({ids})})
-        ElementPlus.ElMessage.success(`已删除 ${res.deleted} 个单词`)
         selectedWords.value = []
         const maxPage = Math.max(1, Math.ceil((wordTotal.value - (res.deleted || 0)) / wordPageSize.value))
         if (wordPage.value > maxPage) wordPage.value = maxPage
         loadWords()
+        // 删除后弹出撤销确认框（10 秒内可恢复）
+        ElementPlus.ElMessageBox.alert(
+          `已删除 ${res.deleted} 个单词，10 秒内可撤销`,
+          '删除成功',
+          {
+            confirmButtonText: '撤销删除',
+            showCancelButton: true,
+            cancelButtonText: '关闭',
+            type: 'warning',
+            callback: async (action) => {
+              if (action === 'confirm') {
+                try {
+                  const rr = await api('/api/words/restore', {method:'POST', body:JSON.stringify({words:rows.slice(0, 500)})})
+                  ElementPlus.ElMessage.success(`已恢复 ${rr.restored} 个单词`)
+                  loadWords()
+                } catch(e) { ElementPlus.ElMessage.error('撤销失败：' + e.message) }
+              }
+            }
+          }
+        )
       } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message) }
     }
 
@@ -2235,14 +2434,18 @@ const app = createApp({
     async function doImport() {
       if (!parseResult.value || parseResult.value.words.length===0) return
       importing.value = true
+      startGenProgress('import')
       try {
-        const res = await api('/api/words/import', {method:'POST', body:JSON.stringify({words:parseResult.value.words})})
+        const res = await apiStream('/api/words/import-stream', {
+          method:'POST', body:JSON.stringify({words:parseResult.value.words})
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success(`导入完成：成功 ${res.imported} 个，重复 ${res.duplicated} 个`)
         parseResult.value = null
         importText.value = ''
         currentPage.value = 'words'
         loadWords()
-      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+        stopGenProgress(true)
+      } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, '导入失败') }
       finally { importing.value = false }
     }
     function triggerFileInput() { fileInputRef.value?.click() }
@@ -2264,6 +2467,7 @@ const app = createApp({
       if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       compiling.value = true
+      saveFormPrefs()
       startGenProgress('batch')
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
@@ -2276,14 +2480,15 @@ const app = createApp({
           art_style: compileForm.art_style,
           generate_audio_immediately: compileForm.generate_audio,
           tts_model: compileForm.tts_model,
-        })}, { onStep: applyGenStep })
+        })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success(`编译完成${res && res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
         resultData.value = res
         regenerateTtsModel.value = (res && res.tts_model) || compileForm.tts_model
         feedbackGiven.value = ''
         currentPage.value = 'result'
-      } catch(e) { ElementPlus.ElMessage.error(e.message) }
-      finally { compiling.value = false; stopGenProgress() }
+        stopGenProgress(true)
+      } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, '批量编译失败') }
+      finally { compiling.value = false }
     }
 
     // ====== 视频编译 ======
@@ -2297,6 +2502,7 @@ const app = createApp({
       }
       videoCompiling.value = true
       videoResult.value = null
+      saveFormPrefs()
       startGenProgress('video')
       try {
         const words = compileWords.value.map(w=>w.word).join(', ')
@@ -2307,12 +2513,13 @@ const app = createApp({
           duration: videoForm.duration,
           tts_model: videoForm.tts_model,
           art_style: videoForm.art_style,
-        })}, { onStep: applyGenStep })
+        })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success('视频编译完成')
         videoResult.value = res
         feedbackGiven.value = ''
-      } catch(e) { ElementPlus.ElMessage.error(e.message) }
-      finally { videoCompiling.value = false; stopGenProgress() }
+        stopGenProgress(true)
+      } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, '视频编译失败') }
+      finally { videoCompiling.value = false }
     }
 
     // ====== 单点深耕 ======
@@ -2322,6 +2529,7 @@ const app = createApp({
       if (!singleForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
       singleCompiling.value = true
       singleResult.value = null
+      saveFormPrefs()
       startGenProgress('single')
       try {
         const res = await apiStream('/api/single/compile-stream', {method:'POST', body:JSON.stringify({
@@ -2331,7 +2539,7 @@ const app = createApp({
           art_style: singleForm.art_style,
           generate_audio_immediately: singleForm.generate_audio,
           tts_model: singleForm.tts_model,
-        })}, { onStep: applyGenStep })
+        })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         if (res && res.image_error) {
           ElementPlus.ElMessage.warning(`深耕完成但图片失败：${res.image_error}`)
         } else {
@@ -2339,8 +2547,9 @@ const app = createApp({
         }
         singleResult.value = res
         feedbackGiven.value = ''
-      } catch(e) { ElementPlus.ElMessage.error(e.message) }
-      finally { singleCompiling.value = false; stopGenProgress() }
+        stopGenProgress(true)
+      } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, '单点深耕失败') }
+      finally { singleCompiling.value = false }
     }
 
     async function regenerateSingleAudio() {
@@ -2360,7 +2569,7 @@ const app = createApp({
         nextTick(() => playSingleAudio())
       } catch(e) {
         singleResult.value.audio_error = e.message
-        ElementPlus.ElMessage.error(e.message)
+        showModelError(e, '朗读音频生成失败')
       } finally { singleAudioLoading.value = false }
     }
 
@@ -2465,11 +2674,12 @@ const app = createApp({
       if (autoDetectRunning.value) return
       autoDetectRunning.value = true
       autoDetectResult.value = null
+      startGenProgress('polysemy')
       try {
-        const res = await api('/api/polysemy/auto-detect', {
+        const res = await apiStream('/api/polysemy/auto-detect-stream', {
           method: 'POST',
           body: JSON.stringify({batch_size: 20, max_batches: 5}),
-        })
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         autoDetectResult.value = res
         if (res.ok && res.added_count > 0) {
           ElementPlus.ElMessage.success(`新增了 ${res.added_count} 个熟词僻意词条！`)
@@ -2480,8 +2690,10 @@ const app = createApp({
         }
         polysemyPage.value = 1
         await Promise.all([loadPolysemyHot(), loadCandidates()])
+        stopGenProgress(true)
       } catch(e) {
-        ElementPlus.ElMessage.error(e.message || '自动检测失败')
+        stopGenProgress(false)
+        if (e?.name !== 'AbortError') showModelError(e, '熟词僻意自动检测失败')
       } finally {
         autoDetectRunning.value = false
       }
@@ -2581,7 +2793,7 @@ const app = createApp({
         }
       } catch(e) {
         resultData.value.audio_error = e.message
-        ElementPlus.ElMessage.error(e.message)
+        showModelError(e, '音频生成失败')
       } finally { audioLoading.value = false }
     }
 
@@ -2612,18 +2824,13 @@ const app = createApp({
     async function runSceneDetect(force) {
       sceneDetectLoading.value = true
       sceneDetectResult.value = null
-      const notify = ElementPlus.ElNotification({
-        title: '场景检测',
-        message: '正在调用 AI 分析单词并分类，请耐心等待 30-60 秒...',
-        type: 'info',
-        duration: 0,  // 不自动关闭
-      })
+      startGenProgress('scene-detect')
       try {
-        const r = await api('/api/scenes/detect', {
+        const r = await apiStream('/api/scenes/detect-stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ limit: 100, force: !!force }),
-        })
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         sceneDetectResult.value = r
         if (r.new_scenes_suggested && r.new_scenes_suggested.length) {
           // 追加到建议列表（去重）
@@ -2641,11 +2848,12 @@ const app = createApp({
           ElementPlus.ElMessage.success(r.message || '检测完成')
         }
         await loadScenes()
+        stopGenProgress(true)
       } catch (e) {
-        ElementPlus.ElMessage.error('场景检测失败：' + (e.message || '未知错误'))
+        stopGenProgress(false)
+        if (e?.name !== 'AbortError') showModelError(e, '场景检测失败')
       } finally {
         sceneDetectLoading.value = false
-        notify.close()
       }
     }
 
@@ -2744,6 +2952,7 @@ const app = createApp({
         return
       }
       sceneCompileLoading.value = true
+      saveFormPrefs()
       startGenProgress('scene')
       try {
         const r = await apiStream(`/api/scenes/${sceneDetail.value.id}/compile-stream`, {
@@ -2756,15 +2965,17 @@ const app = createApp({
             image_model: sceneCompileForm.image_model,
             art_style: sceneCompileForm.art_style,
           }),
-        }, { onStep: applyGenStep })
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success((r && r.message) || '编译完成')
         // 跳到结果页查看
         if (r && r.gen_id) {
           await viewResult({ id: r.gen_id })
         }
+        stopGenProgress(true)
       } catch (e) {
-        ElementPlus.ElMessage.error('场景编译失败：' + e.message)
-      } finally { sceneCompileLoading.value = false; stopGenProgress() }
+        stopGenProgress(false)
+        if (e?.name !== 'AbortError') showModelError(e, '场景编译失败')
+      } finally { sceneCompileLoading.value = false }
     }
 
     // ====== 菜单 ======
@@ -2789,6 +3000,15 @@ const app = createApp({
       loadRecentItems()
       loadHomeStats()
       loadUsage()
+    })
+
+    // 模型选项加载完成后，恢复表单偏好（严格校验模型仍存在，避免失效模型）
+    let prefsRestored = false
+    watch([imageModels, videoModels], () => {
+      if (!prefsRestored && imageModels.value.length && videoModels.value.length) {
+        prefsRestored = true
+        restoreFormPrefs()
+      }
     })
 
     // ====== 监听单词搜索（防抖 300ms，避免每次击键都触发请求） ======
@@ -2828,6 +3048,7 @@ const app = createApp({
       House: ElIcons.House,
       VideoPlay: ElIcons.VideoPlay,
       List: ElIcons.List,
+      Close: ElIcons.Close,
     }
 
     return {
@@ -2835,7 +3056,7 @@ const app = createApp({
       usageSummary, modelSummary, recentCalls, recentCallsVisible, recentCallsExpanded, modelMax,
       loadUsage, usageLabel, usageTag, usageColor, usageUnit,
       fmtUsage, usageDetail, modelBarWidth,
-      genProgress, genFeatureLabel, genFeatureHint, feedbackGiven, giveFeedback,
+      genProgress, genFeatureLabel, genFeatureHint, cancelGenProgress, menuBusy, feedbackGiven, giveFeedback,
       ThumbsUp, ThumbsDown,
       feedbackStats,
       TTS_MODELS, groupedTtsModels, imageModels,

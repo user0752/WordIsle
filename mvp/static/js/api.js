@@ -125,17 +125,22 @@ export async function api(url, opts = {}, cfg = {}) {
  *   回调：onStep(payload) 逐条收到 step 事件；onResult(payload) 收到最终 result。
  */
 export async function apiStream(url, opts = {}, { onStep, onResult } = {}, cfg = {}) {
-  const { timeout = DEFAULT_TIMEOUT, withLoading = true } = cfg
+  const { timeout = DEFAULT_TIMEOUT, withLoading = true, signal: externalSignal } = cfg
   if (withLoading) _incLoading()
 
-  const controller = timeout > 0 ? new AbortController() : null
-  const timer = controller ? setTimeout(() => controller.abort(), timeout) : null
+  // 支持外部取消（生成取消按钮）：外部 AbortController.abort() 时一并中断本请求
+  const controller = new AbortController()
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort()
+    else externalSignal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
+  const timer = timeout > 0 ? setTimeout(() => controller.abort(), timeout) : null
 
   try {
     const resp = await fetch(url, {
       ...opts,
       headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-      signal: controller ? controller.signal : undefined,
+      signal: controller.signal,
     })
     if (!resp.ok) {
       const errObj = await _toError(resp)

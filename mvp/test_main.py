@@ -380,6 +380,43 @@ class MainAppTestCase(unittest.TestCase):
         self.assertIn("z-image-turbo", body)  # 步骤中应体现实际调用的文生图模型
         self.assertIn("Test Story", body)     # result 中包含最终结果
 
+    def test_words_restore_restores_deleted_word(self):
+        """撤销删除：restore 接口应把被删单词重新插入（保留词性/释义）。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        conn.execute("INSERT INTO words (word, pos, meaning_zh) VALUES (?,?,?)", ("restoreme", "v.", "恢复"))
+        wid = conn.execute("SELECT id FROM words WHERE word='restoreme'").fetchone()[0]
+        conn.commit(); conn.close()
+
+        r = self.client.delete(f"/api/words/{wid}")
+        self.assertEqual(r.status_code, 200)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        gone = conn.execute("SELECT COUNT(*) c FROM words WHERE word='restoreme'").fetchone()[0]
+        conn.close()
+        self.assertEqual(gone, 0)
+
+        r = self.client.post("/api/words/restore", json={"words": [{"word": "restoreme", "pos": "v.", "meaning_zh": "恢复"}]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["restored"], 1)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        row = conn.execute("SELECT pos, meaning_zh FROM words WHERE word='restoreme'").fetchone()
+        conn.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "v.")
+
+    def test_import_stream_emits_steps_and_result(self):
+        """导入 SSE：入库 + AI 补全应产出 step 与 result 事件。"""
+        async def fake_enrichment(batch):
+            return {"skipped": False, "results": [{"word": batch[0], "pos": "n.", "meaning_zh": "测试释义"}]}
+
+        with mock.patch.object(routes_module, "call_word_enrichment", fake_enrichment):
+            r = self.client.post("/api/words/import-stream", json={"words": ["applepie"]})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("text/event-stream", r.headers.get("content-type", ""))
+        self.assertIn("event: step", r.text)
+        self.assertIn("event: result", r.text)
+        self.assertIn('"imported": 1', r.text)          # 导入成功 1 个
+        self.assertIn("AI 补充词性释义", r.text)          # 补全步骤存在
+
 
 
 if __name__ == "__main__":
