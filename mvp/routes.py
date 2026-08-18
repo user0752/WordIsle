@@ -962,10 +962,11 @@ async def create_word(req: Request):
         raise HTTPException(400, "无效单词")
     pos = _coerce_str(body.get("pos", ""))
     meaning_zh = _coerce_str(body.get("meaning_zh", ""))
+    frequency_level = _coerce_str(body.get("frequency_level", ""))
     conn = get_db()
     try:
-        # 如果用户没填词性或释义，用 LLM 自动补充
-        if not pos or not meaning_zh:
+        # 如果用户没填词性/释义/频率，用 LLM 自动补充
+        if not pos or not meaning_zh or not frequency_level:
             enrich = await call_word_enrichment([word])
             if not enrich.get("skipped") and enrich.get("results"):
                 for r in enrich["results"]:
@@ -974,9 +975,16 @@ async def create_word(req: Request):
                             pos = r["pos"]
                         if not meaning_zh:
                             meaning_zh = r["meaning_zh"]
+                        if not frequency_level:
+                            frequency_level = r["frequency_level"]
                         break
-        cur = conn.execute("INSERT INTO words (word, pos, meaning_zh) VALUES (?,?,?)", (word, pos, meaning_zh))
+        cur = conn.execute(
+            "INSERT INTO words (word, pos, meaning_zh, frequency_level, frequency_source) VALUES (?,?,?,?,'llm')",
+            (word, pos, meaning_zh, frequency_level),
+        )
         wid = cur.lastrowid
+        # P2 推荐词导入词库：继承 word_root_links 暂存的频率/释义后清理
+        inherit_link_frequency(conn, word)
         conn.commit()
         row = conn.execute("SELECT * FROM words WHERE id=?", (wid,)).fetchone()
         return dict(row)
@@ -1110,6 +1118,9 @@ async def import_words(req: Request):
                 new_words.append(w)
             except sqlite3.IntegrityError:
                 duplicated += 1
+        # P2 推荐词导入词库：继承 word_root_links 暂存频率/释义后清理
+        for w in new_words:
+            inherit_link_frequency(conn, w)
         conn.commit()
 
         # 入库与 LLM 补全解耦：已插入的词先提交，补全失败不影响导入结果
@@ -1123,10 +1134,10 @@ async def import_words(req: Request):
                     continue
                 if not enrich.get("skipped") and enrich.get("results"):
                     for r in enrich["results"]:
-                        if r.get("pos") or r.get("meaning_zh"):
+                        if r.get("pos") or r.get("meaning_zh") or r.get("frequency_level"):
                             conn.execute(
-                                "UPDATE words SET pos=?, meaning_zh=? WHERE word=?",
-                                (r.get("pos", ""), r.get("meaning_zh", ""), r.get("word", "")),
+                                "UPDATE words SET pos=?, meaning_zh=?, frequency_level=CASE WHEN frequency_level='' THEN ? ELSE frequency_level END, frequency_source='llm' WHERE word=?",
+                                (r.get("pos", ""), r.get("meaning_zh", ""), r.get("frequency_level", ""), r.get("word", "")),
                             )
                             enriched += 1
             conn.commit()
@@ -1160,6 +1171,9 @@ async def _run_import_stream(word_list):
                 new_words.append(w)
             except sqlite3.IntegrityError:
                 duplicated += 1
+        # P2 推荐词导入词库：继承 word_root_links 暂存频率/释义后清理
+        for w in new_words:
+            inherit_link_frequency(conn, w)
         conn.commit()
         yield ("step", {"step": "import", "model": "", "label": f"写入 {len(cleaned)} 个单词", "status": "ok",
                         "message": f"成功 {imported} 个，重复 {duplicated} 个"})
@@ -1181,10 +1195,10 @@ async def _run_import_stream(word_list):
                 ok = 0
                 if not enrich.get("skipped") and enrich.get("results"):
                     for r in enrich["results"]:
-                        if r.get("pos") or r.get("meaning_zh"):
+                        if r.get("pos") or r.get("meaning_zh") or r.get("frequency_level"):
                             conn.execute(
-                                "UPDATE words SET pos=?, meaning_zh=? WHERE word=?",
-                                (r.get("pos", ""), r.get("meaning_zh", ""), r.get("word", "")),
+                                "UPDATE words SET pos=?, meaning_zh=?, frequency_level=CASE WHEN frequency_level='' THEN ? ELSE frequency_level END, frequency_source='llm' WHERE word=?",
+                                (r.get("pos", ""), r.get("meaning_zh", ""), r.get("frequency_level", ""), r.get("word", "")),
                             )
                             ok += 1
                 conn.commit()
@@ -1344,7 +1358,12 @@ async def get_polysemy(word: str = ""):
     if not word:
         raise HTTPException(400, "请提供单词")
     conn = get_db()
-    row = conn.execute("SELECT * FROM polysemy WHERE word=?", (word.strip().lower(),)).fetchone()
+    row = conn.execute(
+        """SELECT p.*, COALESCE(NULLIF(w.frequency_level,''), p.frequency_level) AS frequency_level
+           FROM polysemy p LEFT JOIN words w ON w.word = p.word
+           WHERE p.word=?""",
+        (word.strip().lower(),),
+    ).fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "未收录该词的熟词僻意")
@@ -1358,7 +1377,12 @@ async def polysemy_hot(page: int = 1):
     page = max(1, page)
     conn = get_db()
     offset = (page - 1) * 20
-    rows = conn.execute("SELECT * FROM polysemy ORDER BY frequency_level DESC LIMIT 20 OFFSET ?", (offset,)).fetchall()
+    rows = conn.execute(
+        """SELECT p.*, COALESCE(NULLIF(w.frequency_level,''), p.frequency_level) AS frequency_level
+           FROM polysemy p LEFT JOIN words w ON w.word = p.word
+           ORDER BY frequency_level DESC LIMIT 20 OFFSET ?""",
+        (offset,),
+    ).fetchall()
     total = conn.execute("SELECT COUNT(*) FROM polysemy").fetchone()[0]
     conn.close()
     items = []
@@ -1656,6 +1680,7 @@ async def _run_polysemy_detect_stream(batch_size: int, max_batches: int):
                     continue
                 if item.get("is_polysemy") is True:
                     col = json.dumps(item.get("collocations") or [], ensure_ascii=False)
+                    freq = str(item.get("frequency_level", ""))[:16]
                     try:
                         conn.execute(
                             """INSERT OR IGNORE INTO polysemy
@@ -1667,7 +1692,12 @@ async def _run_polysemy_detect_stream(batch_size: int, max_batches: int):
                             (w, item.get("common_meaning_zh", ""), item.get("common_meaning_en", ""),
                              item.get("business_meaning_zh", ""), item.get("business_meaning_en", ""),
                              item.get("example_en", ""), item.get("example_zh", ""), col,
-                             item.get("toc_part", ""), item.get("frequency_level", "")),
+                             item.get("toc_part", ""), freq),
+                        )
+                        # 频率全局统一：一并写入 words（单词级单一事实来源）
+                        conn.execute(
+                            "UPDATE words SET frequency_level=CASE WHEN frequency_level='' THEN ? ELSE frequency_level END, frequency_source='llm' WHERE word=?",
+                            (freq, w),
                         )
                         added_words.append(w)
                         added += 1
@@ -1696,6 +1726,463 @@ async def polysemy_auto_detect_stream(req: Request):
         _sse_stream(_run_polysemy_detect_stream(batch_size, max_batches)),
         media_type="text/event-stream",
     )
+
+
+# ========================================================================
+# 构词拆解 API（知识库 · 词根树）
+# ========================================================================
+
+MORPHEME_BATCH_SIZE = 20        # 每批送给 LLM 判定的词数
+MORPHEME_SEED_PER_SCAN = 5      # 每次扫描最多懒填充的词根树数量（控配额）
+MORPHEME_SEED_CAP = 15          # 每棵树 P2 推荐词软上限
+
+
+def _freq_star_count(freq: str) -> int:
+    """统计频率字符串里的星数（★~★★★★★），用于 P2 排序。"""
+    return str(freq or "").count("★")
+
+
+def _upsert_word_roots_for_item(conn, item: dict) -> int:
+    """为可拆词建词根树节点，并把词挂到这些树（source=scan）。
+
+    只对「词缀轴」建树（前缀 prefix / 后缀 suffix），词干（root）不单独成树，
+    避免出现大量仅含 1 个词的空树。词干结构仍保存在 word_structures.morphemes 中，不丢失。
+    返回本次新建的词根节点数。"""
+    new_count = 0
+    for m in (item.get("affixes", []) or []):
+        mtype = str(m.get("type", "")).strip()
+        if mtype not in ("prefix", "suffix"):
+            continue
+        affix = str(m.get("affix", "")).strip()
+        if not affix:
+            continue
+        row = conn.execute("SELECT id FROM word_roots WHERE root=?", (affix,)).fetchone()
+        if row:
+            root_id = row["id"]
+            conn.execute(
+                "UPDATE word_roots SET root_zh=CASE WHEN root_zh='' THEN ? ELSE root_zh END, "
+                "root_type=CASE WHEN root_type='' THEN ? ELSE root_type END WHERE id=?",
+                (str(m.get("meaning", ""))[:80], mtype, root_id),
+            )
+        else:
+            cur = conn.execute(
+                "INSERT INTO word_roots (root, root_zh, root_type, sense) VALUES (?,?,?,?)",
+                (affix, str(m.get("meaning", ""))[:80], mtype,
+                 str(item.get("structure_code", ""))[:200]),
+            )
+            root_id = cur.lastrowid
+            new_count += 1
+        conn.execute(
+            "INSERT OR IGNORE INTO word_root_links (word, root_id, source) VALUES (?,?,'scan')",
+            (item["word"], root_id),
+        )
+    return new_count
+
+
+def _morpheme_tree_members(conn, root_id: int) -> list[dict]:
+    """取某词根树的全部成员词，排序：P1 已收录 > P2 推荐（内部按频率降序）。
+    P0 已学暂缺数据源，预留优先级 0。
+
+    「暂存 → 继承」口径：**在词库的词即 P1 已收录，频率以 words 为准**；不在词库的
+    seed 词才是 P2 推荐，频率读 word_root_links 暂存值。这样 P2 词被导入词库后，
+    自动升为已收录且频率读 words（不因 link 暂存被清空而丢失）。"""
+    rows = conn.execute(
+        """SELECT l.word, l.source, l.frequency_level AS link_freq, l.meaning_zh AS link_zh,
+                  s.structure_code, w.frequency_level AS words_freq, w.meaning_zh AS words_zh,
+                  (w.word IS NOT NULL) AS in_lib
+           FROM word_root_links l
+           LEFT JOIN word_structures s ON s.word = l.word
+           LEFT JOIN words w ON w.word = l.word
+           WHERE l.root_id = ?""",
+        (root_id,),
+    ).fetchall()
+    members = []
+    for r in rows:
+        if r["in_lib"]:
+            priority = 1
+            freq = r["words_freq"] or r["link_freq"] or ""
+            meaning = r["words_zh"] or r["link_zh"] or ""
+        else:
+            priority = 2
+            freq = r["link_freq"] or ""
+            meaning = r["link_zh"] or ""
+        members.append({
+            "word": r["word"],
+            "priority": priority,
+            "source": r["source"],
+            "frequency_level": freq,
+            "meaning_zh": meaning,
+            "structure_code": r["structure_code"] or "",
+        })
+    members.sort(key=lambda m: (m["priority"], -_freq_star_count(m["frequency_level"]), m["word"]))
+    return members
+
+
+async def _run_morpheme_detect_stream(limit: int, force: bool):
+    """构词拆解扫描核心流程（生成器）：粗筛 → 分批 LLM 判定 → 建词根树 → 懒填充种子，逐步 yield。"""
+    conn = get_db()
+    try:
+        if force:
+            candidates = conn.execute(
+                """SELECT w.word FROM words w
+                   WHERE w.word IS NOT NULL AND w.word != ''
+                   ORDER BY w.id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        else:
+            candidates = conn.execute(
+                """SELECT w.word FROM words w
+                   LEFT JOIN word_structures s ON s.word = w.word
+                   WHERE s.word IS NULL AND w.word IS NOT NULL AND w.word != ''
+                   ORDER BY w.id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        cand_words = [r["word"] for r in candidates]
+        # 启发式粗筛：命中内置词缀/前缀才进 LLM 确认名单（省 token，主推词缀轴）
+        rough = [w for w in cand_words if hit_common_morpheme(w)]
+
+        if not rough:
+            yield ("step", {"step": "scan", "label": "扫描候选词", "status": "failed", "message": "没有命中常见词缀/词根的候选词"})
+            yield ("result", {
+                "ok": True, "skipped_reason": "no_candidates", "scanned": 0, "candidate_count": len(cand_words),
+                "added_roots": 0, "added_words": [], "skipped": 0, "seeded_roots": 0,
+                "message": "单词库中未命中常见词缀/词根的可拆候选词。",
+            })
+            return
+
+        yield ("step", {"step": "scan", "label": f"扫描候选词（命中 {len(rough)}/{len(cand_words)} 个）", "status": "ok"})
+
+        added_roots = 0
+        added_words = []
+        skipped = 0
+        touched_root_ids = set()
+        processed = 0
+        total_batches = (len(rough) + MORPHEME_BATCH_SIZE - 1) // MORPHEME_BATCH_SIZE
+
+        for i in range(0, len(rough), MORPHEME_BATCH_SIZE):
+            batch = rough[i:i + MORPHEME_BATCH_SIZE]
+            processed += 1
+            step_key = f"llm_{processed}"
+            step_label = f"AI 判定构词拆解（第 {processed}/{total_batches} 批）"
+
+            if not consume_daily_quota("ai"):
+                yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": "今日 AI 生成已达上限"})
+                yield ("result", {"ok": False, "skipped_reason": "ai_quota_exceeded",
+                                  "message": "今日 AI 生成已达上限，请明天再试。"})
+                return
+            yield ("step", {"step": step_key, "label": step_label, "status": "running"})
+
+            try:
+                detect_res = await call_morpheme_detect(batch)
+            except HTTPException as e:
+                yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": f"LLM 调用失败: {e.detail}"})
+                yield ("result", {"ok": False, "skipped_reason": "llm_error", "message": f"LLM 调用失败: {e.detail}"})
+                return
+            except Exception as e:
+                yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": f"LLM 调用异常: {e}"})
+                yield ("result", {"ok": False, "skipped_reason": "llm_error", "message": f"LLM 调用异常: {e}"})
+                return
+
+            results = detect_res.get("results", [])
+            model = str(detect_res.get("model", ""))
+            batch_added = 0
+            for item in results:
+                w = str(item.get("word", "")).strip().lower()
+                if not w or w not in batch:
+                    continue
+                if item.get("is_decomposable") is True:
+                    morphemes = json.dumps({
+                        "stem": item.get("stem", ""),
+                        "stem_zh": item.get("stem_zh", ""),
+                        "affixes": item.get("affixes", []),
+                    }, ensure_ascii=False)
+                    family = json.dumps(item.get("word_family", []), ensure_ascii=False)
+                    conn.execute(
+                        """INSERT OR REPLACE INTO word_structures
+                           (word, structure_code, morphemes, word_family, is_decomposable, model)
+                           VALUES (?,?,?,?,1,?)""",
+                        (w, item.get("structure_code", ""), morphemes, family, model),
+                    )
+                    new_nodes = _upsert_word_roots_for_item(conn, item)
+                    added_roots += new_nodes
+                    # 记录本次触及的词根树（用于懒填充）
+                    for rrow in conn.execute(
+                        "SELECT root_id FROM word_root_links WHERE word=? AND source='scan'", (w,)
+                    ).fetchall():
+                        touched_root_ids.add(rrow["root_id"])
+                    if w not in added_words:
+                        added_words.append(w)
+                    batch_added += 1
+                else:
+                    conn.execute(
+                        """INSERT OR REPLACE INTO word_structures
+                           (word, structure_code, morphemes, word_family, is_decomposable, model)
+                           VALUES (?,'','{}','[]',0,?)""",
+                        (w, model),
+                    )
+                    skipped += 1
+            conn.commit()
+            yield ("step", {"step": step_key, "label": step_label, "status": "ok",
+                            "message": f"新增可拆 {batch_added} 个"})
+
+        # 懒填充：本次触及且仍稀疏（真实收录 <2 且无种子）的词缀/前缀轴词根，补 3 个 P2 种子
+        sparse_roots = []
+        for rid in touched_root_ids:
+            row = conn.execute(
+                """SELECT r.*,
+                          (SELECT COUNT(*) FROM word_root_links l WHERE l.root_id = r.id AND l.source='scan'
+                             AND EXISTS (SELECT 1 FROM words w WHERE w.word = l.word)) AS real_count,
+                          (SELECT COUNT(*) FROM word_root_links l WHERE l.root_id = r.id AND l.source='seed') AS seed_count
+                   FROM word_roots r WHERE r.id = ?""",
+                (rid,),
+            ).fetchone()
+            if not row:
+                continue
+            if row["root_type"] not in ("prefix", "suffix"):
+                continue
+            if row["real_count"] >= 2 or row["seed_count"] > 0:
+                continue
+            sparse_roots.append(row)
+        sparse_roots.sort(key=lambda r: (r["real_count"], r["id"]))
+
+        seeded_roots = 0
+        for row in sparse_roots[:MORPHEME_SEED_PER_SCAN]:
+            if not consume_daily_quota("ai"):
+                break
+            members = _morpheme_tree_members(conn, row["id"])
+            existing = [m["word"] for m in members]
+            step_key = f"seed_{seeded_roots + 1}"
+            step_label = f"为词根 {row['root']} 推荐同构词"
+            yield ("step", {"step": step_key, "label": step_label, "status": "running"})
+            try:
+                seed = await call_morpheme_seed(row["root"], row["root_zh"], row["root_type"], existing)
+            except Exception as e:
+                yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": f"推荐失败: {e}"})
+                continue
+            if not seed:
+                yield ("step", {"step": step_key, "label": step_label, "status": "failed", "message": "推荐失败（模型无响应）"})
+                continue
+            ok = 0
+            for rec in seed.get("recommended", []):
+                w = str(rec.get("word", "")).strip().lower()
+                if not w or w in existing:
+                    continue
+                if conn.execute("SELECT 1 FROM words WHERE word=?", (w,)).fetchone():
+                    continue
+                if conn.execute("SELECT 1 FROM word_root_links WHERE word=? AND root_id=?", (w, row["id"])).fetchone():
+                    continue
+                conn.execute("INSERT OR IGNORE INTO word_structures (word, is_decomposable) VALUES (?,1)", (w,))
+                conn.execute(
+                    "INSERT OR IGNORE INTO word_root_links (word, root_id, source, frequency_level, meaning_zh) VALUES (?,?,'seed',?,?)",
+                    (w, row["id"], str(rec.get("frequency_level", ""))[:16], str(rec.get("meaning_zh", ""))[:200]),
+                )
+                ok += 1
+            conn.commit()
+            seeded_roots += 1
+            yield ("step", {"step": step_key, "label": step_label, "status": "ok", "message": f"新增推荐 {ok} 个"})
+    finally:
+        conn.close()
+
+    yield ("result", {
+        "ok": True, "scanned": len(rough), "candidate_count": len(cand_words),
+        "added_roots": added_roots, "added_words": added_words, "skipped": skipped,
+        "seeded_roots": seeded_roots,
+        "message": (
+            f"完成！扫描 {len(rough)} 词，新增可拆词 {len(added_words)} 个、"
+            f"新建词根节点 {added_roots} 个，判定不可拆 {skipped} 个，"
+            f"为 {seeded_roots} 棵稀疏词根树补充了推荐词。"
+        ),
+    })
+
+
+@router.post("/api/morphemes/detect-stream")
+async def morphemes_detect_stream(request: Request):
+    """构词拆解扫描（SSE 流式）：粗筛 → 分批 LLM 判定 → 建词根树 → 懒填充种子，逐步反馈进度。
+    Body: {limit?: 扫描词数上限(默认50), force?: 是否全量重扫(默认false=增量检查)}"""
+    body = await _safe_json(request)
+    limit = _clamp_int(body.get("limit", 50), 1, 500, 50)
+    force = _to_bool(body.get("force", False))
+    return StreamingResponse(
+        _sse_stream(_run_morpheme_detect_stream(limit, force)),
+        media_type="text/event-stream",
+    )
+
+
+@router.get("/api/morphemes/roots")
+async def list_morpheme_roots(page: int = 1, page_size: int = 12, search: str = ""):
+    """词根树列表（分页），含各树收录/推荐词数量。"""
+    page = max(1, page)
+    page_size = _clamp_int(page_size, 6, 60, 12)
+    conn = get_db()
+    try:
+        where, params = "", ()
+        if search:
+            where = "WHERE r.root LIKE ? OR r.root_zh LIKE ?"
+            params = (f"%{search}%", f"%{search}%")
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"""SELECT r.*,
+                      (SELECT COUNT(*) FROM word_root_links l WHERE l.root_id = r.id AND l.source='scan') AS scan_count,
+                      (SELECT COUNT(*) FROM word_root_links l WHERE l.root_id = r.id AND l.source='seed') AS seed_count
+               FROM word_roots r {where}
+               ORDER BY (scan_count + seed_count) DESC, r.id DESC
+               LIMIT ? OFFSET ?""",
+            params + (page_size, offset),
+        ).fetchall()
+        total = conn.execute(f"SELECT COUNT(*) FROM word_roots r {where}", params).fetchone()[0]
+        items = [dict(r) for r in rows]
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
+    finally:
+        conn.close()
+
+
+@router.get("/api/morphemes/roots/{root_id}")
+async def get_morpheme_root(root_id: int):
+    """单个词根树详情（同根词列表，朴素文字树）。"""
+    conn = get_db()
+    try:
+        r = conn.execute("SELECT * FROM word_roots WHERE id=?", (root_id,)).fetchone()
+        if not r:
+            raise HTTPException(404, "词根不存在")
+        root = dict(r)
+        members = _morpheme_tree_members(conn, root_id)
+        root["members"] = members
+        root["scan_count"] = sum(1 for m in members if m["source"] == "scan")
+        root["seed_count"] = sum(1 for m in members if m["source"] == "seed")
+        return root
+    finally:
+        conn.close()
+
+
+@router.post("/api/morphemes/roots/{root_id}/expand")
+async def expand_morpheme_root(root_id: int, request: Request):
+    """为某词根树追加 3 个 P2 推荐词（消耗 ai 配额 1 次；去重 + 软上限 15）。"""
+    conn = get_db()
+    try:
+        r = conn.execute("SELECT * FROM word_roots WHERE id=?", (root_id,)).fetchone()
+        if not r:
+            raise HTTPException(404, "词根不存在")
+        seed_count = conn.execute(
+            "SELECT COUNT(*) c FROM word_root_links WHERE root_id=? AND source='seed'", (root_id,)
+        ).fetchone()["c"]
+        if seed_count >= MORPHEME_SEED_CAP:
+            raise HTTPException(400, f"该词根已达推荐上限（{MORPHEME_SEED_CAP} 个），暂不可再添加")
+        existing = [m["word"] for m in _morpheme_tree_members(conn, root_id)]
+        if not consume_daily_quota("ai"):
+            raise HTTPException(429, "今日 AI 生成已达上限")
+        seed = await call_morpheme_seed(r["root"], r["root_zh"], r["root_type"], existing)
+        if seed is None:
+            raise HTTPException(500, "词根推荐生成失败，请稍后重试或更换模型")
+
+        added, skipped = [], []
+        for rec in seed.get("recommended", []):
+            w = str(rec.get("word", "")).strip().lower()
+            if not w:
+                continue
+            if w in existing:
+                skipped.append(w)
+                continue
+            if conn.execute("SELECT 1 FROM words WHERE word=?", (w,)).fetchone():
+                skipped.append(w)
+                continue
+            conn.execute("INSERT OR IGNORE INTO word_structures (word, is_decomposable) VALUES (?,1)", (w,))
+            conn.execute(
+                "INSERT OR IGNORE INTO word_root_links (word, root_id, source, frequency_level, meaning_zh) VALUES (?,?,'seed',?,?)",
+                (w, root_id, str(rec.get("frequency_level", ""))[:16], str(rec.get("meaning_zh", ""))[:200]),
+            )
+            if w not in added:
+                added.append(w)
+        conn.commit()
+        return {
+            "ok": True, "added": added, "skipped": skipped,
+            "reason_for_empty": seed.get("reason", "") if not added else "",
+            "seed_total": seed_count + len(added),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/morphemes/words")
+async def list_morpheme_words(page: int = 1, page_size: int = 20, search: str = ""):
+    """已拆词列表（分页/搜索，仅可拆词）。"""
+    page = max(1, page)
+    page_size = _clamp_int(page_size, 5, 50, 20)
+    conn = get_db()
+    try:
+        where, params = "WHERE s.is_decomposable=1", ()
+        if search:
+            where += " AND s.word LIKE ?"
+            params = (f"%{search}%",)
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"""SELECT s.*, COALESCE(NULLIF(w.frequency_level,''),'') AS frequency_level
+                FROM word_structures s LEFT JOIN words w ON w.word = s.word
+                {where} ORDER BY s.created_at DESC LIMIT ? OFFSET ?""",
+            params + (page_size, offset),
+        ).fetchall()
+        total = conn.execute(f"SELECT COUNT(*) FROM word_structures s {where}", params).fetchone()[0]
+        items = []
+        for r in rows:
+            d = dict(r)
+            d["morphemes"] = json.loads(d.get("morphemes") or "{}")
+            d["word_family"] = json.loads(d.get("word_family") or "[]")
+            items.append(d)
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
+    finally:
+        conn.close()
+
+
+@router.get("/api/morphemes")
+async def get_morpheme(word: str = ""):
+    """查询单个单词的构词结构（含挂载的词根树）。"""
+    if not word:
+        raise HTTPException(400, "请提供单词")
+    w = word.strip().lower()
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM word_structures WHERE word=?", (w,)).fetchone()
+        if not row:
+            raise HTTPException(404, "未收录该词的构词拆解")
+        d = dict(row)
+        d["morphemes"] = json.loads(d.get("morphemes") or "{}")
+        d["word_family"] = json.loads(d.get("word_family") or "[]")
+        d["roots"] = [dict(r) for r in conn.execute(
+            "SELECT r.* FROM word_root_links l JOIN word_roots r ON r.id = l.root_id WHERE l.word=?", (w,)
+        ).fetchall()]
+        return d
+    finally:
+        conn.close()
+
+
+@router.get("/api/morphemes/candidates")
+async def morpheme_candidates():
+    """返回词库中尚未做构词判定的候选词数量（仅查询，不调用 LLM）。"""
+    conn = get_db()
+    try:
+        total = conn.execute(
+            """SELECT COUNT(*) FROM words w
+               LEFT JOIN word_structures s ON s.word = w.word
+               WHERE s.word IS NULL"""
+        ).fetchone()[0]
+        return {"total": total}
+    finally:
+        conn.close()
+
+
+@router.delete("/api/morphemes/words/{word}")
+async def delete_morpheme_word(word: str):
+    """删除一条构词拆解记录（word_root_links 由外键级联清理）。"""
+    w = word.strip().lower()
+    if not w:
+        raise HTTPException(400, "请提供单词")
+    conn = get_db()
+    try:
+        cur = conn.execute("DELETE FROM word_structures WHERE word=?", (w,))
+        deleted = cur.rowcount or 0
+        conn.commit()
+        return {"ok": True, "deleted": deleted}
+    finally:
+        conn.close()
 
 
 # ========================================================================

@@ -359,7 +359,33 @@ LLM_ROUTES = [
     {"key": "enrich", "label": "单词补充",       "desc": "词性/释义自动补全（失败降级默认模型）", "default": "bailian-qwen3.7-flash"},
     {"key": "scene_detect", "label": "场景检测", "desc": "单词自动归类到场景", "default": "bailian-qwen3.7-flash"},
     {"key": "scene_collocations", "label": "场景词伙", "desc": "场景内词伙搭配生成", "default": "bailian-qwen3.7-flash"},
+    {"key": "morpheme", "label": "构词拆解",     "desc": "单词构词拆解判定 / 词根推荐词生成", "default": "bailian-qwen3.7-flash"},
+    {"key": "morpheme_seed", "label": "构词拆解·词根推荐", "desc": "为词根树推荐同构词（懒填充/添加成员）", "default": "bailian-qwen3.7-flash"},
 ]
 
 LLM_ROUTE_DEFAULT = {r["key"]: r["default"] for r in LLM_ROUTES}
 LLM_MODEL_BY_VALUE = {m["value"]: m for m in LLM_MODELS}
+
+# ========================================================================
+# 构词拆解：内置常见词缀/词根表（启发式粗筛，命中才进 LLM 确认名单，省 token）
+# ========================================================================
+
+COMMON_MORPHEMES = {
+    "suffixes": ["-age", "-ment", "-tion", "-sion", "-ness", "-able", "-ible", "-ance", "-ence", "-ity",
+                 "-ful", "-less", "-ly", "-er", "-or", "-ist", "-ship", "-hood", "-ure", "-al", "-ive", "-ous"],
+    "prefixes": ["re-", "un-", "in-", "im-", "ir-", "il-", "dis-", "pre-", "pro-", "sub-", "trans-",
+                 "inter-", "counter-", "mis-", "over-", "under-", "de-", "ex-", "en-", "em-"],
+    "roots": ["ag/act", "cred", "struct", "port", "dict", "scribe/script", "audi", "loc", "vac",
+              "spect", "rupt", "ject", "mit/miss", "duct", "form", "press", "tract", "sign", "vid/vis"],
+}
+
+# 启发式匹配帮助函数：判断某词是否命中任意构词构件（供扫描粗筛用）
+def hit_common_morpheme(word: str) -> bool:
+    w = word.lower()
+    for suf in COMMON_MORPHEMES["suffixes"]:
+        if suf[1:] and w.endswith(suf[1:]):  # "-age" → 匹配尾部 "age"
+            return True
+    for pre in COMMON_MORPHEMES["prefixes"]:
+        if pre[:-1] and w.startswith(pre[:-1]):  # "re-" → 匹配头部 "re"
+            return True
+    return False

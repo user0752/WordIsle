@@ -71,6 +71,10 @@
             <el-icon><Discount /></el-icon>
             <span class="menu-item-with-busy"><span>熟词僻意</span><el-icon v-if="menuBusy('polysemy')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
+          <el-menu-item index="morphemes">
+            <el-icon><Share /></el-icon>
+            <span class="menu-item-with-busy"><span>构词拆解</span><el-icon v-if="menuBusy('morphemes')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
+          </el-menu-item>
 
           <!-- 回顾 -->
           <div class="menu-divider"><span>回顾</span></div>
@@ -239,6 +243,12 @@
               <el-table-column label="中文释义" min-width="200">
                 <template #default="{row}">
                   <el-input v-model="row.meaning_zh" size="small" placeholder="中文释义" @change="()=>updateWord(row,'meaning_zh',row.meaning_zh)"></el-input>
+                </template>
+              </el-table-column>
+              <el-table-column label="频率" width="110">
+                <template #default="{row}">
+                  <el-tag v-if="row.frequency_level" size="small" type="warning">{{ row.frequency_level }}</el-tag>
+                  <span v-else class="text-secondary">—</span>
                 </template>
               </el-table-column>
               <el-table-column label="导入时间" width="160">
@@ -1299,6 +1309,172 @@
           </el-card>
         </div>
 
+        <!-- 构词拆解 -->
+        <div v-if="currentPage==='morphemes'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>构词拆解</h2>
+              <p class="page-subtitle">按词根/词缀批量理解单词，"记一个构件、带一串词"
+                <el-tag v-if="morphemeCandidateTotal>0" size="small" type="info" effect="plain" style="margin-left:8px">待检查 {{ morphemeCandidateTotal }} 词</el-tag>
+              </p>
+            </div>
+            <div class="flex gap-sm">
+              <el-tooltip content="扫描词库中未判定的单词，调用AI识别可拆词并构建词根树" placement="top">
+                <el-button type="success" :icon="MagicStick" :loading="morphemeDetectRunning" @click="runMorphemeDetect(false)">
+                  增量检查{{ morphemeCandidateTotal>0 ? ` (${morphemeCandidateTotal})` : '' }}
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="全量重扫：重新判定全部单词（较耗时）" placement="top">
+                <el-button type="warning" plain :icon="Refresh" :loading="morphemeDetectRunning" @click="runMorphemeDetect(true)">全量重扫</el-button>
+              </el-tooltip>
+            </div>
+          </div>
+          <!-- 检测进度（构词拆解 SSE） -->
+          <el-card v-if="genProgress.visible && genProgress.feature==='morpheme'" shadow="never" class="mb-md gen-progress">
+            <div class="gen-progress-title">{{ genFeatureLabel }} · 检测进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消检测</el-button></div>
+            <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用与耗时：</div>
+            <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+              <span class="gen-step-status" :class="'is-'+s.status">
+                {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+              </span>
+              <span class="gen-step-label">{{ s.label }}</span>
+              <el-tag v-if="s.model" size="small" class="ml-sm" :type="s.status==='failed' ? 'danger' : 'primary'">{{ s.model }}</el-tag>
+              <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+              <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
+            </div>
+          </el-card>
+          <el-card v-if="morphemeDetectResult" shadow="never" class="mb-md" :class="morphemeDetectResult.ok?'card-border-success':'card-border-danger'">
+            <template #header>
+              <div class="flex-between" style="width:100%">
+                <span class="card-title"><el-icon><magic-stick /></el-icon> 扫描结果</span>
+                <el-button link @click="morphemeDetectResult=null"><el-icon><Close /></el-icon></el-button>
+              </div>
+            </template>
+            <p style="margin:0 0 12px" :class="morphemeDetectResult.ok?'text-primary':'text-danger'">{{ morphemeDetectResult.message }}</p>
+            <div v-if="morphemeDetectResult.added_words && morphemeDetectResult.added_words.length" style="margin-bottom:8px">
+              <span class="section-label">新增可拆词 {{ morphemeDetectResult.added_words.length }} 个</span>
+              <div class="flex gap-sm" style="flex-wrap:wrap;margin-top:6px">
+                <el-tag v-for="w in morphemeDetectResult.added_words" :key="'a'+w" type="success" effect="plain">{{ w }}</el-tag>
+              </div>
+            </div>
+          </el-card>
+          <el-card shadow="never" class="mb-md">
+            <div class="flex-between" style="flex-wrap:wrap;gap:12px">
+              <div class="flex gap-md" style="align-items:center">
+                <el-input v-model="morphemeRootSearch" placeholder="搜索词根/词缀，如：-age, re-, ag" :prefix-icon="Search" clearable style="width:320px" @keyup.enter="searchMorphemeRoots"></el-input>
+                <el-button type="primary" :icon="Search" @click="searchMorphemeRoots">搜索</el-button>
+              </div>
+              <span class="text-secondary" style="font-size:12px">
+                点击"增量检查"扫描词库生成词根树：<b>已收录</b> 为词库真实词，<b>推荐</b> 为 AI 补充的同构托业核心词
+              </span>
+            </div>
+          </el-card>
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex-between" style="width:100%">
+                <span class="card-title">词根树</span>
+                <el-tag v-if="morphemeRootTotal>0" size="small" type="info" effect="plain">共 {{ morphemeRootTotal }} 棵</el-tag>
+              </div>
+            </template>
+            <div v-loading="morphemeRootsLoading">
+              <div v-if="morphemeRoots.length===0 && !morphemeRootsLoading" class="empty-state">
+                <el-icon><share /></el-icon>
+                <p>暂无词根树，点击"增量检查"开始扫描</p>
+              </div>
+              <el-row v-else :gutter="16">
+                <el-col v-for="root in morphemeRoots" :key="root.id" :span="12" class="mb-md">
+                  <div class="morpheme-root-card">
+                    <div class="card-header">
+                      <div class="flex gap-sm" style="align-items:center;flex-wrap:wrap">
+                        <span class="word-title">{{ root.root }}</span>
+                        <el-tag v-if="root.root_type" size="small" :type="root.root_type==='prefix'?'warning':(root.root_type==='suffix'?'success':'primary')">{{ root.root_type }}</el-tag>
+                      </div>
+                      <div class="flex gap-sm">
+                        <el-tag v-if="root.scan_count>0" size="small" effect="plain">已收录 {{ root.scan_count }}</el-tag>
+                        <el-tag v-if="root.seed_count>0" size="small" type="info" effect="plain">推荐 {{ root.seed_count }}</el-tag>
+                      </div>
+                    </div>
+                    <div v-if="root.root_zh" class="text-secondary" style="font-size:13px;margin:6px 0 4px">含义：{{ root.root_zh }}</div>
+                    <div class="morpheme-tree">
+                      <div v-if="!root._loaded" class="text-secondary" style="font-size:13px;padding:8px 0">
+                        <el-button link type="primary" :loading="root._loading" @click="openMorphemeRoot(root)">展开词根树</el-button>
+                      </div>
+                      <template v-else>
+                        <div v-for="m in root._members.slice(0, root._expanded ? root._members.length : 6)" :key="m.word" class="morpheme-member">
+                          <span class="morpheme-member-mark">├─</span>
+                          <span class="morpheme-member-word">{{ m.word }}</span>
+                          <el-tag v-if="m.priority===1" size="small" type="success" effect="plain">已收录</el-tag>
+                          <el-tag v-else size="small" type="warning" effect="plain">推荐 {{ m.frequency_level }}</el-tag>
+                          <span v-if="m.structure_code" class="morpheme-member-struct">{{ m.structure_code }}</span>
+                          <span class="morpheme-member-meaning">{{ m.meaning_zh }}</span>
+                        </div>
+                        <div v-if="root._members.length>6" class="morpheme-tree-toggle">
+                          <el-button link type="primary" @click="root._expanded=!root._expanded">
+                            {{ root._expanded ? '收起' : `展开全部(${root._members.length})` }}
+                          </el-button>
+                        </div>
+                        <div class="morpheme-tree-footer">
+                          <el-button v-if="root.seed_count<15" size="small" type="primary" plain :icon="Plus" :loading="root._expanding" @click="expandMorphemeRoot(root)">添加成员</el-button>
+                          <el-tooltip v-else content="已达推荐上限（15 个）" placement="top">
+                            <el-button size="small" type="primary" plain disabled :icon="Plus">已达推荐上限</el-button>
+                          </el-tooltip>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </el-col>
+              </el-row>
+              <div class="pagination-wrapper">
+                <el-pagination v-model:current-page="morphemeRootPage" :page-size="12" :total="morphemeRootTotal" layout="total, prev, pager, next" @current-change="loadMorphemeRoots"></el-pagination>
+              </div>
+            </div>
+          </el-card>
+          <el-card shadow="never">
+            <template #header>
+              <div class="flex-between" style="width:100%;flex-wrap:wrap;gap:12px">
+                <span class="card-title">已拆词</span>
+                <el-input v-model="morphemeWordSearch" placeholder="搜索已拆词..." :prefix-icon="Search" clearable style="width:260px" @keyup.enter="loadMorphemeWords"></el-input>
+              </div>
+            </template>
+            <div v-loading="morphemeWordsLoading">
+              <div v-if="morphemeWords.length===0 && !morphemeWordsLoading" class="empty-state">
+                <el-icon><document-remove /></el-icon>
+                <p>暂无已拆词</p>
+              </div>
+              <el-table v-else :data="morphemeWords" stripe row-key="id">
+                <el-table-column label="单词" min-width="140">
+                  <template #default="{row}"><span style="font-weight:600">{{ row.word }}</span></template>
+                </el-table-column>
+                <el-table-column label="结构" min-width="170">
+                  <template #default="{row}">
+                    <span v-if="row.structure_code" class="text-primary">{{ row.structure_code }}</span>
+                    <span v-else class="text-secondary">—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="词族" min-width="200">
+                  <template #default="{row}">
+                    <el-tag v-for="f in row.word_family" :key="f" size="small" effect="plain" class="mr-xs">{{ f }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="频率" width="110">
+                  <template #default="{row}">
+                    <el-tag v-if="row.frequency_level" size="small" type="warning">{{ row.frequency_level }}</el-tag>
+                    <span v-else class="text-secondary">—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="90" fixed="right">
+                  <template #default="{row}">
+                    <el-button link type="danger" :icon="Delete" @click="deleteMorphemeWord(row.word)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="pagination-wrapper">
+                <el-pagination v-model:current-page="morphemeWordPage" :page-size="10" :total="morphemeWordTotal" layout="total, prev, pager, next" @current-change="loadMorphemeWords"></el-pagination>
+              </div>
+            </div>
+          </el-card>
+        </div>
+
         <!-- 结果详情页 -->
         <div v-if="currentPage==='result'" class="page-container">
           <div class="page-header">
@@ -1886,6 +2062,7 @@ const app = createApp({
       import: { label: '单词导入', hint: '写入单词库并调用 AI 补充词性与中文释义（每 20 个一批），单词较多时通常需要 30 秒 - 2 分钟' },
       'scene-detect': { label: '场景检测', hint: 'AI 分析未分类单词并归入场景、生成词伙搭配，通常需要 30-60 秒，请耐心等待' },
       polysemy: { label: '熟词僻意检测', hint: '分批调用 AI 判定熟词僻意并入库，通常需要 30 秒 - 2 分钟，请耐心等待' },
+      morpheme: { label: '构词拆解', hint: 'AI 判定可拆词并构建词根树、补充推荐词，通常需要 30 秒 - 2 分钟，请耐心等待' },
     }
     const genProgress = ref({ visible:false, steps:[], active:0, feature:'', elapsed:0, timer:null, controller:null, cancelled:false })
     const genFeatureLabel = computed(() => (GEN_FEATURES[genProgress.value.feature] || {}).label || 'AI')
@@ -1898,6 +2075,7 @@ const app = createApp({
       compile: ['batch'],
       video: ['video'],
       polysemy: ['polysemy'],
+      morphemes: ['morpheme'],
       import: ['import'],
       words: ['import'],
     }
@@ -2238,6 +2416,21 @@ const app = createApp({
       const selN = polysemyHot.value.filter(e => polysemySelectedSet.has(String(e.word).toLowerCase())).length
       return selN > 0 && selN < polysemyHot.value.length
     })
+
+    // 构词拆解
+    const morphemeRootSearch = ref('')
+    const morphemeRoots = ref([])
+    const morphemeRootTotal = ref(0)
+    const morphemeRootPage = ref(1)
+    const morphemeRootsLoading = ref(false)
+    const morphemeCandidateTotal = ref(0)
+    const morphemeDetectRunning = ref(false)
+    const morphemeDetectResult = ref(null)
+    const morphemeWordSearch = ref('')
+    const morphemeWords = ref([])
+    const morphemeWordTotal = ref(0)
+    const morphemeWordPage = ref(1)
+    const morphemeWordsLoading = ref(false)
 
     // 结果
     const resultData = ref(null)
@@ -2751,6 +2944,104 @@ const app = createApp({
       } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message || '批量删除失败') }
     }
 
+    // ====== 构词拆解 ======
+    async function loadMorphemeCandidates() {
+      try {
+        const res = await api('/api/morphemes/candidates')
+        morphemeCandidateTotal.value = res.total || 0
+      } catch(e) { morphemeCandidateTotal.value = 0 }
+    }
+    async function loadMorphemeRoots() {
+      morphemeRootsLoading.value = true
+      try {
+        const res = await api(`/api/morphemes/roots?page=${morphemeRootPage.value}&search=${encodeURIComponent(morphemeRootSearch.value.trim())}`)
+        morphemeRoots.value = res.items
+        morphemeRootTotal.value = res.total
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { morphemeRootsLoading.value = false }
+    }
+    function searchMorphemeRoots() { morphemeRootPage.value = 1; loadMorphemeRoots() }
+    async function openMorphemeRoot(root) {
+      if (!root || root._loading) return
+      root._loading = true
+      try {
+        const d = await api(`/api/morphemes/roots/${root.id}`)
+        root._members = d.members || []
+        root._loaded = true
+        root._expanded = false
+        root.scan_count = d.scan_count || 0
+        root.seed_count = d.seed_count || 0
+        if (d.root_zh) root.root_zh = d.root_zh
+        if (d.root_type) root.root_type = d.root_type
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { root._loading = false }
+    }
+    async function runMorphemeDetect(force) {
+      if (morphemeDetectRunning.value) return
+      morphemeDetectRunning.value = true
+      morphemeDetectResult.value = null
+      startGenProgress('morpheme')
+      try {
+        const res = await apiStream('/api/morphemes/detect-stream', {
+          method: 'POST',
+          body: JSON.stringify({ limit: 50, force: !!force }),
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
+        morphemeDetectResult.value = res
+        if (res && res.ok) {
+          ElementPlus.ElMessage.success(res.message || '扫描完成')
+        } else if (res) {
+          ElementPlus.ElMessage.warning(res.message || '扫描未完成')
+        }
+        morphemeRootPage.value = 1
+        morphemeWordPage.value = 1
+        await Promise.all([loadMorphemeRoots(), loadMorphemeWords(), loadMorphemeCandidates()])
+        stopGenProgress(true)
+      } catch(e) {
+        stopGenProgress(false)
+        if (e?.name !== 'AbortError') showModelError(e, '构词拆解扫描失败')
+      } finally {
+        morphemeDetectRunning.value = false
+      }
+    }
+    async function expandMorphemeRoot(root) {
+      if (!root || root._expanding) return
+      root._expanding = true
+      try {
+        const res = await api(`/api/morphemes/roots/${root.id}/expand`, { method: 'POST' })
+        if (res && res.ok) {
+          if (res.added && res.added.length) {
+            ElementPlus.ElMessage.success(`新增推荐 ${res.added.length} 个同构词`)
+          } else {
+            ElementPlus.ElMessage.info(res.reason_for_empty || '本次没有新增推荐词')
+          }
+          await openMorphemeRoot(root)
+        }
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { root._expanding = false }
+    }
+    async function loadMorphemeWords() {
+      morphemeWordsLoading.value = true
+      try {
+        const res = await api(`/api/morphemes/words?page=${morphemeWordPage.value}&search=${encodeURIComponent(morphemeWordSearch.value.trim())}`)
+        morphemeWords.value = res.items
+        morphemeWordTotal.value = res.total
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { morphemeWordsLoading.value = false }
+    }
+    async function deleteMorphemeWord(word) {
+      if (!word) return
+      try {
+        await ElementPlus.ElMessageBox.confirm(
+          `确定删除 "${word}" 的构词拆解记录吗？\n（同时会从相关词根树中移除该词）`,
+          '提示',
+          {confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'}
+        )
+        await api(`/api/morphemes/words/${encodeURIComponent(word.trim().toLowerCase())}`, { method: 'DELETE' })
+        ElementPlus.ElMessage.success('删除成功')
+        await Promise.all([loadMorphemeWords(), loadMorphemeRoots()])
+      } catch(e) { if (e!=='cancel') ElementPlus.ElMessage.error(e.message || '删除失败') }
+    }
+
     // ====== 结果 ======
     async function toggleFavorite() {
       if (!resultData.value) return
@@ -2985,6 +3276,7 @@ const app = createApp({
       if (idx==='words') loadWords()
       if (idx==='history') loadHistory()
       if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
+      if (idx==='morphemes') { loadMorphemeRoots(); loadMorphemeWords(); loadMorphemeCandidates() }
       if (idx==='scenes') { sceneView.value='list'; loadScenes() }
       if (idx==='usage') loadUsage()
       if (idx==='settings') loadLlmSettings()
@@ -3075,6 +3367,9 @@ const app = createApp({
       polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
       candidateTotal, autoDetectRunning, autoDetectResult,
       polysemySelectedSet, polysemySelectedCount, polysemyAllSelected, polysemyIndeterminate,
+      morphemeRootSearch, morphemeRoots, morphemeRootTotal, morphemeRootPage, morphemeRootsLoading,
+      morphemeCandidateTotal, morphemeDetectRunning, morphemeDetectResult,
+      morphemeWordSearch, morphemeWords, morphemeWordTotal, morphemeWordPage, morphemeWordsLoading,
       resultData, resultLoading, audioLoading, regenerateTtsModel, regenerateVoice, regenerateSpeed,
       sceneView, scenes, scenesLoading, sceneDetail, sceneDetailLoading,
       sceneDetectLoading, sceneDetectResult, sceneSuggestions, sceneAdoptingIdx,
@@ -3085,6 +3380,8 @@ const app = createApp({
       handleCompile, handleSingleCompile, regenerateSingleAudio, playSingleAudio, loadHistory, viewResult, deleteHistoryItem, onHistoryFilterChange, loadRecentItems, generationTypeLabel, generationTypeTag,
       searchPolysemy, loadPolysemyHot, loadCandidates, runAutoDetect, deletePolysemy,
       toggleSelectPolysemy, toggleSelectAllPolysemy, clearPolysemySelection, batchDeletePolysemy,
+      loadMorphemeCandidates, loadMorphemeRoots, searchMorphemeRoots, openMorphemeRoot,
+      runMorphemeDetect, expandMorphemeRoot, loadMorphemeWords, deleteMorphemeWord,
       toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect,
       loadScenes, openSceneDetail, runSceneDetect, adoptScene,
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,

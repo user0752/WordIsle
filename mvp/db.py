@@ -28,6 +28,7 @@ __all__ = [
     "set_setting",
     "record_model_usage",
     "get_model_usage_stats",
+    "inherit_link_frequency",
 ]
 
 # ========================================================================
@@ -87,7 +88,41 @@ def init_db():
             word TEXT NOT NULL UNIQUE,
             pos TEXT DEFAULT '',
             meaning_zh TEXT DEFAULT '',
+            frequency_level TEXT DEFAULT '',
+            frequency_source TEXT DEFAULT 'llm',
             created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 构词拆解：词根主档（树的节点）
+        CREATE TABLE IF NOT EXISTS word_roots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            root TEXT NOT NULL UNIQUE,
+            root_zh TEXT DEFAULT '',
+            root_type TEXT DEFAULT '',
+            sense TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 构词拆解：词 → 结构（树的叶子与关联主档）
+        CREATE TABLE IF NOT EXISTS word_structures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word TEXT NOT NULL UNIQUE,
+            structure_code TEXT DEFAULT '',
+            morphemes TEXT DEFAULT '{}',
+            word_family TEXT DEFAULT '[]',
+            is_decomposable INTEGER DEFAULT 1,
+            model TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 构词拆解：词 ↔ 词根 多对多（source=scan 收录 | seed LLM推荐）
+        CREATE TABLE IF NOT EXISTS word_root_links (
+            word TEXT NOT NULL,
+            root_id INTEGER NOT NULL,
+            source TEXT DEFAULT 'scan',
+            frequency_level TEXT DEFAULT '',
+            meaning_zh TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (word, root_id),
+            FOREIGN KEY (word) REFERENCES word_structures(word) ON DELETE CASCADE,
+            FOREIGN KEY (root_id) REFERENCES word_roots(id) ON DELETE CASCADE
         );
         CREATE TABLE IF NOT EXISTS generations (
             id TEXT PRIMARY KEY,
@@ -259,12 +294,68 @@ def init_db():
         conn.execute("ALTER TABLE word_scenes ADD COLUMN source TEXT DEFAULT 'detect'")
     except Exception:
         pass
+    # 迁移：words 表追加全局频率列（单词级单一事实来源，三页同源）
+    try:
+        conn.execute("ALTER TABLE words ADD COLUMN frequency_level TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE words ADD COLUMN frequency_source TEXT DEFAULT 'llm'")
+    except Exception:
+        pass
+    # 迁移：已入库的熟词僻意种子频率一次性并入 words（仅在 words 频率为空时补齐）
+    _migrate_words_frequency(conn)
     # 种子数据：托业高频熟词僻意（仅当表为空时插入）
     _seed_polysemy(conn)
     # 种子数据：场景聚汇预设场景（仅当 scenes 表为空时插入）
     _seed_scenes(conn)
     conn.commit()
     conn.close()
+
+
+def _migrate_words_frequency(conn):
+    """把 polysemy 表中已有的频率一次性并入 words（words 频率为空时补齐），
+    实现「熟词僻意 → 单词库」频率全局统一。来源记 seed（种子人工标注）。"""
+    rows = conn.execute(
+        """SELECT p.word, p.frequency_level FROM polysemy p
+           JOIN words w ON w.word = p.word
+           WHERE (w.frequency_level IS NULL OR w.frequency_level = '')
+             AND p.frequency_level != ''"""
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "UPDATE words SET frequency_level = ?, frequency_source = 'seed' WHERE word = ?",
+            (r["frequency_level"], r["word"]),
+        )
+
+
+def inherit_link_frequency(conn, word: str):
+    """P2 推荐词被导入词库时的「暂存 → 继承」：
+    把 word_root_links 暂存的频率并入 words（words 频率为空时），并清理 link 上的暂存字段。
+    此后该词频率以 words 为准。"""
+    w = (word or "").strip().lower()
+    if not w:
+        return
+    link = conn.execute(
+        "SELECT frequency_level, meaning_zh FROM word_root_links WHERE word = ? AND source = 'seed' LIMIT 1",
+        (w,),
+    ).fetchone()
+    if not link or not (link["frequency_level"] or link["meaning_zh"]):
+        return
+    # 并入 words：仅当 words 缺少释义/频率时采用 link 暂存值
+    cur = conn.execute(
+        "UPDATE words SET frequency_level = CASE WHEN frequency_level = '' THEN ? ELSE frequency_level END, "
+        "meaning_zh = CASE WHEN meaning_zh = '' THEN ? ELSE meaning_zh END, "
+        "frequency_source = CASE WHEN frequency_level = '' THEN 'seed' ELSE frequency_source END "
+        "WHERE word = ?",
+        (link["frequency_level"], link["meaning_zh"], w),
+    )
+    if cur.rowcount:
+        # 清理 link 暂存字段，此后以 words 为准
+        conn.execute(
+            "UPDATE word_root_links SET frequency_level = '', meaning_zh = '' WHERE word = ? AND source = 'seed'",
+            (w,),
+        )
 
 
 # ========================================================================

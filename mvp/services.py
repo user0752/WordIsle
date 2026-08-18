@@ -38,6 +38,8 @@ __all__ = [
     "_get_image_model_config",
     "call_polysemy_detection",
     "call_word_enrichment",
+    "call_morpheme_detect",
+    "call_morpheme_seed",
     "call_deepseek_scene_detect",
     "call_deepseek_scene_collocations",
     "call_video_script",
@@ -1430,14 +1432,219 @@ async def call_polysemy_detection(words: list[str]):
 
 
 # ========================================================================
+# 构词拆解：批量判定可拆词（扫描）
+# ========================================================================
+
+MORPHEME_SYSTEM = """You are an English morphology analyzer for TOEIC vocabulary. Given a list of English words, determine whether each can be clearly decomposed into morphemes (prefix + root + suffix) with high confidence.
+
+Rules:
+- Only mark is_decomposable=true when the decomposition is CERTAIN and the word is clearly built from identifiable morphemes (e.g. brokerage = broker + -age, management = manage + -ment, reconsider = re- + consider).
+- Do NOT force-decompose words whose etymology is opaque (e.g. business, office, important) — mark is_decomposable=false.
+- For decomposable words, fill ALL fields:
+  * stem: the base word (e.g. broker)
+  * stem_zh: Chinese meaning of the stem (e.g. 经纪人)
+  * affixes: list of {affix, type, meaning}. type is one of prefix|root|suffix; meaning is the Chinese meaning of that affix.
+  * structure_code: readable formula, e.g. "broker + -age"
+  * root: the tree-building morpheme. Prefer the affix axis (prefix/suffix) when present, e.g. "-age".
+  * root_zh: Chinese meaning of root.
+  * root_type: "prefix" | "root" | "suffix".
+  * word_family: 2-6 related words sharing the same root/morpheme.
+- For non-decomposable words, return ONLY word + is_decomposable=false, nothing else.
+
+Return a single JSON object matching the schema provided."""
+
+
+def _build_morpheme_detect_prompt(words: list[str]) -> str:
+    numbered = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
+    return f"""Analyze each of the following {len(words)} English words.
+
+WORDS:
+{numbered}
+
+For each word return:
+- is_decomposable: true only if the word is clearly built from identifiable morphemes.
+- If decomposable: stem, stem_zh, affixes[{{affix,type,meaning}}], structure_code, root, root_zh, root_type, word_family.
+- If not decomposable: only word + is_decomposable=false.
+
+Return a single JSON object matching the schema provided."""
+
+
+async def call_morpheme_detect(words: list[str]):
+    """调用 LLM（构词拆解路由，可切换模型）批量判定单词是否可拆并给出结构。
+    选定模型调用失败（如限流）时自动降级到默认主模型。"""
+    if not words:
+        return {"results": []}
+
+    user_prompt = _build_morpheme_detect_prompt(words)
+    payload = {
+        "messages": [
+            {"role": "system", "content": MORPHEME_SYSTEM},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
+    }
+
+    last_err = None
+    for cfg in route_llm_candidates("morpheme"):
+        if not cfg.get("api_key"):
+            continue
+        logger.info("LLM 构词拆解调用 model=%s(%s) words=%s", cfg["model"], cfg["value"], len(words))
+        try:
+            data = await _chat_completion(cfg["base_url"], cfg["api_key"], cfg["model"], payload, timeout=120.0, detail="构词拆解判定")
+            break
+        except (httpx.HTTPError, KeyError) as e:
+            logger.warning("LLM 构词拆解调用失败 model=%s error=%r，尝试下一候选模型", cfg["model"], e)
+            last_err = e
+            continue
+    else:
+        if last_err is None:
+            logger.error("LLM 构词拆解失败：未找到已配置 API Key 的可用模型")
+            raise HTTPException(500, "未找到已配置 API Key 的可用模型，请检查环境变量或更换模型")
+        logger.error("LLM 构词拆解失败（已尝试全部候选模型）: %r", last_err)
+        raise HTTPException(500, f"LLM 构词拆解失败（已尝试全部候选模型）: {last_err}")
+
+    content = data["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        raise HTTPException(500, "LLM 返回格式非 JSON，无法解析构词拆解结果")
+
+    # 兼容 LLM 的多种返回形态：顶层数组 / {"results": [...]} / {"words": [...]}
+    if isinstance(parsed, list):
+        results = parsed
+    else:
+        results = parsed.get("results") or parsed.get("words") or []
+    cleaned = []
+    seen = set()
+    for r in results:
+        w = str(r.get("word", "")).strip().lower()
+        if not w or w in seen:
+            continue
+        seen.add(w)
+        if r.get("is_decomposable") is True:
+            affixes = []
+            for a in (r.get("affixes") or []):
+                if isinstance(a, dict) and str(a.get("affix", "")).strip():
+                    affixes.append({
+                        "affix": str(a.get("affix", ""))[:40],
+                        "type": str(a.get("type", ""))[:16],
+                        "meaning": str(a.get("meaning", ""))[:80],
+                    })
+            family = [str(x).strip().lower() for x in (r.get("word_family") or []) if isinstance(x, str) and x.strip()][:8]
+            cleaned.append({
+                "word": w,
+                "is_decomposable": True,
+                "stem": str(r.get("stem", ""))[:60],
+                "stem_zh": str(r.get("stem_zh", ""))[:80],
+                "affixes": affixes,
+                "structure_code": str(r.get("structure_code", ""))[:120],
+                "root": str(r.get("root", ""))[:40],
+                "root_zh": str(r.get("root_zh", ""))[:80],
+                "root_type": str(r.get("root_type", ""))[:16],
+                "word_family": family,
+            })
+        else:
+            cleaned.append({"word": w, "is_decomposable": False})
+    return {"results": cleaned, "usage": data.get("usage", {}), "model": str(data.get("model", ""))}
+
+
+# ========================================================================
+# 构词拆解：词根树推荐同构词（懒填充 / 添加成员，P2 专用）
+# ========================================================================
+
+MORPHEME_SEED_SYSTEM = """You are a TOEIC vocabulary expert. Given a morpheme/root (e.g. "-age") and a list of words already associated with it, recommend additional TOEIC core words built with the SAME morpheme.
+
+Rules:
+- Return EXACTLY 3 words. If you cannot honestly find 3, return 0-2 and explain why in "reason". Never fabricate or pad.
+- Every word must be TOEIC core vocabulary and must contain the morpheme with the same construction (e.g. for "-age": postage, storage, coverage).
+- Order by exam frequency: the most important words first.
+- For each word output word + meaning_zh + frequency_level (★ to ★★★★★).
+- Do NOT recommend any word that already appears in the given existing list.
+
+Output ONLY a JSON object: {"recommended": [{"word","meaning_zh","frequency_level"}], "reason": ""}"""
+
+
+def _build_morpheme_seed_prompt(root: str, root_zh: str, root_type: str, existing: list[str]) -> str:
+    existing_txt = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(existing)) if existing else "  （无）"
+    return f"""MORPHEME: {root}
+MEANING: {root_zh}
+TYPE: {root_type}
+
+WORDS ALREADY ASSOCIATED (do NOT recommend these):
+{existing_txt}
+
+Recommend exactly 3 NEW TOEIC core words containing this morpheme, sorted by exam frequency (most important first).
+Return a JSON object matching the schema provided."""
+
+
+async def call_morpheme_seed(root: str, root_zh: str, root_type: str, existing: list[str]):
+    """调用 LLM（构词拆解·词根推荐路由）为该词根生成 3 个 P2 推荐词。
+    失败时返回 None（调用方给出明确提示，不静默）。"""
+    user_prompt = _build_morpheme_seed_prompt(root, root_zh, root_type, existing)
+    messages = [
+        {"role": "system", "content": MORPHEME_SEED_SYSTEM},
+        {"role": "user", "content": user_prompt},
+    ]
+    data = await _call_llm_with_fallback(
+        messages=messages,
+        route_key="morpheme_seed",
+        temperature=0.3,
+        max_tokens=2048,
+        response_format={"type": "json_object"},
+        timeout=60.0,
+        detail="构词拆解·词根推荐",
+    )
+    if data is None:
+        return None
+
+    content = data["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+
+    # 兼容 LLM 的多种返回形态：顶层数组 / {"recommended": [...]} / {"words": [...]}
+    if isinstance(parsed, list):
+        rec_list = parsed
+    else:
+        rec_list = parsed.get("recommended") or parsed.get("words") or []
+    recommended = []
+    seen = set()
+    for r in rec_list:
+        if not isinstance(r, dict):
+            continue
+        w = str(r.get("word", "")).strip().lower()
+        if not w or w in seen or w in {x.lower() for x in existing}:
+            continue
+        seen.add(w)
+        recommended.append({
+            "word": w,
+            "meaning_zh": str(r.get("meaning_zh", ""))[:200],
+            "frequency_level": str(r.get("frequency_level", ""))[:16],
+        })
+    reason = "" if isinstance(parsed, list) else str(parsed.get("reason", ""))[:300]
+    return {"recommended": recommended, "reason": reason}
+
+
+# ========================================================================
 # 单词词性/释义自动补充
 # ========================================================================
 
-WORD_ENRICH_SYSTEM = """You are an English vocabulary assistant for TOEIC learners. Given a list of English words, return the part of speech and a comprehensive Chinese meaning for each word.
+WORD_ENRICH_SYSTEM = """You are an English vocabulary assistant for TOEIC learners. Given a list of English words, return the part of speech, a comprehensive Chinese meaning and the TOEIC exam frequency for each word.
 
 Rules:
 - Part of speech (pos): use short labels like v., n., adj., adv., prep., conj., pron., etc. If a word has multiple common POS, list the most important ones separated by "/" (e.g. "v./n.").
 - Chinese meaning (meaning_zh): provide a comprehensive yet concise Chinese definition. Include the most common meanings used in business/workplace contexts. Keep it under 80 characters.
+- frequency_level: estimate the word's importance in the TOEIC exam as a star rating from ★ to ★★★★★ (5 stars = extremely frequent/important, 1 star = rare). Use the ★ character repeated 1-5 times.
 - For words that are already in the input (e.g. inflected forms), return the base form's info.
 
 Output ONLY a valid JSON object. No markdown, no extra text.
@@ -1448,12 +1655,14 @@ JSON STRUCTURE:
     {
       "word": "accommodate",
       "pos": "v.",
-      "meaning_zh": "容纳；为…提供住宿；适应，顺应"
+      "meaning_zh": "容纳；为…提供住宿；适应，顺应",
+      "frequency_level": "★★★★★"
     },
     {
       "word": "negotiate",
       "pos": "v.",
-      "meaning_zh": "谈判，协商；商议（条件）；顺利通过"
+      "meaning_zh": "谈判，协商；商议（条件）；顺利通过",
+      "frequency_level": "★★★★☆"
     }
   ]
 }"""
@@ -1461,7 +1670,7 @@ JSON STRUCTURE:
 
 def _build_enrich_prompt(words: list[str]) -> str:
     numbered = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
-    return f"""Please provide the part of speech and Chinese meaning for each of the following {len(words)} English words.
+    return f"""Please provide the part of speech, Chinese meaning and TOEIC exam frequency for each of the following {len(words)} English words.
 
 WORDS:
 {numbered}
@@ -1469,12 +1678,13 @@ WORDS:
 For each word, return:
 - pos: part of speech label (e.g. v., n., adj., adv., or combined like "v./n.")
 - meaning_zh: comprehensive Chinese definition (max 80 characters)
+- frequency_level: star rating ★ to ★★★★★ indicating TOEIC exam importance
 
 Return a single JSON object matching the schema provided."""
 
 
 async def call_word_enrichment(words: list[str]) -> dict:
-    """调用 LLM 批量补充单词的词性和中文释义（走该调用点模型，失败降级默认模型）。"""
+    """调用 LLM 批量补充单词的词性、中文释义和频率（走该调用点模型，失败降级默认模型）。"""
     if not words:
         return {"results": []}
     if not get_route_llm("enrich").get("api_key"):
@@ -1521,6 +1731,7 @@ async def call_word_enrichment(words: list[str]) -> dict:
             "word": w,
             "pos": str(r.get("pos", ""))[:20],
             "meaning_zh": str(r.get("meaning_zh", ""))[:200],
+            "frequency_level": str(r.get("frequency_level", ""))[:16],
         })
     return {"results": cleaned, "skipped": False}
 

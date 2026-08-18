@@ -8,6 +8,7 @@
 运行：cd mvp && python -m unittest test_main -v
 """
 import json
+import asyncio
 import sqlite3
 import tempfile
 import threading
@@ -104,6 +105,9 @@ class MainAppTestCase(unittest.TestCase):
             conn.execute("DELETE FROM daily_usage")
             conn.execute("DELETE FROM generations")
             conn.execute("DELETE FROM audios")
+            conn.execute("DELETE FROM word_root_links")
+            conn.execute("DELETE FROM word_structures")
+            conn.execute("DELETE FROM word_roots")
             conn.commit()
         finally:
             conn.close()
@@ -417,6 +421,323 @@ class MainAppTestCase(unittest.TestCase):
         self.assertIn('"imported": 1', r.text)          # 导入成功 1 个
         self.assertIn("AI 补充词性释义", r.text)          # 补全步骤存在
 
+    # ================= 构词拆解 / 全局频率 =================
+
+    def _seed_morpheme(self, word, root="-age", root_zh="表行为/费用", root_type="suffix",
+                       source="scan", freq="", meaning="", structure="word + -age", in_words=True):
+        """测试助手：造一条词根树记录（词→结构→词根→关联）。返回 root_id。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            if in_words:
+                conn.execute(
+                    "INSERT OR IGNORE INTO words (word, frequency_level, frequency_source) VALUES (?,?, 'llm')",
+                    (word, freq),
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO word_structures (word, structure_code, is_decomposable, model) VALUES (?,?,1,'mock')",
+                (word, structure),
+            )
+            r = conn.execute("SELECT id FROM word_roots WHERE root=?", (root,)).fetchone()
+            if r:
+                root_id = r[0]
+            else:
+                cur = conn.execute("INSERT INTO word_roots (root, root_zh, root_type) VALUES (?,?,?)", (root, root_zh, root_type))
+                root_id = cur.lastrowid
+            conn.execute(
+                "INSERT OR IGNORE INTO word_root_links (word, root_id, source, frequency_level, meaning_zh) VALUES (?,?,?,?,?)",
+                (word, root_id, source, freq if source == "seed" else "", meaning if source == "seed" else ""),
+            )
+            conn.commit()
+            return root_id
+        finally:
+            conn.close()
+
+    def test_morpheme_tables_and_words_frequency_columns(self):
+        """初始化应建三张构词表，且 words 表具备全局频率两列。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            for t in ("word_roots", "word_structures", "word_root_links"):
+                self.assertIn(t, tables)
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(words)").fetchall()]
+            self.assertIn("frequency_level", cols)
+            self.assertIn("frequency_source", cols)
+        finally:
+            conn.close()
+
+    def test_morpheme_detect_stream_creates_roots(self):
+        """构词拆解 SSE：命中启发式粗筛的词 → LLM 判定 → 建词根树入库。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        for w in ("brokerage", "storage"):
+            conn.execute("INSERT OR IGNORE INTO words (word) VALUES (?)", (w,))
+        conn.commit()
+        conn.close()
+
+        async def fake_detect(words):
+            return {"results": [
+                {"word": "brokerage", "is_decomposable": True, "stem": "broker", "stem_zh": "经纪人",
+                 "affixes": [{"affix": "-age", "type": "suffix", "meaning": "表行为/费用"}],
+                 "structure_code": "broker + -age", "root": "-age", "root_zh": "表行为/费用", "root_type": "suffix",
+                 "word_family": ["broker", "brokerage"]},
+                {"word": "storage", "is_decomposable": True, "stem": "store", "stem_zh": "存储",
+                 "affixes": [{"affix": "-age", "type": "suffix", "meaning": "表行为"}],
+                 "structure_code": "store + -age", "root": "-age", "root_zh": "表行为/费用", "root_type": "suffix",
+                 "word_family": ["store", "storage"]},
+            ], "model": "mock-llm"}
+
+        with mock.patch.object(routes_module, "call_morpheme_detect", fake_detect):
+            r = self.client.post("/api/morphemes/detect-stream", json={"force": True, "limit": 50})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("event: step", r.text)
+        self.assertIn("event: result", r.text)
+        self.assertIn('"ok": true', r.text)
+
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            root = conn.execute("SELECT * FROM word_roots WHERE root='-age'").fetchone()
+            self.assertIsNotNone(root)
+            links = conn.execute(
+                "SELECT COUNT(*) c FROM word_root_links WHERE root_id=? AND source='scan'", (root[0],)
+            ).fetchone()[0]
+            self.assertEqual(links, 2)
+            struct = conn.execute("SELECT structure_code FROM word_structures WHERE word='brokerage'").fetchone()
+            self.assertEqual(struct[0], "broker + -age")
+        finally:
+            conn.close()
+
+    def test_morpheme_roots_list_and_tree(self):
+        """词根树列表 + 单树详情：P1 已收录排在 P2 推荐前，推荐词带频率/释义。"""
+        rid = self._seed_morpheme("brokerage", root="-age", freq="", structure="broker + -age")
+        self._seed_morpheme("storage", root="-age", freq="", structure="store + -age")
+        self._seed_morpheme("coverage", root="-age", source="seed", freq="★★★★☆", meaning="覆盖范围",
+                            structure="cover + -age", in_words=False)
+
+        r = self.client.get("/api/morphemes/roots")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(any(x["root"] == "-age" for x in r.json()["items"]))
+
+        tree = self.client.get(f"/api/morphemes/roots/{rid}").json()
+        words = [m["word"] for m in tree["members"]]
+        self.assertIn("brokerage", words)
+        self.assertIn("coverage", words)
+        self.assertLess(words.index("brokerage"), words.index("coverage"))
+        cov = next(m for m in tree["members"] if m["word"] == "coverage")
+        self.assertEqual(cov["frequency_level"], "★★★★☆")
+        self.assertEqual(cov["meaning_zh"], "覆盖范围")
+
+    def test_morpheme_seed_word_promoted_after_import(self):
+        """「暂存→继承」：P2 推荐词导入词库后，在词根树里应升为已收录(P1)且频率读 words（不因 link 暂存清空而丢失）。"""
+        rid = self._seed_morpheme("brokerage", root="-age", freq="", structure="broker + -age")
+        self._seed_morpheme("coverage", root="-age", source="seed", freq="★★★★☆", meaning="覆盖范围",
+                            structure="cover + -age", in_words=False)
+
+        # 继承前：coverage 不在词库 → P2 推荐，频率读 link 暂存
+        tree = self.client.get(f"/api/morphemes/roots/{rid}").json()
+        before = next(m for m in tree["members"] if m["word"] == "coverage")
+        self.assertEqual(before["priority"], 2)
+
+        # 把 coverage 导入词库（走继承逻辑）
+        async def fake_enrich(words):
+            return {"results": [{"word": words[0], "pos": "n.", "meaning_zh": "", "frequency_level": ""}]}
+        with mock.patch.object(routes_module, "call_word_enrichment", fake_enrich):
+            r = self.client.post("/api/words", json={"word": "coverage"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["frequency_level"], "★★★★☆")  # 继承 link 暂存频率
+
+        # 继承后：coverage 已在词库 → 升为 P1 已收录，频率仍显示（words 环节）
+        tree = self.client.get(f"/api/morphemes/roots/{rid}").json()
+        after = next(m for m in tree["members"] if m["word"] == "coverage")
+        self.assertEqual(after["priority"], 1)
+        self.assertEqual(after["frequency_level"], "★★★★☆")
+
+    def test_morpheme_expand_adds_seed_words(self):
+        """单树添加成员：追加 3 个 P2 推荐词，去重跳过已在树的词。"""
+        rid = self._seed_morpheme("brokerage", root="-age", freq="", structure="broker + -age")
+
+        async def fake_seed(root, root_zh, root_type, existing):
+            return {"recommended": [
+                {"word": "demopost", "meaning_zh": "邮资", "frequency_level": "★★★★☆"},
+                {"word": "demowast", "meaning_zh": "损耗量", "frequency_level": "★★★☆☆"},
+                {"word": "brokerage", "meaning_zh": "经纪费", "frequency_level": "★★★★★"},
+            ], "reason": ""}
+
+        with mock.patch.object(routes_module, "call_morpheme_seed", fake_seed):
+            r = self.client.post(f"/api/morphemes/roots/{rid}/expand")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(len(body["added"]), 2)
+        self.assertIn("demopost", body["added"])
+        self.assertIn("brokerage", body["skipped"])
+
+        tree = self.client.get(f"/api/morphemes/roots/{rid}").json()
+        post = next(m for m in tree["members"] if m["word"] == "demopost")
+        self.assertEqual(post["frequency_level"], "★★★★☆")
+        self.assertEqual(post["meaning_zh"], "邮资")
+
+    def test_morpheme_expand_skips_library_words(self):
+        """添加成员时，已在词库的推荐词应跳过（不重复收录）。"""
+        rid = self._seed_morpheme("brokerage", root="-age", freq="")
+        conn = sqlite3.connect(str(main.DB_PATH))
+        conn.execute("INSERT OR IGNORE INTO words (word) VALUES ('postage')")
+        conn.commit()
+        conn.close()
+
+        async def fake_seed(root, root_zh, root_type, existing):
+            return {"recommended": [{"word": "postage", "meaning_zh": "邮资", "frequency_level": "★★★★☆"}], "reason": ""}
+
+        with mock.patch.object(routes_module, "call_morpheme_seed", fake_seed):
+            r = self.client.post(f"/api/morphemes/roots/{rid}/expand")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("postage", r.json()["skipped"])
+
+    def test_morpheme_words_list_query_and_delete(self):
+        """已拆词列表/搜索、单词语法查询、删除（级联清理关联）。"""
+        rid = self._seed_morpheme("brokerage", root="-age", freq="★★★★★", structure="broker + -age")
+        conn = sqlite3.connect(str(main.DB_PATH))
+        conn.execute("INSERT OR IGNORE INTO words (word) VALUES ('untouched')")
+        conn.commit()
+        conn.close()
+
+        cand = self.client.get("/api/morphemes/candidates").json()
+        self.assertGreaterEqual(cand["total"], 1)  # untouched 尚未判定
+
+        r = self.client.get("/api/morphemes/words")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(any(x["word"] == "brokerage" for x in r.json()["items"]))
+
+        q = self.client.get("/api/morphemes?word=brokerage")
+        self.assertEqual(q.status_code, 200)
+        self.assertEqual(q.json()["structure_code"], "broker + -age")
+        self.assertEqual(q.json()["roots"][0]["root"], "-age")
+
+        d = self.client.delete("/api/morphemes/words/brokerage")
+        self.assertEqual(d.status_code, 200)
+        self.assertEqual(d.json()["deleted"], 1)
+        tree = self.client.get(f"/api/morphemes/roots/{rid}").json()
+        self.assertNotIn("brokerage", [m["word"] for m in tree["members"]])
+
+    def test_frequency_inherit_from_link_on_import(self):
+        """P2 推荐词导入词库：频率/释义从 word_root_links 继承到 words，并清理暂存。"""
+        self._seed_morpheme("wastage", root="-age", source="seed", freq="★★★☆☆", meaning="损耗量", in_words=False)
+
+        async def fake_enrich(words):
+            return {"results": [{"word": words[0], "pos": "n.", "meaning_zh": "损耗量", "frequency_level": ""}]}
+
+        with mock.patch.object(routes_module, "call_word_enrichment", fake_enrich):
+            r = self.client.post("/api/words", json={"word": "wastage"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["frequency_level"], "★★★☆☆")
+
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            link = conn.execute(
+                "SELECT frequency_level, meaning_zh FROM word_root_links WHERE word='wastage' AND source='seed'"
+            ).fetchone()
+            self.assertEqual((link[0], link[1]), ("", ""))   # 暂存已清理
+            ws = conn.execute("SELECT frequency_level FROM words WHERE word='wastage'").fetchone()
+            self.assertEqual(ws[0], "★★★☆☆")
+        finally:
+            conn.close()
+
+    def test_migrate_words_frequency_from_polysemy(self):
+        """初始化迁移：已入库的熟词僻意种子频率一次性并入 words（来源记 seed）。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            conn.execute("INSERT OR IGNORE INTO words (word) VALUES ('address')")
+            conn.execute("INSERT OR REPLACE INTO polysemy (word, frequency_level) VALUES ('address', '★★★★★')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        db_module.init_db()  # 幂等：重跑迁移
+
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            row = conn.execute("SELECT frequency_level, frequency_source FROM words WHERE word='address'").fetchone()
+            self.assertEqual(row[0], "★★★★★")
+            self.assertEqual(row[1], "seed")
+        finally:
+            conn.close()
+
+    def test_import_stream_writes_frequency(self):
+        """导入流：AI 补充返回的频率字段应写入 words（全局同源）。"""
+        async def fake_enrichment(batch):
+            return {"skipped": False, "results": [
+                {"word": batch[0], "pos": "n.", "meaning_zh": "测试", "frequency_level": "★★★★☆"}]}
+
+        with mock.patch.object(routes_module, "call_word_enrichment", fake_enrichment):
+            r = self.client.post("/api/words/import-stream", json={"words": ["freqword"]})
+        self.assertEqual(r.status_code, 200)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            row = conn.execute("SELECT frequency_level FROM words WHERE word='freqword'").fetchone()
+            self.assertEqual(row[0], "★★★★☆")
+        finally:
+            conn.close()
+
+    # ================= 构词拆解 LLM 解析健壮性（回归） =================
+
+    @staticmethod
+    def _mock_chat(payload):
+        """构造返回固定 content 的 _chat_completion mock（并注入可用模型配置，脱离 .env 依赖）。"""
+        async def fake_chat(base_url, api_key, model, payload_=None, timeout=120.0, detail=""):
+            return {"choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}], "model": "mock"}
+        fake_cfg = {"value": "mock-model", "base_url": "http://x", "api_key": "k", "model": "m"}
+        return [
+            mock.patch.object(services_module, "_chat_completion", fake_chat),
+            mock.patch.object(services_module, "get_route_llm", return_value=fake_cfg),
+        ]
+
+    def test_morpheme_detect_prompt_builder_escapes_braces(self):
+        """回归：_build_morpheme_detect_prompt 是 f-string，提示里 affixes[{affix,...}] 花括号必须转义，否则 NameError。"""
+        prompt = services_module._build_morpheme_detect_prompt(["brokerage"])
+        self.assertIn("affixes[{affix,type,meaning}]", prompt)  # 按字面输出，不被 f-string 求值
+
+    def test_morpheme_detect_parses_words_key(self):
+        """回归：LLM 返回 {"words": [...]} 而非 {"results": [...]} 时应能解析。"""
+        payload = {"words": [
+            {"word": "brokerage", "is_decomposable": True, "stem": "broker", "stem_zh": "经纪人",
+             "affixes": [{"affix": "-age", "type": "suffix", "meaning": "表行为/费用"}],
+             "structure_code": "broker + -age", "root": "-age", "root_zh": "表行为", "root_type": "suffix",
+             "word_family": ["broker", "brokerage"]},
+            {"word": "delegate", "is_decomposable": False},
+        ]}
+        with self._mock_chat(payload)[0], self._mock_chat(payload)[1]:
+            res = asyncio.run(services_module.call_morpheme_detect(["brokerage", "delegate"]))
+        results = res["results"]
+        self.assertEqual(len(results), 2)
+        broker = next(r for r in results if r["word"] == "brokerage")
+        self.assertTrue(broker["is_decomposable"])
+        self.assertEqual(broker["structure_code"], "broker + -age")
+        self.assertEqual(broker["affixes"][0]["affix"], "-age")
+        delegate = next(r for r in results if r["word"] == "delegate")
+        self.assertFalse(delegate["is_decomposable"])
+
+    def test_morpheme_detect_parses_top_level_array(self):
+        """回归：LLM 返回顶层数组 [...] 时应能解析。"""
+        payload = [
+            {"word": "storage", "is_decomposable": True, "stem": "store", "stem_zh": "存储",
+             "affixes": [{"affix": "-age", "type": "suffix", "meaning": "表行为"}],
+             "structure_code": "store + -age", "root": "-age", "root_zh": "表行为", "root_type": "suffix",
+             "word_family": ["store", "storage"]},
+        ]
+        chat_patch, route_patch = self._mock_chat(payload)
+        with chat_patch, route_patch:
+            res = asyncio.run(services_module.call_morpheme_detect(["storage"]))
+        self.assertEqual(len(res["results"]), 1)
+        self.assertEqual(res["results"][0]["word"], "storage")
+
+    def test_morpheme_seed_parses_words_key(self):
+        """回归：词根推荐 LLM 返回 {"words": [...]} 时应能解析。"""
+        payload = {"words": [
+            {"word": "demopost", "meaning_zh": "邮资", "frequency_level": "★★★★☆"},
+        ]}
+        chat_patch, route_patch = self._mock_chat(payload)
+        with chat_patch, route_patch:
+            res = asyncio.run(services_module.call_morpheme_seed("-age", "表行为/费用", "suffix", ["brokerage"]))
+        self.assertIsNotNone(res)
+        self.assertEqual(len(res["recommended"]), 1)
+        self.assertEqual(res["recommended"][0]["word"], "demopost")
 
 
 if __name__ == "__main__":

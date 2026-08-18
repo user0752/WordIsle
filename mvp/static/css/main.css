@@ -726,6 +726,31 @@
   .polysemy-card .example-en { font-size: 14px; line-height: 1.8; color: var(--text-primary); }
   .polysemy-card .example-zh { font-size: 14px; color: var(--text-tertiary); margin-top: 4px; }
 
+  /* ===== 构词拆解 · 词根树 ===== */
+  .morpheme-root-card {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    transition: all var(--transition-base);
+    background: var(--bg-card);
+    height: 100%;
+  }
+  .morpheme-root-card:hover { border-color: var(--accent-border); box-shadow: var(--shadow-sm); }
+  .morpheme-root-card .card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .morpheme-root-card .word-title { font-size: 19px; font-weight: 700; color: var(--text-primary); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .morpheme-tree { margin-top: 6px; border-top: 1px dashed var(--border-subtle); padding-top: 10px; }
+  .morpheme-member {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px;
+    padding: 5px 0; font-size: 14px; color: var(--text-primary);
+  }
+  .morpheme-member-mark { color: var(--text-tertiary); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; user-select: none; }
+  .morpheme-member-word { font-weight: 600; color: var(--text-primary); }
+  .morpheme-member-struct { color: var(--accent); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; }
+  .morpheme-member-meaning { color: var(--text-tertiary); font-size: 13px; }
+  .morpheme-tree-toggle { padding: 6px 0 2px; }
+  .morpheme-tree-footer { padding-top: 10px; margin-top: 6px; border-top: 1px dashed var(--border-subtle); }
+  .mr-xs { margin-right: 6px; }
+
   /* ===== 结果页 ===== */
   .el-card .word-list .el-tag--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
   .el-card .word-list .el-tag--danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
