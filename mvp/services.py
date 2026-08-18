@@ -612,12 +612,13 @@ async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str =
 # 单点深耕图片生成
 # ========================================================================
 
-async def generate_single_image(prompt: str, model: str, gen_id: str) -> dict:
-    """为单点深耕生成 1 张图片，存盘并返回 dict(url, error)。"""
+async def generate_single_image(prompt: str, model: str, gen_id: str, feature: str = "") -> dict:
+    """为单点深耕生成 1 张图片，存盘并返回 dict(url, error)。
+    feature: 编译功能名（如「单点深耕」），用于用量明细的「说明」字段。"""
     if not prompt:
         return {"url": None, "error": "无 image_prompt"}
     try:
-        img_bytes = await call_image_generation(prompt, model)
+        img_bytes = await call_image_generation(prompt, model, feature=feature)
     except HTTPException as e:
         return {"url": None, "error": e.detail}
     except Exception as e:
@@ -1208,15 +1209,17 @@ async def _generate_image_openai_compat(prompt: str, model: str, api_key: str, b
     raise RuntimeError(f"图片下载失败（重试 3 次）: {last_err}")
 
 
-async def call_image_generation(prompt: str, model: str = None) -> bytes:
-    """文生图统一入口，按模型分派到同步、异步或 OpenAI 兼容端点。返回图片二进制。"""
+async def call_image_generation(prompt: str, model: str = None, feature: str = "") -> bytes:
+    """文生图统一入口，按模型分派到同步、异步或 OpenAI 兼容端点。返回图片二进制。
+    feature: 调用来源的编译功能名（如「批量编译/单点深耕/场景编译」），
+             用于用量明细的「说明」字段，缺省为空（前端兜底展示「文生图」）。"""
     model_name = model or IMAGE_MODEL
     cfg = _get_image_model_config(model_name)
     endpoint = cfg.get("endpoint", "t2i")
     provider = cfg.get("provider", "dashscope")
     api_model = cfg.get("api_model", model_name)
     t0 = time.monotonic()
-    logger.info("文生图调用 model=%s(value=%s) provider=%s endpoint=%s", api_model, model_name, provider, endpoint)
+    logger.info("文生图调用 model=%s(value=%s) provider=%s endpoint=%s feature=%s", api_model, model_name, provider, endpoint, feature or "—")
     try:
         if endpoint == "openai":
             # OpenAI 兼容协议（TokenRhythm 免费调用 qwen-image-2.0 / wan2.7-image）
@@ -1244,9 +1247,9 @@ async def call_image_generation(prompt: str, model: str = None) -> bytes:
     except Exception as e:
         logger.error("文生图调用失败 model=%s(value=%s) endpoint=%s provider=%s error=%r", api_model, model_name, endpoint, provider, e)
         raise HTTPException(500, f"文生图失败 ({model_name}): {e}")
-    # 文生图用量：1 次调用 = 生成 1 张图
-    record_model_usage("image", model_name, "", 1)
-    logger.info("文生图成功 model=%s(value=%s) 耗时=%.1fs", api_model, model_name, time.monotonic() - t0)
+    # 文生图用量：1 次调用 = 生成 1 张图；detail 标注来自哪个编译功能（与 LLM/TTS 一致）
+    record_model_usage("image", model_name, feature or "", 1)
+    logger.info("文生图成功 model=%s(value=%s) feature=%s 耗时=%.1fs", api_model, model_name, feature or "—", time.monotonic() - t0)
     return data
 
 
@@ -1257,10 +1260,11 @@ _STYLE_IMAGE_PROMPT_PREFIX = {
 }
 
 
-async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int, style: str = "", art_style: str = "") -> dict:
+async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index: int, style: str = "", art_style: str = "", feature: str = "") -> dict:
     """为单个画面生成图片，失败时降级（不阻塞整体）。
     style: ''/'legacy' 保留旧版微电影风格；'absurd'/'conflict' 强化对应漫画风格，避免被电影质感污染。
-    art_style: 'auto' 时跳过固定风格前缀，完全由 LLM 在 image_prompt 中自主选择画风。"""
+    art_style: 'auto' 时跳过固定风格前缀，完全由 LLM 在 image_prompt 中自主选择画风。
+    feature: 编译功能名（如「批量编译/场景编译」），用于用量明细的「说明」字段。"""
     if art_style == "auto":
         full_prompt = f"{prompt}, 16:9"
     else:
@@ -1270,7 +1274,7 @@ async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index
         else:
             full_prompt = f"cinematic storyboard, film grain, dramatic lighting, {prompt}, 16:9"
     try:
-        img_bytes = await call_image_generation(full_prompt, model)
+        img_bytes = await call_image_generation(full_prompt, model, feature=feature)
         file_name = f"{gen_id}_panel{scene_index}.png"
         file_path = IMAGES_DIR / file_name
         file_path.write_bytes(img_bytes)

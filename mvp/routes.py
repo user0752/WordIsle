@@ -264,7 +264,7 @@ async def _run_generate(p: dict):
         yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
                         "label": f"生成 {len(panels)} 张图", "status": "running"})
         image_tasks = [
-            generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, p.get("scene_index", idx + 1), style=style, art_style=art_style)
+            generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, p.get("scene_index", idx + 1), style=style, art_style=art_style, feature="批量编译")
             for idx, p in enumerate(panels)
         ]
         cfg = _get_image_model_config(image_model)
@@ -429,7 +429,7 @@ async def _run_single_compile(p: dict):
         raise HTTPException(429, "今日文生图已达上限")
     yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
                     "label": "生成记忆钩子图", "status": "running"})
-    ir = await generate_single_image(result.get("image_prompt", ""), image_model, gen_id)
+    ir = await generate_single_image(result.get("image_prompt", ""), image_model, gen_id, feature="单点深耕")
     image_url, image_error = ir["url"], ir["error"]
     if not image_url:
         logger.error("单点深耕文生图失败 model=%s error=%r", image_model, ir.get("error"))
@@ -2222,7 +2222,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
             yield ("step", {"step": "image", "model": image_model, "provider": _image_provider_label(image_model),
                             "label": f"生成 {len(panels)} 张图", "status": "running"})
             image_tasks = [
-                generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, i + 1, style=style, art_style=art_style)
+                generate_panel_image(p.get("image_prompt", ""), image_model, gen_id, i + 1, style=style, art_style=art_style, feature="场景编译")
                 for i, p in enumerate(panels)
             ]
             cfg = _get_image_model_config(image_model)
