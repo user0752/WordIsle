@@ -66,9 +66,55 @@ async def index():
     return HTMLResponse(_load_index_html())
 
 # ========================================================================
+# 日志落盘：toeic.* 业务日志 JSON 单行，按天轮转
+# ========================================================================
+
+def _setup_logging():
+    """给 toeic.* logger 追加按天轮转的 JSON 文件 handler。
+
+    不做完整控制台/多格式堆叠，保持轻量：
+      - 保留 services/routes 自己的 StreamHandler（走 stdout，供启动管理器 tail）
+      - 这里只补一层落盘，关掉 GUI/管理器后日志不丢、可按天回查
+    """
+    import json as _json
+    import logging
+    import traceback
+    from datetime import datetime as _dt
+    from logging.handlers import TimedRotatingFileHandler
+
+    logger = logging.getLogger("toeic")
+    if logger.level == logging.NOTSET:
+        logger.setLevel(logging.INFO)
+    if any(isinstance(h, TimedRotatingFileHandler) for h in logger.handlers):
+        return
+
+    class _JsonFormatter(logging.Formatter):
+        def format(self, record):
+            payload = {
+                "ts": _dt.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds"),
+                "level": record.levelname,
+                "svc": record.name,
+                "msg": record.getMessage(),
+            }
+            if record.exc_info:
+                payload["err"] = "".join(traceback.format_exception(*record.exc_info))
+            return _json.dumps(payload, ensure_ascii=False, default=str)
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fh = TimedRotatingFileHandler(
+        LOG_DIR / "app.log", when="midnight", interval=1,
+        backupCount=14, encoding="utf-8",
+    )
+    fh.suffix = "%Y-%m-%d"
+    fh.setFormatter(_JsonFormatter())
+    logger.addHandler(fh)
+
+# ========================================================================
 # 启动
 # ========================================================================
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    _setup_logging()
+    # access_log=True：保留请求日志供 manager 落盘 access.*.log 留痕；终端由 manager 里旁路处理
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", access_log=True)

@@ -208,6 +208,27 @@ def _is_internal_access_log(line: str) -> bool:
     )
 
 
+# 用户真实请求的 uvicorn access log 行，形如:
+#   INFO:     127.0.0.1:51320 - "GET /api/words?page=1 HTTP/1.1" 200 OK
+# manager 捕获到这类行时**旁路落盘 access.*.log**，不进终端（业务/错误日志照常显示）
+_ACCESS_RE = re.compile(
+    r'^\s*INFO:\s+\S+:\d+\s+-\s+"(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+'
+    r'\S+\s+HTTP/\d\.\d"\s+\d+'
+)
+
+
+def _append_access(access_dir, line: str):
+    """把一条请求 access log 追加到 logs/access.YYYY-MM-DD.log（按天分文件）。"""
+    try:
+        _dir = Path(access_dir)
+        _dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        with open(_dir / f"access.{today}.log", "a", encoding="utf-8") as f:
+            f.write(f'[{datetime.now().strftime("%H:%M:%S")}] {line}\n')
+    except Exception:
+        pass
+
+
 # ========================================================================
 # 端口占用检测与清理（Windows 优先用 netstat/taskkill）
 # ========================================================================
@@ -458,6 +479,8 @@ class ServiceManager:
         self.start_time: float | None = None
         self.python_exe = find_python()
         self._stopping = False
+        # 用户请求日志（uvicorn access）旁路落盘目录，不进终端
+        self.access_dir = MVP_DIR / "logs"
 
     @property
     def is_running(self) -> bool:
@@ -547,8 +570,12 @@ class ServiceManager:
                 line = line.rstrip("\r\n")
                 if not line:
                     continue
-                # 过滤 manager 自身健康检查产生的 uvicorn access log，不污染用户日志视图
+                # 过滤 manager 自身健康检查产生的 uvicorn access log（探针，不留痕不显示）
                 if _is_internal_access_log(line):
+                    continue
+                # 用户真实请求的 access log：旁路落盘 access.*.log 留痕，不进终端
+                if _ACCESS_RE.match(line):
+                    _append_access(self.access_dir, line)
                     continue
                 ts = datetime.now().strftime("%H:%M:%S")
                 self.log_queue.put((ts, detect_level(line), line))
@@ -1224,21 +1251,19 @@ def run_cli():
     done = threading.Event()
     state = {"fe": False, "be": False, "health": None, "checking": False}
 
-    # 去重：状态签名不变就不重复打印状态行（仍保留 60s 心跳兜底打印一次）
+    # 稳态静默：签名不变就不打印状态行（生产语义，不自我汇报、不刷屏）
     last_status = 0.0
     _last_status_sig: str | None = None
-    _last_status_printed_at = 0.0
-    _FORCED_INTERVAL = 60.0  # 即使状态不变，至少每 60s 打印一次
 
     def _make_status_sig() -> str:
         """生成当前状态的签名（用于判断是否需要刷新状态行）。
-        uptime 只取到分钟粒度，避免每秒都变。"""
+        仅包含真实状态变化量：进程/端口/前后端/密钥；不含 uptime，
+        避免因时间流逝每分钟触发一次重打。"""
         running = svc.is_running
         external = (not running) and svc.port_occupied_externally and state["fe"]
         h = state["health"] or {}
-        uptime_min = svc.uptime[:5] if running else "00:00"
         return (
-            f"{int(running)}|{svc.pid or '-'}|{uptime_min}|"
+            f"{int(running)}|{svc.pid or '-'}|"
             f"{int(external)}|{int(state['fe'])}|{int(state['be'])}|"
             f"{int(bool(h.get('deepseek_key')))}|{int(bool(h.get('bailian_llm_key')))}|"
             f"{int(bool(h.get('tts_key')))}|{int(bool(h.get('bailian_image_key')))}|"
@@ -1246,13 +1271,10 @@ def run_cli():
         )
 
     def status_line(force: bool = False):
-        nonlocal _last_status_sig, _last_status_printed_at
+        nonlocal _last_status_sig
         sig = _make_status_sig()
-        now = time.time()
-        # 状态没变化，又没强制，且没到心跳时间 → 跳过，不刷屏
-        if (not force
-                and sig == _last_status_sig
-                and (now - _last_status_printed_at) < _FORCED_INTERVAL):
+        # 稳态静默：状态没变化且非强制时直接跳过，不重复打印
+        if not force and sig == _last_status_sig:
             return
 
         running = svc.is_running
@@ -1290,7 +1312,6 @@ def run_cli():
         print(f"{ANSI['CYAN']}── {core} | 前端={fe} 后端={be} | {keys}{ANSI['RESET']}",
               flush=True)
         _last_status_sig = sig
-        _last_status_printed_at = now
 
     def banner():
         print()
@@ -1302,6 +1323,9 @@ def run_cli():
         print()
         print("  按键: [s]启动  [x]停止  [r]重启  [c]自检  [b]浏览器  [q]退出")
         print("  GUI 模式: 运行 manager.bat gui")
+        print("  后端日志: " + str(MVP_DIR / "logs" / "app.log") + "（按天轮转）")
+        print("  请求留痕: " + str(MVP_DIR / "logs" / "access.<日期>.log") + "（不进终端，按天落盘）")
+        print("  说明: 稳态静默，状态仅在进程/密钥变化时刷新；运行时长按 c 自检查看")
         print()
 
     def do_start():

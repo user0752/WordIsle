@@ -22,7 +22,7 @@ from db import record_model_usage
 logger = logging.getLogger("toeic.services")
 if not logger.handlers:
     _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    _h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
     logger.addHandler(_h)
     logger.setLevel(logging.INFO)
 

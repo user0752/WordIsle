@@ -23,6 +23,7 @@ IMAGES_DIR   = DATA_DIR / "images"
 VIDEOS_DIR   = DATA_DIR / "videos"
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR   = BASE_DIR / "static"
+LOG_DIR      = BASE_DIR / "logs"
 
 # ========================================================================
 # DeepSeek
