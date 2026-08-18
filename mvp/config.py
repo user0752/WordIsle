@@ -281,7 +281,8 @@ BAILIAN_LLM_BASE_URL = os.getenv("BAILIAN_LLM_BASE_URL", "https://dashscope.aliy
 
 # ========================================================================
 # LLM 模型路由（设置页可切换每个调用点使用的模型）
-# 三个候选：百炼 Qwen3.7-Flash（默认/兜底）/ 百炼 DeepSeek-V4-Flash / DeepSeek 官方
+# 五个候选：百炼 Qwen3.7-Flash（默认/兜底）/ 百炼 Qwen3.7-Max（限时5折）
+#          / 百炼 Qwen3.7-Max 0520 快照 / 百炼 DeepSeek-V4-Flash / DeepSeek 官方
 # value 为内部标识；base_url/api_key/model 为该模型实际调用参数。
 # ========================================================================
 
@@ -297,6 +298,30 @@ LLM_MODELS = [
         "price": "输入 0.2 / 输出 0.8 元(每百万token)",
         "note": "千问3.7 Flash（2026-07-15），支持 JSON 结构化输出；免费额度 100 万 token（华北2）；全站默认与兜底降级模型",
         "recommended": True,
+    },
+    {
+        "value": "bailian-qwen3.7-max",
+        "label": "百炼 · Qwen3.7 Max（限时5折）",
+        "channel": "bailian",
+        "base_url": BAILIAN_LLM_BASE_URL,
+        "api_key": IMAGE_API_KEY,
+        "model": "qwen3.7-max",
+        "tier": "限时",
+        "price": "限时5折 输入 6 / 输出 18 元(每百万token)",
+        "note": "千问3.7 Max 旗舰（能力等同 2026-05-20 快照），限时 5 折；免费额度 100 万 token（8.20 到期）",
+        "recommended": False,
+    },
+    {
+        "value": "bailian-qwen3.7-max-2026-05-20",
+        "label": "百炼 · Qwen3.7 Max 0520（旗舰快照）",
+        "channel": "bailian",
+        "base_url": BAILIAN_LLM_BASE_URL,
+        "api_key": IMAGE_API_KEY,
+        "model": "qwen3.7-max-2026-05-20",
+        "tier": "旗舰",
+        "price": "输入 12 / 输出 36 元(每百万token)",
+        "note": "千问3.7 Max 2026-05-20 快照版（固定版本）；免费额度 100 万 token（8.20 到期）",
+        "recommended": False,
     },
     {
         "value": "bailian-deepseek-v4-flash",

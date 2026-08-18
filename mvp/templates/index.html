@@ -1704,7 +1704,7 @@
             <template #header>
               <div class="flex align-center gap-sm">
                 <el-icon><Cpu /></el-icon>
-                <span style="font-weight:600">可用 LLM 模型（3 个候选）</span>
+                <span style="font-weight:600">可用 LLM 模型（{{ llmModels.length }} 个候选）</span>
               </div>
             </template>
             <el-table :data="llmModels" size="small" stripe>
