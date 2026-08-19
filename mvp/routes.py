@@ -1003,6 +1003,81 @@ async def create_word(req: Request):
         conn.close()
 
 
+@router.post("/api/words/single-stream")
+async def create_word_stream(req: Request):
+    """单条添加单词（SSE 流式）：缺词性/释义/频率时 AI 补全 → 入库，逐步反馈进度。"""
+    body = await _safe_json(req)
+    word = str(body.get("word", "")).strip().lower()
+    if not word or len(word) < 2:
+        raise HTTPException(400, "无效单词")
+    pos = _coerce_str(body.get("pos", ""))
+    meaning_zh = _coerce_str(body.get("meaning_zh", ""))
+    frequency_level = _coerce_str(body.get("frequency_level", ""))
+    return StreamingResponse(
+        _sse_stream(_run_single_add_stream(word, pos, meaning_zh, frequency_level)),
+        media_type="text/event-stream",
+    )
+
+
+async def _run_single_add_stream(word: str, pos: str, meaning_zh: str, frequency_level: str):
+    """单条添加单词核心流程（生成器）：缺少词性/释义/频率时先 AI 补充，再入库，逐步 yield。"""
+    conn = get_db()
+    row = None
+    try:
+        # 校验重复
+        if conn.execute("SELECT 1 FROM words WHERE word=?", (word,)).fetchone():
+            yield ("step", {"step": "check", "label": "检查重复", "status": "failed", "message": f"单词 '{word}' 已存在"})
+            yield ("result", {"ok": False, "reason": "duplicated", "message": f"单词 '{word}' 已存在"})
+            return
+
+        # 缺词性/释义/频率时用 LLM 补充（成功入库前先判好，失败则中断，不写入）
+        need_llm = (not pos) or (not meaning_zh) or (not frequency_level)
+        if need_llm:
+            enrich_model = _llm_route_model("enrich")
+            yield ("step", {"step": "llm", "model": enrich_model, "label": "AI 补充词性释义", "status": "running"})
+            try:
+                enrich = await call_word_enrichment([word])
+            except Exception as e:
+                yield ("step", {"step": "llm", "model": enrich_model, "label": "AI 补充词性释义", "status": "failed", "message": f"补充失败：{e}"})
+                yield ("result", {"ok": False, "reason": "llm_error", "message": f"AI 补充词性释义失败：{e}"})
+                return
+            enrich_ok = 0
+            if not enrich.get("skipped") and enrich.get("results"):
+                for r in enrich["results"]:
+                    if str(r.get("word", "")).strip().lower() == word:
+                        if not pos:
+                            pos = _coerce_str(r.get("pos", ""))
+                        if not meaning_zh:
+                            meaning_zh = _coerce_str(r.get("meaning_zh", ""))
+                        if not frequency_level:
+                            frequency_level = _coerce_str(r.get("frequency_level", ""))
+                        enrich_ok += 1
+                        break
+            if enrich_ok:
+                yield ("step", {"step": "llm", "model": enrich_model, "label": "AI 补充词性释义", "status": "ok", "message": "补全完成"})
+            else:
+                yield ("step", {"step": "llm", "model": enrich_model, "label": "AI 补充词性释义", "status": "failed", "message": "AI 未返回有效补全结果"})
+
+        yield ("step", {"step": "write", "label": f"写入单词 {word}", "status": "running"})
+        cur = conn.execute(
+            "INSERT INTO words (word, pos, meaning_zh, frequency_level, frequency_source) VALUES (?,?,?,?,'llm')",
+            (word, pos, meaning_zh, frequency_level),
+        )
+        wid = cur.lastrowid
+        # P2 推荐词导入词库：继承 word_root_links 暂存频率/释义后清理
+        inherit_link_frequency(conn, word)
+        conn.commit()
+        yield ("step", {"step": "write", "label": f"写入单词 {word}", "status": "ok"})
+        row = conn.execute("SELECT * FROM words WHERE id=?", (wid,)).fetchone()
+    except sqlite3.IntegrityError:
+        yield ("step", {"step": "write", "label": f"写入单词 {word}", "status": "failed", "message": f"单词 '{word}' 已存在"})
+        yield ("result", {"ok": False, "reason": "duplicated", "message": f"单词 '{word}' 已存在"})
+        return
+    finally:
+        conn.close()
+    yield ("result", {"ok": True, "word": dict(row)})
+
+
 @router.patch("/api/words/{word_id}")
 async def update_word(word_id: int, req: Request):
     body = await _safe_json(req)
@@ -1746,6 +1821,8 @@ async def polysemy_auto_detect_stream(req: Request):
 MORPHEME_BATCH_SIZE = 20        # 每批送给 LLM 判定的词数
 MORPHEME_SEED_PER_SCAN = 5      # 每次扫描最多懒填充的词根树数量（控配额）
 MORPHEME_SEED_CAP = 15          # 每棵树 P2 推荐词软上限
+MORPHEME_DIRECT_THRESHOLD = 40  # 候选词数 ≤ 该值时跳过启发式粗筛，直送 LLM 判定（避免漏掉真正可拆的待检词）
+MORPHEME_MAX_PICK = 5           # 手动勾选拆解的单次词数上限（防止单批过大导致 LLM 超时）
 
 
 def _freq_star_count(freq: str) -> int:
@@ -1829,17 +1906,21 @@ def _morpheme_tree_members(conn, root_id: int) -> list[dict]:
     return members
 
 
-async def _run_morpheme_detect_stream(limit: int, force: bool):
-    """构词拆解扫描核心流程（生成器）：粗筛 → 分批 LLM 判定 → 建词根树 → 懒填充种子，逐步 yield。"""
+async def _run_morpheme_detect_stream(limit: int, force: bool, words: list[str] | None = None):
+    """构词拆解扫描核心流程（生成器）：粗筛 → 分批 LLM 判定 → 建词根树 → 懒填充种子，逐步 yield。
+    words 非空时表示手动勾选直送（跳过 force/limit/启发式），仅判定用户点选的词。"""
     conn = get_db()
     try:
-        if force:
+        if words:
+            cand_words = [str(w).strip().lower() for w in words if str(w).strip()]
+        elif force:
             candidates = conn.execute(
                 """SELECT w.word FROM words w
                    WHERE w.word IS NOT NULL AND w.word != ''
                    ORDER BY w.id LIMIT ?""",
                 (limit,),
             ).fetchall()
+            cand_words = [r["word"] for r in candidates]
         else:
             candidates = conn.execute(
                 """SELECT w.word FROM words w
@@ -1848,9 +1929,13 @@ async def _run_morpheme_detect_stream(limit: int, force: bool):
                    ORDER BY w.id LIMIT ?""",
                 (limit,),
             ).fetchall()
-        cand_words = [r["word"] for r in candidates]
-        # 启发式粗筛：命中内置词缀/前缀才进 LLM 确认名单（省 token，主推词缀轴）
-        rough = [w for w in cand_words if hit_common_morpheme(w)]
+            cand_words = [r["word"] for r in candidates]
+        # 启发式粗筛：命中内置词缀/前缀才进 LLM 确认名单（省 token，主推词缀轴）。
+        # 但候选词较少时（如"待检查"的增量列表），硬切启发式会把真正可拆的词整批漏掉，因此 ≤ 阈值时直送 LLM。
+        if len(cand_words) <= MORPHEME_DIRECT_THRESHOLD:
+            rough = cand_words
+        else:
+            rough = [w for w in cand_words if hit_common_morpheme(w)]
 
         if not rough:
             yield ("step", {"step": "scan", "label": "扫描候选词", "status": "failed", "message": "没有命中常见词缀/词根的候选词"})
@@ -1861,7 +1946,9 @@ async def _run_morpheme_detect_stream(limit: int, force: bool):
             })
             return
 
-        yield ("step", {"step": "scan", "label": f"扫描候选词（命中 {len(rough)}/{len(cand_words)} 个）", "status": "ok"})
+        direct = words is not None or (len(rough) == len(cand_words) and len(cand_words) <= MORPHEME_DIRECT_THRESHOLD)
+        label_kind = "手动" if words is not None else ("直送" if direct else "命中")
+        yield ("step", {"step": "scan", "label": f"扫描候选词（{label_kind} {len(rough)}/{len(cand_words)} 个）", "status": "ok"})
 
         added_roots = 0
         added_words = []
@@ -2009,12 +2096,15 @@ async def _run_morpheme_detect_stream(limit: int, force: bool):
 @router.post("/api/morphemes/detect-stream")
 async def morphemes_detect_stream(request: Request):
     """构词拆解扫描（SSE 流式）：粗筛 → 分批 LLM 判定 → 建词根树 → 懒填充种子，逐步反馈进度。
-    Body: {limit?: 扫描词数上限(默认50), force?: 是否全量重扫(默认false=增量检查)}"""
+    Body: {limit?: 扫描词数上限(默认50), force?: 是否全量重扫(默认false=增量检查), words?: 手动勾选直送(最多5)}"""
     body = await _safe_json(request)
     limit = _clamp_int(body.get("limit", 50), 1, 500, 50)
     force = _to_bool(body.get("force", False))
+    words = None
+    if isinstance(body.get("words"), list):
+        words = [str(w).strip().lower() for w in body["words"] if str(w).strip()][:MORPHEME_MAX_PICK]
     return StreamingResponse(
-        _sse_stream(_run_morpheme_detect_stream(limit, force)),
+        _sse_stream(_run_morpheme_detect_stream(limit, force, words)),
         media_type="text/event-stream",
     )
 
@@ -2167,15 +2257,18 @@ async def get_morpheme(word: str = ""):
 
 @router.get("/api/morphemes/candidates")
 async def morpheme_candidates():
-    """返回词库中尚未做构词判定的候选词数量（仅查询，不调用 LLM）。"""
+    """返回词库中尚未做构词判定的候选词列表与数量（仅查询，不调用 LLM）。"""
     conn = get_db()
     try:
-        total = conn.execute(
-            """SELECT COUNT(*) FROM words w
+        rows = conn.execute(
+            """SELECT w.id, w.word, w.pos, w.meaning_zh FROM words w
                LEFT JOIN word_structures s ON s.word = w.word
-               WHERE s.word IS NULL"""
-        ).fetchone()[0]
-        return {"total": total}
+               WHERE s.word IS NULL ORDER BY w.id"""
+        ).fetchall()
+        return {
+            "total": len(rows),
+            "items": [dict(r) for r in rows],
+        }
     finally:
         conn.close()
 

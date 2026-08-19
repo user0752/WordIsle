@@ -223,6 +223,7 @@
               <div class="flex gap-sm">
                 <el-tag v-if="selectedWords.length>0" type="primary" size="large">已选 {{ selectedWords.length }} 个单词</el-tag>
                 <el-button v-if="selectedWords.length>0" type="primary" :icon="MagicStick" @click="goCompile">发起编译</el-button>
+                <el-button v-if="selectedWords.length>0" type="success" :icon="MagicStick" @click="goMorpheme">发起拆解</el-button>
                 <el-button v-if="selectedWords.length>0" type="danger" :icon="Delete" @click="batchDeleteWords">批量删除</el-button>
               </div>
             </div>
@@ -1329,6 +1330,31 @@
               </el-tooltip>
             </div>
           </div>
+          <!-- 手动选择拆解：与批量/视频编译同款「去单词库勾选」流程 -->
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex-between" style="width:100%">
+                <span class="card-title">手动拆解单词 <el-tag type="primary" size="small" class="ml-sm">{{ morphemeSelWords.length }} 个</el-tag></span>
+                <el-button link type="primary" @click="currentPage='words'">去单词库选择</el-button>
+              </div>
+            </template>
+            <div v-if="morphemeSelWords.length===0" class="empty-state">
+              <el-icon><warning-filled /></el-icon>
+              <p>未选择任何单词，请返回单词库勾选（建议勾选未拆解的单词，最多 5 个）</p>
+              <el-button type="primary" @click="currentPage='words'">去单词库选择</el-button>
+            </div>
+            <div v-else>
+              <div class="word-tags">
+                <el-tag v-for="w in morphemeSelWords" :key="w.id" closable @close="morphemeSelWords=morphemeSelWords.filter(x=>x.id!==w.id)" class="word-tag-item">{{ w.word }}</el-tag>
+              </div>
+              <div class="flex" style="margin-top:12px;align-items:center">
+                <el-button type="success" size="large" :icon="MagicStick" :loading="morphemeDetectRunning" @click="runMorphemeDetectSelected">
+                  开始 AI 拆解 ({{ morphemeSelWords.length }})
+                </el-button>
+                <span class="text-secondary" style="font-size:12px;margin-left:10px">最多 5 个 / 次，防止单批超时</span>
+              </div>
+            </div>
+          </el-card>
           <!-- 检测进度（构词拆解 SSE） -->
           <el-card v-if="genProgress.visible && genProgress.feature==='morpheme'" shadow="never" class="mb-md gen-progress">
             <div class="gen-progress-title">{{ genFeatureLabel }} · 检测进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消检测</el-button></div>
@@ -1952,6 +1978,22 @@
         <el-input v-model="addWordForm.meaning_zh" type="textarea" :rows="3" placeholder="请输入中文释义"></el-input>
       </el-form-item>
     </el-form>
+
+    <!-- 生成进度指示（添加单词：AI 补充词性释义 → 入库） -->
+    <el-card v-if="genProgress.visible && genProgress.feature==='addword'" shadow="never" class="mb-md gen-progress">
+      <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
+      <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭对话框，以下为每一步实际调用与耗时：</div>
+      <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+        <span class="gen-step-status" :class="'is-'+s.status">
+          {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+        </span>
+        <span class="gen-step-label">{{ s.label }}</span>
+        <el-tag v-if="s.model" size="small" class="ml-sm" :type="s.status==='failed' ? 'danger' : 'primary'">{{ s.model }}</el-tag>
+        <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+        <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
+      </div>
+    </el-card>
+
     <template #footer>
       <el-button @click="showAddWordDialog=false">取消</el-button>
       <el-button type="primary" :loading="addWordLoading" @click="submitAddWord">添加</el-button>
@@ -2060,6 +2102,7 @@ const app = createApp({
       video:  { label: '视频编译', hint: '脚本生成 + 文生视频约需 1-5 分钟' },
       scene:  { label: '场景编译', hint: '场景连环画生成通常需要 2-4 分钟，请耐心等待' },
       import: { label: '单词导入', hint: '写入单词库并调用 AI 补充词性与中文释义（每 20 个一批），单词较多时通常需要 30 秒 - 2 分钟' },
+      addword: { label: '添加单词', hint: '写入单词库并调用 AI 补充词性与中文释义，通常需要几十秒，请耐心等待' },
       'scene-detect': { label: '场景检测', hint: 'AI 分析未分类单词并归入场景、生成词伙搭配，通常需要 30-60 秒，请耐心等待' },
       polysemy: { label: '熟词僻意检测', hint: '分批调用 AI 判定熟词僻意并入库，通常需要 30 秒 - 2 分钟，请耐心等待' },
       morpheme: { label: '构词拆解', hint: 'AI 判定可拆词并构建词根树、补充推荐词，通常需要 30 秒 - 2 分钟，请耐心等待' },
@@ -2077,7 +2120,7 @@ const app = createApp({
       polysemy: ['polysemy'],
       morphemes: ['morpheme'],
       import: ['import'],
-      words: ['import'],
+      words: ['import', 'addword'],
     }
     function menuBusy(menuIndex) {
       const f = genProgress.value.feature
@@ -2437,6 +2480,7 @@ const app = createApp({
     const morphemeCandidateTotal = ref(0)
     const morphemeDetectRunning = ref(false)
     const morphemeDetectResult = ref(null)
+    const morphemeSelWords = ref([])
     const morphemeWordSearch = ref('')
     const morphemeWords = ref([])
     const morphemeWordTotal = ref(0)
@@ -2568,20 +2612,34 @@ const app = createApp({
         try { await addWordFormRef.value.validate() } catch(e) { return }
       }
       if (!addWordForm.word.trim()) { ElementPlus.ElMessage.warning('请输入单词'); return }
+      if (genBusy()) return
       addWordLoading.value = true
+      startGenProgress('addword')
       try {
-        await api('/api/words', {method:'POST', body:JSON.stringify({
-          word: addWordForm.word.trim(),
-          pos: addWordForm.pos.trim(),
-          meaning_zh: addWordForm.meaning_zh.trim(),
-        })})
-        ElementPlus.ElMessage.success('单词添加成功')
-        showAddWordDialog.value = false
-        addWordForm.word = ''
-        addWordForm.pos = ''
-        addWordForm.meaning_zh = ''
-        loadWords()
-      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+        const res = await apiStream('/api/words/single-stream', {
+          method:'POST',
+          body: JSON.stringify({
+            word: addWordForm.word.trim(),
+            pos: addWordForm.pos.trim(),
+            meaning_zh: addWordForm.meaning_zh.trim(),
+          }),
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
+        if (res && res.ok) {
+          ElementPlus.ElMessage.success('单词添加成功')
+          showAddWordDialog.value = false
+          addWordForm.word = ''
+          addWordForm.pos = ''
+          addWordForm.meaning_zh = ''
+          loadWords()
+          stopGenProgress(true)
+        } else {
+          stopGenProgress(false)
+          ElementPlus.ElMessage.warning((res && res.message) || '单词添加未完成')
+        }
+      } catch(e) {
+        stopGenProgress(false)
+        if (e?.name !== 'AbortError') showModelError(e, '添加单词失败')
+      }
       finally { addWordLoading.value = false }
     }
     function goCompile() {
@@ -2589,6 +2647,12 @@ const app = createApp({
       if (selectedWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       compileWords.value = [...selectedWords.value]
       currentPage.value = 'compile'
+    }
+    function goMorpheme() {
+      if (selectedWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
+      if (selectedWords.value.length > 5) { ElementPlus.ElMessage.warning('单次最多拆解 5 个单词，请减少勾选后再试'); return }
+      morphemeSelWords.value = [...selectedWords.value]
+      currentPage.value = 'morphemes'
     }
     async function batchDeleteWords() {
       if (selectedWords.value.length===0) return
@@ -3020,6 +3084,38 @@ const app = createApp({
         morphemeDetectRunning.value = false
       }
     }
+    async function runMorphemeDetectSelected() {
+      if (morphemeDetectRunning.value) return
+      if (genBusy()) return
+      const picked = morphemeSelWords.value
+      if (!picked.length) { ElementPlus.ElMessage.warning('请先在单词库勾选要拆解的单词'); return }
+      if (picked.length > 5) { ElementPlus.ElMessage.warning('单次最多拆解 5 个单词，请减少后再试'); return }
+      morphemeDetectRunning.value = true
+      morphemeDetectResult.value = null
+      startGenProgress('morpheme')
+      try {
+        const res = await apiStream('/api/morphemes/detect-stream', {
+          method: 'POST',
+          body: JSON.stringify({ words: picked.map(w => w.word) }),
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
+        morphemeDetectResult.value = res
+        if (res && res.ok) {
+          ElementPlus.ElMessage.success(res.message || '拆解完成')
+        } else if (res) {
+          ElementPlus.ElMessage.warning(res.message || '拆解未完成')
+        }
+        morphemeSelWords.value = []
+        morphemeRootPage.value = 1
+        morphemeWordPage.value = 1
+        await Promise.all([loadMorphemeRoots(), loadMorphemeWords(), loadMorphemeCandidates()])
+        stopGenProgress(true)
+      } catch(e) {
+        stopGenProgress(false)
+        if (e?.name !== 'AbortError') showModelError(e, '构词拆解扫描失败')
+      } finally {
+        morphemeDetectRunning.value = false
+      }
+    }
     async function expandMorphemeRoot(root) {
       if (!root || root._expanding) return
       root._expanding = true
@@ -3388,6 +3484,7 @@ const app = createApp({
       polysemySelectedSet, polysemySelectedCount, polysemyAllSelected, polysemyIndeterminate,
       morphemeRootSearch, morphemeRoots, morphemeRootTotal, morphemeRootPage, morphemeRootsLoading,
       morphemeCandidateTotal, morphemeDetectRunning, morphemeDetectResult,
+      morphemeSelWords, goMorpheme, runMorphemeDetectSelected,
       morphemeWordSearch, morphemeWords, morphemeWordTotal, morphemeWordPage, morphemeWordsLoading,
       resultData, resultLoading, audioLoading, regenerateTtsModel, regenerateVoice, regenerateSpeed,
       sceneView, scenes, scenesLoading, sceneDetail, sceneDetailLoading,
