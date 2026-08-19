@@ -2120,7 +2120,7 @@ async def list_morpheme_words(page: int = 1, page_size: int = 20, search: str = 
     page_size = _clamp_int(page_size, 5, 50, 20)
     conn = get_db()
     try:
-        where, params = "WHERE s.is_decomposable=1", ()
+        where, params = "WHERE s.is_decomposable=1 AND s.structure_code != ''", ()
         if search:
             where += " AND s.word LIKE ?"
             params = (f"%{search}%",)
