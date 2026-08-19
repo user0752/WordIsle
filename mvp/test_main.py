@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import db as db_module
@@ -91,6 +92,8 @@ class MainAppTestCase(unittest.TestCase):
         main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "words.db"
         main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
         db_module.AUDIOS_DIR.mkdir(exist_ok=True)
+        main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"
+        routes_module.VIDEOS_DIR.mkdir(exist_ok=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -105,6 +108,7 @@ class MainAppTestCase(unittest.TestCase):
             conn.execute("DELETE FROM daily_usage")
             conn.execute("DELETE FROM generations")
             conn.execute("DELETE FROM audios")
+            conn.execute("DELETE FROM videos")
             conn.execute("DELETE FROM word_root_links")
             conn.execute("DELETE FROM word_structures")
             conn.execute("DELETE FROM word_roots")
@@ -141,11 +145,11 @@ class MainAppTestCase(unittest.TestCase):
         with mock.patch.object(routes_module, "call_tts", fake_tts):
             r = self.client.post(
                 "/api/texts/abc12345/regenerate-audio",
-                json={"voice": "loongandy_v3", "speed": 1.0},
+                json={"voice": "loongandy_v3", "speed": 1.0, "tts_model": "cosyvoice-v3-flash"},
             )
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json()["url"], "/audios/abc12345_loongandy_v3_100.mp3")
-        self.assertTrue((main.AUDIOS_DIR / "abc12345_loongandy_v3_100.mp3").exists())
+        self.assertEqual(r.json()["url"], "/audios/abc12345_loongandy_v3_100_cosyvoice-v3-flash.mp3")
+        self.assertTrue((main.AUDIOS_DIR / "abc12345_loongandy_v3_100_cosyvoice-v3-flash.mp3").exists())
 
     # ================= Bug #4: voice/speed 参数校验 =================
 
@@ -185,10 +189,10 @@ class MainAppTestCase(unittest.TestCase):
         with mock.patch.object(routes_module, "call_tts", fake_tts):
             r = self.client.post(
                 "/api/generations/abc12345/audio",
-                json={"voice": "loongandy_v3", "speed": 1.5},
+                json={"voice": "loongandy_v3", "speed": 1.5, "tts_model": "cosyvoice-v3-flash"},
             )
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json()["url"], "/audios/abc12345_loongandy_v3_150.mp3")
+        self.assertEqual(r.json()["url"], "/audios/abc12345_loongandy_v3_150_cosyvoice-v3-flash.mp3")
 
     # ================= #8: 列表 body_en 预览不应错误追加"..." =================
 
@@ -271,17 +275,17 @@ class MainAppTestCase(unittest.TestCase):
         with mock.patch.object(routes_module, "call_tts", fake_tts):
             r1 = self.client.post(
                 "/api/texts/abc12345/regenerate-audio",
-                json={"voice": "loongandy_v3", "speed": 1.0},
+                json={"voice": "loongandy_v3", "speed": 1.0, "tts_model": "cosyvoice-v3-flash"},
             )
             r2 = self.client.post(
                 "/api/texts/abc12345/regenerate-audio",
-                json={"voice": "loongandy_v3", "speed": 1.0},
+                json={"voice": "loongandy_v3", "speed": 1.0, "tts_model": "cosyvoice-v3-flash"},
             )
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r2.status_code, 200)
         self.assertEqual(r1.json()["id"], r2.json()["id"])
         self.assertTrue(r2.json().get("cached"))
-        self.assertEqual(len(list(main.AUDIOS_DIR.glob("abc12345_loongandy_v3_100.mp3"))), 1)
+        self.assertEqual(len(list(main.AUDIOS_DIR.glob("abc12345_loongandy_v3_100_cosyvoice-v3-flash.mp3"))), 1)
 
     # ================= #11: /api/health 应返回每日用量（含文生图） =================
 
@@ -738,6 +742,104 @@ class MainAppTestCase(unittest.TestCase):
         self.assertIsNotNone(res)
         self.assertEqual(len(res["recommended"]), 1)
         self.assertEqual(res["recommended"][0]["word"], "demopost")
+
+    # ================= P1-2: 切换 TTS 模型重新生成，音频文件不得互相覆盖 =================
+
+    def test_regenerate_audio_different_models_distinct_files(self):
+        """同一记录用两个 TTS 模型生成音频：文件名应包含模型名，两个文件并存且内容互不覆盖。"""
+        _seed_generation()
+
+        async def fake_tts(text, voice=None, speed=1.0, tts_model=None, feature=None):
+            return f"mp3-of-{tts_model}".encode()
+
+        with mock.patch.object(routes_module, "call_tts", fake_tts):
+            r1 = self.client.post(
+                "/api/texts/abc12345/regenerate-audio",
+                json={"voice": "loongandy_v3", "speed": 1.0, "tts_model": "cosyvoice-v3-flash"},
+            )
+            r2 = self.client.post(
+                "/api/texts/abc12345/regenerate-audio",
+                json={"voice": "loongandy_v3", "speed": 1.0, "tts_model": "qwen-audio-3.0-tts-plus"},
+            )
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r2.status_code, 200)
+        self.assertNotEqual(r1.json()["file_name"], r2.json()["file_name"])
+        f1 = main.AUDIOS_DIR / r1.json()["file_name"]
+        f2 = main.AUDIOS_DIR / r2.json()["file_name"]
+        self.assertTrue(f1.exists())
+        self.assertTrue(f2.exists())
+        self.assertNotEqual(f1.read_bytes(), f2.read_bytes())
+
+    # ================= P1-1 / P2-1: 视频编译流程回归 =================
+
+    def test_video_script_failure_marks_video_failed(self):
+        """P2-1 回归：视频脚本 LLM 失败时，videos 记录应更新为 failed 而非永久停留 pending。"""
+        async def fake_script(words, theme_hint="", art_style=""):
+            raise HTTPException(502, "脚本生成失败(mock)")
+
+        with mock.patch.object(routes_module, "call_video_script", fake_script):
+            r = self.client.post(
+                "/api/video/generate",
+                json={"words": "accommodate", "video_model": "wan2.2-t2v-plus"},
+            )
+        self.assertEqual(r.status_code, 502)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            rows = conn.execute("SELECT status, error FROM videos").fetchall()
+        finally:
+            conn.close()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "failed")
+        self.assertIn("脚本生成失败", rows[0][1])
+
+    def test_video_generate_completes_with_mux(self):
+        """P1-1 回归：mux 移入线程池后，视频编译全流程（脚本→视频→TTS→mux）参数透传与完成状态不变。"""
+        async def fake_script(words, theme_hint="", art_style=""):
+            return {
+                "story_title": "Test Video", "narration_en": "Hello world.",
+                "narration_zh": "你好", "video_prompt": "a video prompt",
+                "included_words": [], "missing_words": [],
+            }, {}
+
+        async def fake_video(prompt, model, duration=5):
+            return b"fake-mp4"
+
+        async def fake_tts(text, voice=None, speed=1.0, model=None, feature=None):
+            return b"fake-mp3"
+
+        mux_calls = []
+
+        def fake_mux(video_path, audio_bytes, subtitle_text, output_path):
+            mux_calls.append((video_path, audio_bytes, subtitle_text, output_path))
+            Path(output_path).write_bytes(b"final-video")
+
+        with mock.patch.object(routes_module, "call_video_script", fake_script), \
+             mock.patch.object(routes_module, "call_video_generation", fake_video), \
+             mock.patch.object(routes_module, "call_tts", fake_tts), \
+             mock.patch.object(routes_module, "mux_video_with_audio", fake_mux):
+            r = self.client.post(
+                "/api/video/generate",
+                json={"words": "accommodate", "video_model": "wan2.2-t2v-plus",
+                      "tts_model": "cosyvoice-v3-flash"},
+            )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "success")
+        self.assertEqual(len(mux_calls), 1)
+        self.assertEqual(mux_calls[0][1], b"fake-mp3")      # 音频字节透传
+        self.assertEqual(mux_calls[0][2], "Hello world.")   # 字幕文本透传
+        # 原始视频临时文件已被清理
+        self.assertEqual(len(list(routes_module.VIDEOS_DIR.glob("*_raw.mp4"))), 0)
+
+    # ================= P2-2: 熟词僻意热词按实星数排序 =================
+
+    def test_polysemy_hot_orders_by_star_count(self):
+        """P2-2 回归：热词排序应按实星(★)数量降序，★★★★★ 排在 ★★★★☆ 之前。"""
+        r = self.client.get("/api/polysemy/hot?page=1")
+        self.assertEqual(r.status_code, 200)
+        items = r.json()["items"]
+        self.assertTrue(items)
+        stars = [it["frequency_level"].count("★") for it in items]
+        self.assertEqual(stars, sorted(stars, reverse=True))
 
 
 if __name__ == "__main__":

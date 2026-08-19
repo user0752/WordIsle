@@ -62,10 +62,12 @@ async function _toError(resp) {
   return { msg, status: resp.status }
 }
 
-/** 判断一个错误是否值得"幂等"重试：网络错误（TypeError）或服务端 5xx。 */
+/** 判断一个错误是否值得"幂等"重试：网络错误（无 status 的原生 Error）或服务端 5xx；带 4xx status 的不重试。 */
 function _isRetryable(errObj) {
-  if (errObj.status >= 500) return true
-  return errObj.status === 0 // fetch 网络层失败时原生 Error 无 status
+  const s = errObj && errObj.status
+  if (s >= 500) return true       // 服务端 5xx
+  if (s === 0) return true        // 显式标记的网络层失败（兼容旧哨兵值）
+  return s == null                // 原生网络错误（TypeError 等）不带 status 属性
 }
 
 // ---------------------------------------------------------------------------
@@ -99,12 +101,14 @@ export async function api(url, opts = {}, cfg = {}) {
             await new Promise(r => setTimeout(r, 500 * attempt)) // 退避等待
             continue
           }
-          throw new Error(errObj.msg)
+          const httpErr = new Error(errObj.msg)
+          httpErr.status = resp.status // 标记 HTTP 状态码，供外层 catch 区分 4xx（不重试）与网络错误
+          throw httpErr
         }
         return await resp.json()
       } catch (e) {
-        // 网络层错误（TypeError）也纳入重试
-        if (attempt < retries && _isRetryable({ status: 0 })) {
+        // 仅网络层错误（无 status 的原生 Error）与 5xx（抛出前已标记 status）纳入重试；4xx 不再重试
+        if (attempt < retries && _isRetryable(e)) {
           attempt++
           await new Promise(r => setTimeout(r, 500 * attempt))
           continue

@@ -2111,7 +2111,18 @@ const app = createApp({
       setTimeout(() => { if (!genProgress.value.visible && document.title !== DEFAULT_TITLE) document.title = DEFAULT_TITLE }, 4000)
     }
 
+    // 单任务守卫：生成进度状态机为单实例，已有任务进行中时禁止再发起
+    // （否则两个任务的计时器/取消控制器会互相覆盖，旧 interval 泄漏并抢写页面标题）
+    function genBusy() {
+      if (genProgress.value.visible) {
+        ElementPlus.ElMessage.warning('已有生成任务进行中，请等待完成或先取消')
+        return true
+      }
+      return false
+    }
     function startGenProgress(feature='') {
+      // 防御：若上一任务的计时器仍残留（异常路径未清理），先清掉，避免旧 interval 抢写标题
+      if (genProgress.value.timer) clearInterval(genProgress.value.timer)
       const controller = new AbortController()
       const timer = setInterval(() => {
         genProgress.value.elapsed++
@@ -2626,6 +2637,7 @@ const app = createApp({
     }
     async function doImport() {
       if (!parseResult.value || parseResult.value.words.length===0) return
+      if (genBusy()) return
       importing.value = true
       startGenProgress('import')
       try {
@@ -2659,6 +2671,7 @@ const app = createApp({
       if (compileWords.value.length===0) { ElementPlus.ElMessage.warning('请先选择单词'); return }
       if (compileWords.value.length > 30) { ElementPlus.ElMessage.warning('单次最多编译 30 个单词'); return }
       if (!compileForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
+      if (genBusy()) return
       compiling.value = true
       saveFormPrefs()
       startGenProgress('batch')
@@ -2693,6 +2706,7 @@ const app = createApp({
       if (selectedVideoModel.value.free) {
         ElementPlus.ElMessage.warning(`该模型为有额度免费模型（剩余 ${selectedVideoModel.value.quota} 秒），确认将消耗额度`)
       }
+      if (genBusy()) return
       videoCompiling.value = true
       videoResult.value = null
       saveFormPrefs()
@@ -2720,6 +2734,7 @@ const app = createApp({
       const word = (singleForm.word || '').trim().toLowerCase()
       if (!word || word.length < 2) { ElementPlus.ElMessage.warning('请输入一个有效英文单词'); return }
       if (!singleForm.image_model) { ElementPlus.ElMessage.warning('请选择文生图模型'); return }
+      if (genBusy()) return
       singleCompiling.value = true
       singleResult.value = null
       saveFormPrefs()
@@ -2865,6 +2880,7 @@ const app = createApp({
     }
     async function runAutoDetect() {
       if (autoDetectRunning.value) return
+      if (genBusy()) return
       autoDetectRunning.value = true
       autoDetectResult.value = null
       startGenProgress('polysemy')
@@ -2978,6 +2994,7 @@ const app = createApp({
     }
     async function runMorphemeDetect(force) {
       if (morphemeDetectRunning.value) return
+      if (genBusy()) return
       morphemeDetectRunning.value = true
       morphemeDetectResult.value = null
       startGenProgress('morpheme')
@@ -3113,6 +3130,7 @@ const app = createApp({
     }
 
     async function runSceneDetect(force) {
+      if (genBusy()) return
       sceneDetectLoading.value = true
       sceneDetectResult.value = null
       startGenProgress('scene-detect')
@@ -3242,6 +3260,7 @@ const app = createApp({
         ElementPlus.ElMessage.warning('请选择文生图模型')
         return
       }
+      if (genBusy()) return
       sceneCompileLoading.value = true
       saveFormPrefs()
       startGenProgress('scene')

@@ -173,7 +173,8 @@ async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str,
         raise HTTPException(429, "今日 TTS 合成已达上限")
 
     audio_bytes = await call_tts(gen["body_en"], voice, speed, tts_model, feature=feature)
-    file_name = f"{gen_id}_{voice}_{int(speed*100)}.mp3"
+    # P1-2：文件名必须包含 tts_model（与去重唯一索引四字段对齐），否则切换模型重新生成会覆盖旧音频
+    file_name = f"{gen_id}_{voice}_{int(speed*100)}_{tts_model}.mp3"
     (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
 
     conn = get_db()
@@ -335,7 +336,7 @@ async def _run_generate(p: dict):
             try:
                 voice = default_tts_voice(tts_model)
                 audio_bytes = await call_tts(full_body_en, voice, 1.0, tts_model, feature="批量编译音频")
-                file_name = f"{gen_id}_{voice}_100.mp3"
+                file_name = f"{gen_id}_{voice}_100_{tts_model}.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
                 conn = get_db()
                 cur = conn.execute(
@@ -490,7 +491,7 @@ async def _run_single_compile(p: dict):
             try:
                 voice = default_tts_voice(tts_model)
                 audio_bytes = await call_tts(body_en, voice, 1.0, tts_model, feature="单点深耕音频")
-                file_name = f"{gen_id}_{voice}_100.mp3"
+                file_name = f"{gen_id}_{voice}_100_{tts_model}.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
                 conn = get_db()
                 cur = conn.execute(
@@ -795,9 +796,12 @@ async def _run_video_generate(p: dict):
     yield ("step", {"step": "llm", "model": _llm_route_model("video"), "label": "AI 编写视频脚本", "status": "running"})
     try:
         script, _ = await call_video_script(words, theme_hint, art_style)
-    except HTTPException:
+    except HTTPException as e:
+        # P2-1：脚本失败也回写 videos 状态，避免记录永久停留在 pending（与视频生成失败路径对齐）
+        _update_video_status(vid_id, "failed", str(e.detail))
         raise
     except Exception as e:
+        _update_video_status(vid_id, "failed", f"视频脚本生成失败: {e}")
         raise HTTPException(502, f"视频脚本生成失败: {e}")
     actual_llm = script.pop("_llm_model", None) or _llm_route_model("video")
     degraded = actual_llm != _llm_route_model("video")
@@ -830,7 +834,12 @@ async def _run_video_generate(p: dict):
         yield ("step", {"step": "tts", "model": tts_model, "voice": voice, "label": "合成旁白并烧录字幕", "status": "running"})
         try:
             audio_bytes = await call_tts(narration_en, voice=voice, speed=1.0, model=tts_model, feature="视频配音")
-            mux_video_with_audio(raw_video_path, audio_bytes, narration_en, final_path)
+            # P1-1：ffmpeg 编码为 CPU 密集同步操作（可达数十秒），放线程池执行避免阻塞事件循环，
+            # 否则合成期间整个服务无响应（与 call_tts 的 executor 处理方式对齐）
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, mux_video_with_audio, raw_video_path, audio_bytes, narration_en, final_path
+            )
             yield ("step", {"step": "tts", "model": tts_model, "status": "ok"})
         except Exception as e:
             _update_video_status(vid_id, "failed", f"配音/字幕合成失败: {e}")
@@ -1380,7 +1389,9 @@ async def polysemy_hot(page: int = 1):
     rows = conn.execute(
         """SELECT p.*, COALESCE(NULLIF(w.frequency_level,''), p.frequency_level) AS frequency_level
            FROM polysemy p LEFT JOIN words w ON w.word = p.word
-           ORDER BY frequency_level DESC LIMIT 20 OFFSET ?""",
+           ORDER BY LENGTH(REPLACE(COALESCE(NULLIF(w.frequency_level,''), p.frequency_level), '☆', '')) DESC,
+                    frequency_level DESC
+           LIMIT 20 OFFSET ?""",
         (offset,),
     ).fetchall()
     total = conn.execute("SELECT COUNT(*) FROM polysemy").fetchone()[0]
