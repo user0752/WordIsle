@@ -242,6 +242,25 @@ def init_db():
             key TEXT PRIMARY KEY,
             value TEXT DEFAULT ''
         );
+        -- 记忆测试：复习排期（Leitner 固定档位，挂词不挂卡）
+        CREATE TABLE IF NOT EXISTS review_schedule (
+            word TEXT PRIMARY KEY,
+            generation_id TEXT DEFAULT '',
+            box INTEGER DEFAULT 0,
+            next_review_at TEXT DEFAULT '',
+            lapses INTEGER DEFAULT 0,
+            correct_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 记忆测试：作答日志（streak 与正确率数据源，只增不改，不加外键）
+        CREATE TABLE IF NOT EXISTS review_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word TEXT NOT NULL,
+            result TEXT NOT NULL CHECK (result IN ('correct','wrong')),
+            question_type TEXT DEFAULT '',
+            answered_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique
             ON audios (generation_id, voice, speed, tts_model);
     """)

@@ -78,6 +78,10 @@
 
           <!-- 回顾 -->
           <div class="menu-divider"><span>回顾</span></div>
+          <el-menu-item index="review">
+            <el-icon><AlarmClock /></el-icon>
+            <span>记忆测试</span>
+          </el-menu-item>
           <el-menu-item index="history">
             <el-icon><Document /></el-icon>
             <span>历史记录</span>
@@ -1096,6 +1100,174 @@
               <el-button type="primary" :loading="sceneEditLoading" @click="saveSceneEdit">保存</el-button>
             </template>
           </el-dialog>
+        </div>
+
+        <!-- 记忆测试（独立测试页 · Leitner 间隔重复） -->
+        <div v-if="currentPage==='review'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>记忆测试</h2>
+              <p class="page-subtitle">Leitner 间隔重复复习 · 看图回忆 / 中英匹配 / 语境拼写，巩固长期记忆</p>
+            </div>
+            <el-button v-if="!reviewSession.active" :icon="Refresh" @click="loadReviewStats()">刷新</el-button>
+          </div>
+
+          <!-- 统计纸带 -->
+          <div class="review-stats" v-if="reviewStats">
+            <div class="review-stat-item">
+              <span class="review-stat-label">今日待复习</span>
+              <span class="review-stat-num is-accent">{{ reviewStats.due_now }}</span>
+              <span class="review-stat-sub">今日已答 {{ reviewStats.answered_today }} / 上限 {{ reviewStats.daily_limit }} 题</span>
+            </div>
+            <div class="review-stat-item">
+              <span class="review-stat-label">连续打卡</span>
+              <span class="review-stat-num">{{ reviewStats.streak }} 天</span>
+              <span class="review-stat-sub">当日答 1 题即算打卡</span>
+            </div>
+            <div class="review-stat-item">
+              <span class="review-stat-label">总正确率</span>
+              <span class="review-stat-num">{{ reviewAccuracyPct }}</span>
+              <span class="review-stat-sub">累计作答 {{ reviewStats.answered_total }} 题</span>
+            </div>
+            <div class="review-stat-item">
+              <span class="review-stat-label">已掌握</span>
+              <span class="review-stat-num is-gold">{{ reviewStats.mastered }}</span>
+              <span class="review-stat-sub">复习中 {{ reviewStats.in_progress }} · 新入队 {{ reviewStats.new }}</span>
+            </div>
+          </div>
+
+          <!-- 练习进行中 -->
+          <el-card v-if="reviewSession.active" shadow="never">
+            <template #header>
+              <div class="review-session-header">
+                <span class="review-session-title">{{ reviewSession.mode === 'due' ? '今日复习' : '自由测试' }}</span>
+                <span class="review-session-progress">{{ reviewSession.finished ? '完成' : `第 ${reviewSession.index + 1} / ${reviewSession.questions.length} 题` }}</span>
+                <el-button link type="danger" size="small" @click="exitReviewSession">退出</el-button>
+              </div>
+            </template>
+
+            <!-- 总结页 -->
+            <div v-if="reviewSession.finished" class="review-summary">
+              <div class="review-summary-face">{{ reviewSession.correctCount === reviewSession.questions.length ? '🎉' : '💪' }}</div>
+              <div class="review-summary-line">
+                答对 <b class="is-ok">{{ reviewSession.correctCount }}</b> ·
+                答错 <b class="is-no">{{ reviewSession.wrongCount }}</b> ·
+                正确率 <b>{{ reviewSession.questions.length ? Math.round(reviewSession.correctCount / reviewSession.questions.length * 100) : 0 }}%</b>
+              </div>
+              <p class="review-summary-note">已按作答结果重排每张卡的下一次复习时间：答对升盒拉长间隔，答错回盒 1 明天再见。</p>
+              <div class="review-summary-actions">
+                <el-button v-if="reviewSession.mode === 'due'" type="primary" plain :disabled="reviewStats && reviewStats.due_now === 0" @click="startReviewSession('due', true)">再练一组</el-button>
+                <el-button v-else type="primary" plain @click="startReviewSession('quiz')">再来十题</el-button>
+                <el-button @click="exitReviewSession">完成</el-button>
+              </div>
+            </div>
+
+            <!-- 答题区 -->
+            <div v-else-if="reviewQuestion" class="review-question">
+              <div class="review-q-type">
+                <el-tag size="small" effect="dark" :type="reviewQuestion.type === 'image_recall' ? 'success' : reviewQuestion.type === 'match' ? 'primary' : 'warning'">
+                  {{ questionTypeLabel(reviewQuestion.type) }}
+                </el-tag>
+                <span class="review-q-hint">{{ questionTypeHint(reviewQuestion.type) }}</span>
+              </div>
+
+              <!-- 看图说词 -->
+              <template v-if="reviewQuestion.type === 'image_recall'">
+                <div class="review-image-wrap">
+                  <img v-if="reviewQuestion.image_url" :src="reviewQuestion.image_url" :alt="reviewQuestion.word" class="review-image" />
+                  <div v-else class="review-image review-image-empty"><el-icon :size="28"><Picture /></el-icon></div>
+                </div>
+                <div class="review-options">
+                  <el-button v-for="opt in reviewQuestion.options" :key="opt" class="review-option"
+                    :type="reviewOptionState(opt)" :disabled="!!reviewSession.answered"
+                    @click="reviewChoose(opt)">{{ opt }}</el-button>
+                </div>
+              </template>
+
+              <!-- 中英匹配 -->
+              <template v-else-if="reviewQuestion.type === 'match'">
+                <div class="review-match">
+                  <div class="review-match-word">{{ reviewQuestion.word }}</div>
+                  <div class="review-match-phrase" v-if="reviewQuestion.phrase_en">{{ reviewQuestion.phrase_en }}</div>
+                </div>
+                <div class="review-options is-zh">
+                  <el-button v-for="opt in reviewQuestion.options" :key="opt" class="review-option"
+                    :type="reviewOptionState(opt)" :disabled="!!reviewSession.answered"
+                    @click="reviewChoose(opt)">{{ opt }}</el-button>
+                </div>
+              </template>
+
+              <!-- 场景句挖空 -->
+              <template v-else>
+                <div class="review-cloze">
+                  <div class="review-cloze-sentence">{{ reviewQuestion.sentence_masked }}</div>
+                  <div class="review-cloze-zh" v-if="reviewQuestion.sentence_zh">{{ reviewQuestion.sentence_zh }}</div>
+                </div>
+                <div class="review-cloze-input" v-if="!reviewSession.answered">
+                  <el-input v-model="reviewAnswerInput" placeholder="输入空格处的单词（大小写不敏感）" maxlength="40"
+                    size="large" @keyup.enter="reviewSubmitCloze" />
+                  <el-button type="primary" size="large" @click="reviewSubmitCloze">提交</el-button>
+                </div>
+              </template>
+
+              <!-- 解析反馈 -->
+              <div v-if="reviewSession.answered" class="review-feedback" :class="{ 'is-ok': reviewSession.answered.correct, 'is-no': !reviewSession.answered.correct }">
+                <div class="review-feedback-head">
+                  <span class="review-feedback-badge">{{ reviewSession.answered.correct ? '✓ 答对了' : '✗ 答错了' }}</span>
+                  <span class="review-feedback-word">{{ reviewQuestion.word }}</span>
+                  <span class="review-feedback-meaning" v-if="reviewQuestion.meaning_zh">{{ reviewQuestion.meaning_zh }}</span>
+                </div>
+                <div class="review-feedback-body" v-if="reviewQuestion.sentence_en || reviewQuestion.phrase_zh">
+                  <div v-if="reviewQuestion.sentence_en" class="review-feedback-row">
+                    <span class="review-feedback-label">场景句</span>{{ reviewQuestion.sentence_en }}
+                    <span class="review-feedback-zh" v-if="reviewQuestion.sentence_zh">{{ reviewQuestion.sentence_zh }}</span>
+                  </div>
+                  <div v-if="reviewQuestion.phrase_en || reviewQuestion.phrase_zh" class="review-feedback-row">
+                    <span class="review-feedback-label">词伙</span>{{ reviewQuestion.phrase_en }}
+                    <span class="review-feedback-zh" v-if="reviewQuestion.phrase_zh">{{ reviewQuestion.phrase_zh }}</span>
+                  </div>
+                </div>
+                <el-button type="primary" class="review-next-btn" @click="reviewNext">
+                  {{ reviewSession.index >= reviewSession.questions.length - 1 ? '查看总结' : '下一题 →' }}
+                </el-button>
+              </div>
+            </div>
+          </el-card>
+
+          <!-- 模式选择（未在练习中） -->
+          <div v-else class="review-entry">
+            <template v-if="reviewStats && reviewStats.total > 0">
+              <div class="review-modes">
+                <div class="review-mode-card" role="button" tabindex="0"
+                  :class="{ 'is-disabled': reviewStats.due_now === 0 }"
+                  @click="reviewStats.due_now > 0 && startReviewSession('due')"
+                  @keyup.enter="reviewStats.due_now > 0 && startReviewSession('due')">
+                  <span class="review-mode-index">01</span>
+                  <div class="review-mode-icon"><el-icon :size="30"><AlarmClock /></el-icon></div>
+                  <div class="review-mode-title">今日复习</div>
+                  <div class="review-mode-subtitle">{{ reviewStats.due_now }} 张到期卡</div>
+                  <div class="review-mode-desc">看图说词 · 到期卡按最老优先，答对升盒、答错回盒 1</div>
+                  <el-button type="primary" plain class="review-mode-btn" :disabled="reviewStats.due_now === 0">
+                    {{ reviewStats.due_now === 0 ? '今日已清空' : '开始复习' }}
+                  </el-button>
+                </div>
+                <div class="review-mode-card" role="button" tabindex="0" @click="startReviewSession('quiz')" @keyup.enter="startReviewSession('quiz')">
+                  <span class="review-mode-index">02</span>
+                  <div class="review-mode-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
+                  <div class="review-mode-title">自由测试</div>
+                  <div class="review-mode-subtitle">10 题 · 三种题型混合</div>
+                  <div class="review-mode-desc">看图说词 + 中英匹配 + 场景句挖空，到期词优先</div>
+                  <el-button type="primary" plain class="review-mode-btn">开始测试</el-button>
+                </div>
+              </div>
+            </template>
+            <div v-else class="empty-state">
+              <el-icon><AlarmClock /></el-icon>
+              <p>复习队列还是空的</p>
+              <p class="empty-sub">在「单点深耕」生成记忆卡片后遮词自测，点「没记住」的词会自动加入这里，按遗忘曲线安排复习。</p>
+              <el-button type="primary" plain @click="currentPage='single'">去单点深耕</el-button>
+            </div>
+          </div>
         </div>
 
         <!-- 历史记录 -->
@@ -2535,6 +2707,143 @@ const app = createApp({
     }
     watch(() => singleResult.value?.word, (w) => restoreSelfTest(w))
 
+    // ====== 记忆测试（独立测试页）：Leitner 间隔重复 ======
+    const QUESTION_TYPE_LABELS = { image_recall: '看图说词', match: '中英匹配', cloze: '场景句挖空' }
+    const QUESTION_TYPE_HINTS = {
+      image_recall: '看画面主体回忆目标词，再从选项中选出它',
+      match: '选出这个词对应的中文释义 / 常用词伙',
+      cloze: '回忆场景句中被挖空的词，直接拼写（大小写不敏感）',
+    }
+    const reviewStats = ref(null)
+    const reviewSession = reactive({
+      active: false, mode: 'due', questions: [], index: 0,
+      answered: null, correctCount: 0, wrongCount: 0, finished: false,
+    })
+    const reviewAnswerInput = ref('')
+    const reviewSubmitting = ref(false)
+    const reviewQuestion = computed(() => reviewSession.questions[reviewSession.index] || null)
+    const reviewAccuracyPct = computed(() => {
+      const s = reviewStats.value
+      return s && s.answered_total ? Math.round(s.accuracy * 100) + '%' : '—'
+    })
+    function questionTypeLabel(t) { return QUESTION_TYPE_LABELS[t] || t }
+    function questionTypeHint(t) { return QUESTION_TYPE_HINTS[t] || '' }
+
+    async function loadReviewStats() {
+      try { reviewStats.value = await api('/api/review/stats') } catch (_) { /* silent */ }
+    }
+
+    // 第一层 localStorage 自测数据迁移：pending_review 词条落库，成功后仅清标志（保留 tested_count 供卡片显示）
+    async function migrateSelfTestToReview() {
+      try {
+        const data = loadSelfTestData()
+        const items = Object.entries(data)
+          .filter(([, rec]) => rec && rec.pending_review)
+          .map(([w, rec]) => ({ word: w, last_result: rec.last_result || 'forgot', updated_at: rec.updated_at || '' }))
+        if (!items.length) return
+        const res = await api('/api/review/import', {
+          method: 'POST', body: JSON.stringify({ items }),
+        })
+        for (const rec of Object.values(data)) {
+          if (rec && rec.pending_review) delete rec.pending_review
+        }
+        localStorage.setItem(SELFTEST_KEY, JSON.stringify(data))
+        if (res.imported > 0) ElementPlus.ElMessage.success(`已将 ${res.imported} 个「没记住」的词加入记忆测试队列`)
+      } catch (_) { /* 静默：下次页面加载再迁移 */ }
+    }
+
+    async function startReviewSession(mode, override = false) {
+      try {
+        let questions = []
+        if (mode === 'due') {
+          const res = await api('/api/review/due' + (override ? '?override_limit=true' : ''))
+          const items = res.items || []
+          if (!items.length) {
+            ElementPlus.ElMessage.info((res.total_due || 0) > 0 && !override
+              ? `今日 ${res.daily_limit} 题额度已用完，明天再来或稍后「再练一组」`
+              : '当前没有到期的复习卡')
+            return
+          }
+          // 看图说词：本批到期词互为干扰项（池不足时自然降级为直接回忆）
+          questions = items.map(it => ({
+            type: 'image_recall', word: it.word, meaning_zh: it.meaning_zh || '',
+            image_url: it.image_url || null, box: it.box,
+            options: _dueOptions(items, it.word),
+          }))
+        } else {
+          const res = await api('/api/review/quiz?count=10')
+          questions = res.questions || []
+          if (!questions.length) {
+            ElementPlus.ElMessage.info('复习队列中没有可出题的词，先去单点深耕生成卡片吧')
+            return
+          }
+        }
+        Object.assign(reviewSession, {
+          active: true, mode, questions, index: 0, answered: null,
+          correctCount: 0, wrongCount: 0, finished: false,
+        })
+        reviewAnswerInput.value = ''
+      } catch (e) { showModelError(e, '获取测试题失败') }
+    }
+
+    function _dueOptions(items, word) {
+      const shuffled = items.filter(i => i.word !== word).map(i => i.word).sort(() => Math.random() - 0.5)
+      return [...shuffled.slice(0, 3), word].sort(() => Math.random() - 0.5)
+    }
+
+    function reviewOptionState(opt) {
+      if (!reviewSession.answered) return 'default'
+      const q = reviewQuestion.value
+      const correctVal = q.type === 'match' ? q.correct_zh : q.word
+      if (opt === correctVal) return 'success'
+      if (opt === reviewSession.answered.choice) return 'danger'
+      return 'default'
+    }
+
+    function reviewChoose(opt) {
+      if (reviewSession.answered || reviewSubmitting.value) return
+      const q = reviewQuestion.value
+      const correctVal = q.type === 'match' ? q.correct_zh : q.word
+      const correct = opt === correctVal
+      _applyAnswer(correct, opt)
+    }
+
+    function reviewSubmitCloze() {
+      if (reviewSession.answered) return
+      const val = (reviewAnswerInput.value || '').trim()
+      if (!val) { ElementPlus.ElMessage.warning('先输入你回忆出的单词'); return }
+      const q = reviewQuestion.value
+      _applyAnswer(val.toLowerCase() === q.word.toLowerCase(), val)
+    }
+
+    function _applyAnswer(correct, choice) {
+      const q = reviewQuestion.value
+      reviewSession.answered = { choice, correct }
+      if (correct) reviewSession.correctCount++
+      else reviewSession.wrongCount++
+      reviewSubmitting.value = true
+      api('/api/review/answer', {
+        method: 'POST', body: JSON.stringify({ word: q.word, correct, question_type: q.type }),
+      }).catch(e => ElementPlus.ElMessage.error(e.message || '作答记录失败，进度可能未保存'))
+        .finally(() => { reviewSubmitting.value = false })
+    }
+
+    function reviewNext() {
+      reviewAnswerInput.value = ''
+      if (reviewSession.index >= reviewSession.questions.length - 1) {
+        reviewSession.finished = true
+        loadReviewStats()
+      } else {
+        reviewSession.index++
+        reviewSession.answered = null
+      }
+    }
+
+    function exitReviewSession() {
+      reviewSession.active = false
+      loadReviewStats()
+    }
+
     // 情绪贴纸配色：按 hook_type 四策略（双义碰撞=撞色 / 夸张场景=高饱和暖色 / 具象比喻=蓝紫 / 对比记忆=左右分屏）
     function moodClassOf(t) {
       t = t || ''
@@ -3536,6 +3845,7 @@ const app = createApp({
       currentPage.value = idx
       if (idx==='home') { loadRecentItems(); loadHomeStats() }
       if (idx==='words') loadWords()
+      if (idx==='review') loadReviewStats()
       if (idx==='history') loadHistory()
       if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
       if (idx==='morphemes') { loadMorphemeRoots(); loadMorphemeWords(); loadMorphemeCandidates() }
@@ -3554,6 +3864,7 @@ const app = createApp({
       loadRecentItems()
       loadHomeStats()
       loadUsage()
+      migrateSelfTestToReview()
     })
 
     // 模型选项加载完成后，恢复表单偏好（严格校验模型仍存在，避免失效模型）
@@ -3625,6 +3936,10 @@ const app = createApp({
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
       selfTest, selfTestRecord, selfTestMasked, moodClassOf,
+      // 记忆测试（独立测试页）
+      reviewStats, reviewSession, reviewAnswerInput, reviewQuestion, reviewAccuracyPct,
+      questionTypeLabel, questionTypeHint, reviewOptionState,
+      startReviewSession, reviewChoose, reviewSubmitCloze, reviewNext, exitReviewSession,
       startSelfTest, revealSelfTest, finishSelfTest,
       artStyleOptions,
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,

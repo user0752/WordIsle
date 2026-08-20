@@ -7,9 +7,11 @@ TOEIC MVP API 路由
 import asyncio
 import json
 import logging
+import random
+import re
 import sqlite3
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -651,6 +653,352 @@ async def get_feedback():
 @router.delete("/api/generations/{gen_id}")
 async def delete_generation(gen_id: str):
     return _delete_generation(gen_id, "记录不存在")
+
+
+# ========================================================================
+# 记忆测试（独立测试页）：Leitner 复习排期 + 作答日志
+# 设计文档：开发过程文件/design-system/记忆测试-独立测试页开发文档.md
+# ========================================================================
+
+REVIEW_DAILY_LIMIT = 20                          # 每日复习量上限（防堆积，Anki 式）
+REVIEW_BOX_INTERVALS = {1: 1, 2: 3, 3: 7, 4: 30}  # 盒号 -> 答对后下次复习间隔（天）
+REVIEW_WORD_RE = re.compile(r"[^a-z\-']")        # 词形清洗（与 normalize_words 口径一致）
+
+
+def _review_now() -> str:
+    """本地时区 ISO 时间戳（不用 SQLite date('now')——其为 UTC，'次日'判定会漂移 8 小时）。"""
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _clean_review_word(raw) -> str:
+    return REVIEW_WORD_RE.sub("", _coerce_str(raw).strip().lower())
+
+
+def _review_transition(box: int, correct: bool):
+    """Leitner 状态转移：答对升盒（盒4封顶续 30 天），答错回盒1。
+    返回 (新盒号, 下次复习间隔天数)。导入盒 0 答对后到盒1（次日）。"""
+    new_box = min(int(box) + 1, 4) if correct else 1
+    return new_box, REVIEW_BOX_INTERVALS[new_box]
+
+
+def _find_latest_single_gen(conn, word: str) -> str:
+    """按词反查最新一张 single 卡 id（挂词不挂卡：队列只存词，素材按需反查）。
+    generations.words 为 JSON 数组文本无索引，MVP 千级数据量全表扫无压力。"""
+    rows = conn.execute(
+        "SELECT id, words FROM generations WHERE generation_type='single' ORDER BY created_at DESC"
+    ).fetchall()
+    for r in rows:
+        try:
+            ws = [str(w).strip().lower() for w in json.loads(r["words"] or "[]")]
+        except (json.JSONDecodeError, TypeError):
+            ws = []
+        if word in ws:
+            return r["id"]
+    return ""
+
+
+def _load_review_material(conn, word: str, generation_id: str):
+    """取词的卡片素材（panels[0]）。素材卡悬挂/为空时按词反查修复并落库；
+    查无任何卡返回 (None, '')——该词跳过看图说词，仍可出中英匹配/挖空题。"""
+
+    def _load(gen_id: str):
+        if not gen_id:
+            return None
+        row = conn.execute("SELECT panels FROM generations WHERE id=?", (gen_id,)).fetchone()
+        if not row:
+            return None
+        try:
+            panels = json.loads(row["panels"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return panels[0] if panels else None
+
+    panel = _load(generation_id)
+    if panel is not None:
+        return panel, generation_id
+    fixed = _find_latest_single_gen(conn, word)
+    if fixed and fixed != generation_id:
+        panel = _load(fixed)
+        conn.execute(
+            "UPDATE review_schedule SET generation_id=?, updated_at=? WHERE word=?",
+            (fixed, _review_now(), word),
+        )
+        return panel, fixed
+    return None, ""
+
+
+def _pick_options(pool: list, correct: str, n: int, exclude: str = ""):
+    """从干扰项池随机取 n 个不重复项 + 正确项，打乱返回。
+    pool 已随机化（ORDER BY RANDOM），顺序取即随机取；不足 n 个时自然降级（直接回忆模式）。"""
+    correct = (correct or "").strip()
+    seen, distractors = {correct}, []
+    for item in pool:
+        v = (item or "").strip()
+        if not v or v in seen or v == exclude:
+            continue
+        seen.add(v)
+        distractors.append(v)
+        if len(distractors) >= n:
+            break
+    options = distractors + [correct]
+    random.shuffle(options)
+    return options
+
+
+@router.post("/api/review/import")
+async def review_import(req: Request):
+    """第一层卡片自测数据迁移落库。按 word upsert 去重：
+    库中无该词 → 插入盒0、次日复习；已有 → 跳过保留进度。"""
+    body = await _safe_json(req)
+    items = body.get("items")
+    if not isinstance(items, list):
+        raise HTTPException(400, "items 必须是数组")
+    imported, skipped, invalid = 0, 0, 0
+    conn = get_db()
+    try:
+        for it in items:
+            if not isinstance(it, dict):
+                invalid += 1
+                continue
+            word = _clean_review_word(it.get("word", ""))
+            if not word:
+                invalid += 1
+                continue
+            if conn.execute("SELECT word FROM review_schedule WHERE word=?", (word,)).fetchone():
+                skipped += 1
+                continue
+            gen_id = _find_latest_single_gen(conn, word)
+            now = _review_now()
+            next_at = (datetime.now() + timedelta(days=1)).isoformat(timespec="seconds")
+            conn.execute(
+                "INSERT INTO review_schedule (word, generation_id, box, next_review_at, created_at, updated_at) "
+                "VALUES (?,?,0,?,?,?)",
+                (word, gen_id, next_at, now, now),
+            )
+            imported += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"imported": imported, "skipped": skipped, "invalid": invalid}
+
+
+@router.get("/api/review/due")
+async def review_due(override_limit: bool = False):
+    """今日待复习列表：next_review_at <= now（含过期堆积），最老的优先，
+    截断到每日上限（已答额度扣减）；截断不写库，顺延由次日仍到期自然实现。"""
+    now = _review_now()
+    conn = get_db()
+    try:
+        due_rows = conn.execute("""
+            SELECT s.word, s.generation_id, s.box, s.next_review_at, s.lapses, s.correct_count,
+                   COALESCE(w.meaning_zh, '') AS meaning_zh
+            FROM review_schedule s LEFT JOIN words w ON w.word = s.word
+            WHERE s.next_review_at <= ? ORDER BY s.next_review_at ASC
+        """, (now,)).fetchall()
+        answered_today = conn.execute(
+            "SELECT COUNT(*) c FROM review_log WHERE substr(answered_at,1,10)=?", (now[:10],)
+        ).fetchone()["c"]
+        total_due = len(due_rows)
+        remaining = total_due if override_limit else max(0, REVIEW_DAILY_LIMIT - answered_today)
+        items = []
+        for r in due_rows[:remaining]:
+            panel, gen_id = _load_review_material(conn, r["word"], r["generation_id"])
+            items.append({
+                "word": r["word"],
+                "meaning_zh": r["meaning_zh"] or "",
+                "box": r["box"],
+                "next_review_at": r["next_review_at"],
+                "lapses": r["lapses"],
+                "correct_count": r["correct_count"],
+                "generation_id": gen_id,
+                "image_url": (panel or {}).get("image_url") or None,
+                "has_image": bool(panel and (panel.get("image_url") or "").strip()),
+            })
+        conn.commit()  # 素材反查修复落库
+        return {
+            "items": items,
+            "total_due": total_due,
+            "returned": len(items),
+            "daily_limit": REVIEW_DAILY_LIMIT,
+            "answered_today": answered_today,
+            "override_limit": bool(override_limit),
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/api/review/answer")
+async def review_answer(req: Request):
+    """提交单次作答：按状态转移表更新盒子与排期 + 写作答日志（streak 数据源）。"""
+    body = await _safe_json(req)
+    word = _clean_review_word(body.get("word", ""))
+    if not word:
+        raise HTTPException(400, "word 不能为空")
+    correct = _to_bool(body.get("correct"))
+    qtype = _coerce_str(body.get("question_type", "")).strip()
+    if qtype not in ("image_recall", "match", "cloze"):
+        qtype = "image_recall"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM review_schedule WHERE word=?", (word,)).fetchone()
+        if not row:
+            raise HTTPException(404, "该词不在复习队列中，请先在卡片自测中标记或刷新页面迁移")
+        new_box, interval = _review_transition(row["box"], correct)
+        now = _review_now()
+        next_at = (datetime.now() + timedelta(days=interval)).isoformat(timespec="seconds")
+        conn.execute(
+            "UPDATE review_schedule SET box=?, next_review_at=?, lapses=lapses+?, "
+            "correct_count=correct_count+?, updated_at=? WHERE word=?",
+            (new_box, next_at, 0 if correct else 1, 1 if correct else 0, now, word),
+        )
+        conn.execute(
+            "INSERT INTO review_log (word, result, question_type, answered_at) VALUES (?,?,?,?)",
+            (word, "correct" if correct else "wrong", qtype, now),
+        )
+        conn.commit()
+        return {
+            "word": word,
+            "correct": correct,
+            "box": new_box,
+            "next_review_at": next_at,
+            "lapses": row["lapses"] + (0 if correct else 1),
+            "correct_count": row["correct_count"] + (1 if correct else 0),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/review/stats")
+async def review_stats():
+    """复习统计：盒子分布、正确率、连续打卡（review_log 按天聚合，非估算）。"""
+    conn = get_db()
+    try:
+        now = _review_now()
+        boxes = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        for r in conn.execute("SELECT box, COUNT(*) c FROM review_schedule GROUP BY box").fetchall():
+            boxes[r["box"] if r["box"] in boxes else 0] += r["c"]
+        answered_total = conn.execute("SELECT COUNT(*) c FROM review_log").fetchone()["c"]
+        correct_total = conn.execute(
+            "SELECT COUNT(*) c FROM review_log WHERE result='correct'"
+        ).fetchone()["c"]
+        answered_today = conn.execute(
+            "SELECT COUNT(*) c FROM review_log WHERE substr(answered_at,1,10)=?", (now[:10],)
+        ).fetchone()["c"]
+        # streak：当日 ≥1 次作答即打卡；今天未打卡不算断，从昨天起算当前连续天数
+        days = {r["d"] for r in conn.execute(
+            "SELECT DISTINCT substr(answered_at,1,10) d FROM review_log"
+        ).fetchall()}
+        streak = 0
+        cur = date.today()
+        if cur.isoformat() not in days:
+            cur = cur - timedelta(days=1)
+        while cur.isoformat() in days:
+            streak += 1
+            cur = cur - timedelta(days=1)
+        return {
+            "total": sum(boxes.values()),
+            "new": boxes[0],
+            "in_progress": boxes[1] + boxes[2] + boxes[3],
+            "mastered": boxes[4],
+            "boxes": boxes,
+            "due_now": conn.execute(
+                "SELECT COUNT(*) c FROM review_schedule WHERE next_review_at<=?", (now,)
+            ).fetchone()["c"],
+            "answered_total": answered_total,
+            "correct_total": correct_total,
+            "accuracy": round(correct_total / answered_total, 4) if answered_total else 0.0,
+            "answered_today": answered_today,
+            "streak": streak,
+            "daily_limit": REVIEW_DAILY_LIMIT,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/review/quiz")
+async def review_quiz(count: int = 10, types: str = "image_recall,match,cloze"):
+    """取一组自由测试题：到期词优先 + 未到期随机补足；题型轮换；
+    素材降级链：看图说词(无图)→中英匹配(无中文)→场景句挖空(句不含词则跳过)。"""
+    n = _clamp_int(count, 1, 50, 10)
+    allowed_types = [t.strip() for t in types.split(",") if t.strip() in ("image_recall", "match", "cloze")]
+    if not allowed_types:
+        allowed_types = ["image_recall"]
+    now = _review_now()
+    conn = get_db()
+    try:
+        due_rows = conn.execute("""
+            SELECT s.word, s.generation_id, s.box, COALESCE(w.meaning_zh, '') AS meaning_zh
+            FROM review_schedule s LEFT JOIN words w ON w.word = s.word
+            WHERE s.next_review_at <= ? ORDER BY s.next_review_at ASC
+        """, (now,)).fetchall()
+        other_rows = conn.execute("""
+            SELECT s.word, s.generation_id, s.box, COALESCE(w.meaning_zh, '') AS meaning_zh
+            FROM review_schedule s LEFT JOIN words w ON w.word = s.word
+            WHERE s.next_review_at > ? ORDER BY RANDOM()
+        """, (now,)).fetchall()
+        pool = (due_rows + other_rows)[:n]
+        if not pool:
+            return {"questions": [], "total_words": 0}
+        # 干扰项池（随机化）：词库全量词 + 词库非空中文释义
+        word_pool = [r["word"] for r in conn.execute(
+            "SELECT word FROM words ORDER BY RANDOM() LIMIT 200").fetchall()]
+        zh_pool = [r["meaning_zh"] for r in conn.execute(
+            "SELECT meaning_zh FROM words WHERE meaning_zh != '' ORDER BY RANDOM() LIMIT 200"
+        ).fetchall()]
+        questions = []
+        for i, r in enumerate(pool):
+            word = r["word"]
+            meaning = (r["meaning_zh"] or "").strip()
+            panel, _gen_id = _load_review_material(conn, word, r["generation_id"])
+            colloc = ((panel or {}).get("collocation") or {})
+            scene = ((panel or {}).get("scene_sentence") or {})
+            phrase_zh = (colloc.get("phrase_zh") or "").strip()
+            qtype = allowed_types[i % len(allowed_types)]
+            # 素材降级链
+            if qtype == "image_recall" and not ((panel or {}).get("image_url") or "").strip():
+                qtype = "match"
+            if qtype == "match" and not (phrase_zh or meaning):
+                qtype = "cloze"
+            if qtype == "cloze":
+                en = (scene.get("en") or "").strip()
+                if not re.search(rf"\b{re.escape(word)}\b", en, re.IGNORECASE):
+                    continue  # 场景句不含目标词（词形变化等），该词无题可出
+                masked = re.sub(rf"\b{re.escape(word)}\b", "____", en, count=1, flags=re.IGNORECASE)
+                questions.append({
+                    "type": "cloze", "word": word, "box": r["box"],
+                    "sentence_masked": masked, "sentence_en": en,
+                    "sentence_zh": (scene.get("zh") or "").strip(),
+                    "phrase_en": (colloc.get("phrase_en") or "").strip(),
+                    "phrase_zh": phrase_zh, "meaning_zh": meaning,
+                    "image_url": (panel or {}).get("image_url") or None,
+                })
+                continue
+            if qtype == "image_recall":
+                questions.append({
+                    "type": "image_recall", "word": word, "box": r["box"],
+                    "image_url": (panel or {}).get("image_url"),
+                    "options": _pick_options(word_pool, word, 3, exclude=word),
+                    "sentence_en": (scene.get("en") or "").strip(),
+                    "sentence_zh": (scene.get("zh") or "").strip(),
+                    "phrase_en": (colloc.get("phrase_en") or "").strip(),
+                    "phrase_zh": phrase_zh, "meaning_zh": meaning,
+                })
+            else:  # match：给中文词伙/释义，选对应用法归属（正确项优先卡片词伙，词库释义兜底）
+                correct_zh = phrase_zh or meaning
+                questions.append({
+                    "type": "match", "word": word, "box": r["box"],
+                    "phrase_en": (colloc.get("phrase_en") or "").strip(),
+                    "correct_zh": correct_zh,
+                    "options": _pick_options(zh_pool, correct_zh, 3),
+                    "sentence_en": (scene.get("en") or "").strip(),
+                    "sentence_zh": (scene.get("zh") or "").strip(),
+                    "meaning_zh": meaning,
+                    "image_url": (panel or {}).get("image_url") or None,
+                })
+        conn.commit()  # 素材反查修复落库
+        return {"questions": questions, "total_words": len(pool)}
+    finally:
+        conn.close()
 
 
 # ========================================================================

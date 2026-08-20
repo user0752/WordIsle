@@ -13,7 +13,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -840,6 +840,329 @@ class MainAppTestCase(unittest.TestCase):
         self.assertTrue(items)
         stars = [it["frequency_level"].count("★") for it in items]
         self.assertEqual(stars, sorted(stars, reverse=True))
+
+
+def _seed_review_single_gen(gen_id, word, image_url="/images/a.png", scene_en="He showed a clear preference for the design."):
+    """种一张 single 卡（带完整 panels 素材），供复习队列反查。"""
+    panel = {
+        "scene_index": 1,
+        "collocation": {"phrase_en": f"give {word} to", "phrase_zh": "优先考虑", "collocation_type": "verb + noun"},
+        "scene_sentence": {"en": scene_en, "zh": "他明确表达了对这款设计的偏爱。", "mood": "得意"},
+        "image_prompt": "test",
+        "hook_type": "夸张场景",
+        "image_url": image_url,
+        "derivatives": [],
+    }
+    conn = sqlite3.connect(str(main.DB_PATH))
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO generations (id, words, panel_count, panels, generation_type, created_at) "
+            "VALUES (?,?,1,?,'single', datetime('now','localtime'))",
+            (gen_id, json.dumps([word]), json.dumps([panel], ensure_ascii=False)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class ReviewApiTestCase(unittest.TestCase):
+    """记忆测试（独立测试页）API：import / due / answer / stats / quiz。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls._tmp_path = Path(cls._tmp.name)
+        main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "words.db"
+        main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
+        db_module.AUDIOS_DIR.mkdir(exist_ok=True)
+        main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"
+        routes_module.VIDEOS_DIR.mkdir(exist_ok=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self._client_cm = TestClient(main.app)
+        self.client = self._client_cm.__enter__()
+        conn = sqlite3.connect(str(main.DB_PATH), timeout=10.0)
+        conn.execute("PRAGMA busy_timeout=10000")
+        try:
+            conn.execute("DELETE FROM review_schedule")
+            conn.execute("DELETE FROM review_log")
+            conn.execute("DELETE FROM generations")
+            conn.execute("DELETE FROM words")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def tearDown(self):
+        self._client_cm.__exit__(None, None, None)
+
+    # ================= import：迁移落库与去重 =================
+
+    def test_review_import_inserts_new_word_with_material(self):
+        _seed_review_single_gen("gen1", "preference")
+        r = self.client.post("/api/review/import", json={
+            "items": [{"word": "Preference", "last_result": "forgot", "updated_at": "2026-08-20T10:00:00"}]
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["imported"], 1)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute("SELECT * FROM review_schedule WHERE word='preference'").fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["box"], 0)          # 导入入盒0
+            self.assertEqual(row["generation_id"], "gen1")  # 按 word 反查素材卡
+            self.assertGreater(row["next_review_at"], datetime.now().isoformat(timespec="seconds"))
+        finally:
+            conn.close()
+
+    def test_review_import_dedup_keeps_existing_progress(self):
+        self.client.post("/api/review/import", json={"items": [{"word": "preference", "last_result": "forgot"}]})
+        # 第二次导入：已有进度则跳过
+        r = self.client.post("/api/review/import", json={"items": [{"word": "preference", "last_result": "forgot"}]})
+        self.assertEqual(r.json()["skipped"], 1)
+        self.assertEqual(r.json()["imported"], 0)
+
+    def test_review_import_rejects_bad_body(self):
+        self.assertEqual(self.client.post("/api/review/import", json={"items": "x"}).status_code, 400)
+        # 非法词条（清洗后为空）计入 invalid，不报错
+        r = self.client.post("/api/review/import", json={"items": [{"word": "!!!"}, "notdict"]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["invalid"], 2)
+
+    def test_review_import_without_card_leaves_generation_empty(self):
+        """反查无卡：generation_id 置空，仍入库（后续只出匹配/挖空题）。"""
+        r = self.client.post("/api/review/import", json={"items": [{"word": "ghostword", "last_result": "forgot"}]})
+        self.assertEqual(r.json()["imported"], 1)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            row = conn.execute("SELECT generation_id FROM review_schedule WHERE word='ghostword'").fetchone()
+            self.assertEqual(row[0], "")
+        finally:
+            conn.close()
+
+    # ================= due：到期判定 / 上限截断 / 素材容错 =================
+
+    def _make_due(self, word, hours_ago=1):
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            past = (datetime.now() - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+            conn.execute(
+                "INSERT OR REPLACE INTO review_schedule (word, generation_id, box, next_review_at) VALUES (?,?,1,?)",
+                (word, "", past),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_review_due_returns_material_and_repairs_dangling_generation(self):
+        _seed_review_single_gen("gen1", "preference")
+        self._make_due("preference")
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            conn.execute("INSERT OR REPLACE INTO words (word, meaning_zh) VALUES ('preference','偏爱；优先权')")
+            conn.commit()
+        finally:
+            conn.close()
+        r = self.client.get("/api/review/due")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["total_due"], 1)
+        self.assertEqual(len(data["items"]), 1)
+        item = data["items"][0]
+        self.assertEqual(item["word"], "preference")
+        self.assertEqual(item["meaning_zh"], "偏爱；优先权")
+        self.assertTrue(item["has_image"])
+        self.assertEqual(item["image_url"], "/images/a.png")
+        # 悬挂 generation_id（空串）被反查修复为 gen1
+        self.assertEqual(item["generation_id"], "gen1")
+
+    def test_review_due_daily_limit_truncation(self):
+        # 25 个纯字母假词（复习词形清洗只保留字母/连字符/撇号）
+        words = [f"dueword{chr(ord('a') + i)}" for i in range(25)]
+        for i, w in enumerate(words):
+            self._make_due(w, hours_ago=i + 1)
+        r = self.client.get("/api/review/due")
+        data = r.json()
+        self.assertEqual(data["total_due"], 25)
+        self.assertEqual(len(data["items"]), 20)  # 每日上限 20
+        # 最老的优先：next_review_at 升序
+        self.assertEqual(data["items"][0]["word"], words[24])
+        # 已答额度扣减：答 5 题后剩余额度 15
+        for w in words[:5]:
+            self.client.post("/api/review/answer", json={"word": w, "correct": True})
+        r2 = self.client.get("/api/review/due")
+        # 前 5 个词已答对排到未来，不再到期；额度也消耗了 5
+        self.assertEqual(r2.json()["total_due"], 20)
+        self.assertEqual(len(r2.json()["items"]), 15)
+        # override_limit 跳过截断
+        r3 = self.client.get("/api/review/due?override_limit=true")
+        self.assertEqual(len(r3.json()["items"]), 20)
+
+    def test_review_due_empty_when_nothing_due(self):
+        self.client.post("/api/review/import", json={"items": [{"word": "preference", "last_result": "forgot"}]})
+        r = self.client.get("/api/review/due")
+        self.assertEqual(r.json()["total_due"], 0)
+        self.assertEqual(r.json()["items"], [])
+
+    # ================= answer：Leitner 状态转移 + review_log =================
+
+    def _answer(self, word, correct, pre_box=None):
+        if pre_box is not None:
+            conn = sqlite3.connect(str(main.DB_PATH))
+            try:
+                conn.execute("UPDATE review_schedule SET box=? WHERE word=?", (pre_box, word))
+                conn.commit()
+            finally:
+                conn.close()
+        return self.client.post("/api/review/answer", json={"word": word, "correct": correct, "question_type": "image_recall"})
+
+    def test_answer_transitions(self):
+        self.client.post("/api/review/import", json={"items": [{"word": "preference", "last_result": "forgot"}]})
+        # 盒0 答对 → 盒1、次日
+        r = self._answer("preference", True, pre_box=0)
+        j = r.json()
+        self.assertEqual(j["box"], 1)
+        self.assertAlmostEqual(
+            datetime.fromisoformat(j["next_review_at"]), datetime.now() + timedelta(days=1), delta=timedelta(seconds=5)
+        )
+        # 盒1 答对 → 盒2、3 天后
+        j = self._answer("preference", True, pre_box=1).json()
+        self.assertEqual(j["box"], 2)
+        self.assertAlmostEqual(
+            datetime.fromisoformat(j["next_review_at"]), datetime.now() + timedelta(days=3), delta=timedelta(seconds=5)
+        )
+        # 盒2 答错 → 盒1、次日
+        j = self._answer("preference", False, pre_box=2).json()
+        self.assertEqual(j["box"], 1)
+        self.assertEqual(j["lapses"], 1)
+        # 盒3 答对 → 盒4（已掌握）、30 天后
+        j = self._answer("preference", True, pre_box=3).json()
+        self.assertEqual(j["box"], 4)
+        self.assertAlmostEqual(
+            datetime.fromisoformat(j["next_review_at"]), datetime.now() + timedelta(days=30), delta=timedelta(seconds=5)
+        )
+        # 盒4 答对 → 保持盒4、再续 30 天
+        j = self._answer("preference", True, pre_box=4).json()
+        self.assertEqual(j["box"], 4)
+        # 盒4 答错 → 回盒1
+        j = self._answer("preference", False, pre_box=4).json()
+        self.assertEqual(j["box"], 1)
+
+    def test_answer_writes_review_log(self):
+        self.client.post("/api/review/import", json={"items": [{"word": "preference", "last_result": "forgot"}]})
+        self._answer("preference", True)
+        conn = sqlite3.connect(str(main.DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute("SELECT * FROM review_log").fetchone()
+            self.assertEqual(row["word"], "preference")
+            self.assertEqual(row["result"], "correct")
+            self.assertEqual(row["question_type"], "image_recall")
+        finally:
+            conn.close()
+
+    def test_answer_404_for_unknown_word(self):
+        self.assertEqual(self.client.post("/api/review/answer", json={"word": "nope", "correct": True}).status_code, 404)
+
+    # ================= stats：盒子分布 / 正确率 / streak =================
+
+    def test_stats_streak_and_accuracy(self):
+        self.client.post("/api/review/import", json={"items": [{"word": "preference", "last_result": "forgot"}]})
+        self._answer("preference", True)
+        # 补两条历史日志：昨天、前天（连续 3 天）
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            for d in (1, 2):
+                past = (datetime.now() - timedelta(days=d)).isoformat(timespec="seconds")
+                conn.execute(
+                    "INSERT INTO review_log (word, result, question_type, answered_at) VALUES (?,?,?,?)",
+                    ("preference", "wrong", "cloze", past),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        r = self.client.get("/api/review/stats").json()
+        self.assertEqual(r["streak"], 3)
+        self.assertEqual(r["answered_total"], 3)
+        self.assertEqual(r["correct_total"], 1)
+        self.assertAlmostEqual(r["accuracy"], 1 / 3, places=3)
+        self.assertEqual(r["total"], 1)
+        self.assertEqual(r["in_progress"], 1)
+        self.assertEqual(r["mastered"], 0)
+
+    def test_stats_streak_not_broken_before_today(self):
+        """今天未作答、昨天作答过：streak 从昨天起算（不算断）。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            past = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
+            conn.execute(
+                "INSERT INTO review_log (word, result, question_type, answered_at) VALUES ('w','correct','cloze',?)",
+                (past,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(self.client.get("/api/review/stats").json()["streak"], 1)
+
+    # ================= quiz：题型生成 / 干扰项 / 素材降级 =================
+
+    def test_quiz_generates_three_types_with_options(self):
+        # 三个词：preference 有图有中文；nograph 无图；w1-w4 补干扰项池
+        _seed_review_single_gen("gen1", "preference")
+        _seed_review_single_gen("gen2", "nograph", image_url="")
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            for w in ("w1", "w2", "w3", "w4"):
+                conn.execute("INSERT OR REPLACE INTO words (word, meaning_zh) VALUES (?,?)", (w, f"释义{w}"))
+            conn.commit()
+        finally:
+            conn.close()
+        self._make_due("preference")
+        self._make_due("nograph")
+        r = self.client.get("/api/review/quiz?count=2")
+        self.assertEqual(r.status_code, 200)
+        questions = r.json()["questions"]
+        self.assertGreaterEqual(len(questions), 1)
+        for q in questions:
+            self.assertIn(q["word"], ("preference", "nograph"))
+            if q["type"] in ("image_recall", "match"):
+                correct = q["word"] if q["type"] == "image_recall" else q["correct_zh"]
+                self.assertIn(correct, q["options"])
+                self.assertEqual(len(q["options"]), len(set(q["options"])))  # 选项去重
+            if q["type"] == "cloze":
+                self.assertIn("____", q["sentence_masked"])
+
+    def test_quiz_degrades_no_image_to_match(self):
+        _seed_review_single_gen("gen2", "nograph", image_url="")
+        self._make_due("nograph")
+        questions = self.client.get("/api/review/quiz?count=1&types=image_recall").json()["questions"]
+        # 无图：看图说词降级为 match（有 phrase_zh）
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(questions[0]["type"], "match")
+
+    def test_quiz_empty_when_no_queue(self):
+        r = self.client.get("/api/review/quiz")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["questions"], [])
+        self.assertEqual(r.json()["total_words"], 0)
+
+    def test_quiz_skips_word_without_any_material(self):
+        """无卡无释义的词：三种题型素材全缺，跳过不出题。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            conn.execute(
+                "INSERT INTO review_schedule (word, generation_id, box, next_review_at) "
+                "VALUES ('bare','','1',datetime('now','localtime','-1 hour'))"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        questions = self.client.get("/api/review/quiz?count=5").json()["questions"]
+        self.assertEqual([q for q in questions if q["word"] == "bare"], [])
 
 
 if __name__ == "__main__":
