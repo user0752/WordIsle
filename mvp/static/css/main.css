@@ -691,7 +691,7 @@
   .stat-item.danger .stat-num { color: var(--danger); }
   .stat-label { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; display: block; }
 
-  .section-label { font-size: 12px; font-weight: 500; color: var(--text-tertiary); display: block; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .section-label { font-size: 12px; font-weight: 500; color: var(--text-tertiary); display: block; margin-bottom: 8px; }
   .word-preview .word-tags { max-height: 200px; overflow-y: auto; }
 
   /* ===== 熟词僻意 ===== */
@@ -808,7 +808,6 @@
   }
   .home-card-subtitle {
     font-size: 12px; color: var(--text-tertiary);
-    text-transform: uppercase; letter-spacing: 0.8px;
     font-weight: 500;
   }
   .home-card-desc {
@@ -1000,12 +999,12 @@
   .single-prompt { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; padding: 8px 12px; background: var(--bg-surface); border-radius: 6px; font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
 
   /* ===== Mono 元数据 ===== */
-  .mono, .panel-index-num, .stat-num, .recent-item-time, .story-card-footer .el-tag,
-  .section-label, .home-card-subtitle, .derivative-tag .pos-mono {
+  .mono, .panel-index-num, .stat-num, .recent-item-time,
+  .derivative-tag .pos-mono {
     font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
     font-variant-numeric: tabular-nums;
   }
-  .section-label, .home-card-subtitle { letter-spacing: 0.5px; text-transform: uppercase; }
+  .derivative-tag .pos-mono { letter-spacing: 0.5px; text-transform: uppercase; }
 
   /* ===== 交互与无障碍 ===== */
   a, button, [role="button"], .clickable,
@@ -1165,7 +1164,6 @@
   .home-card:hover .home-card-index { color: var(--accent); }
   .home-card-single:hover .home-card-index { color: var(--success, #3a7d6a); }
   .home-card-batch:hover .home-card-index { color: var(--gold); }
-  .home-card-subtitle { text-transform: uppercase; }
 
   /* 首页数据概览纸带 */
   .home-stats {
@@ -1186,8 +1184,6 @@
   }
   .home-stat-label {
     font-size: 12px; color: var(--text-tertiary);
-    text-transform: uppercase; letter-spacing: 0.8px;
-    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
     margin-bottom: 6px;
   }
   .home-stat-num {
