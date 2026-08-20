@@ -438,11 +438,11 @@
             </div>
           </el-card>
 
-          <!-- 单点深耕结果卡片 -->
+          <!-- 单点深耕结果卡片（左右分栏：图句同框双编码 + 遮词自测） -->
           <el-card v-if="singleResult" shadow="never">
             <template #header>
               <div class="flex-between">
-                <span class="card-title">记忆钩子卡片 · {{ singleResult.word }}
+                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？' : singleResult.word }}</span>
                   <el-tag v-if="singleResult.hook_type" size="small" class="ml-sm" type="warning">{{ singleResult.hook_type }}</el-tag>
                 </span>
                 <div class="flex gap-sm">
@@ -453,51 +453,88 @@
               </div>
             </template>
 
-            <!-- 1 张记忆钩子图 -->
-            <div v-if="singleResult.image_url" class="single-image-wrap">
-              <img :src="singleResult.image_url" :alt="singleResult.word" class="single-image" />
-            </div>
-            <div v-else-if="singleResult.image_error" class="empty-state">
-              <el-icon><warning-filled /></el-icon>
-              <p>{{ singleResult.image_error }}</p>
-            </div>
+            <!-- 主锚：左图（45%）+ 右词条（55%），图与场景句相邻同框 -->
+            <div class="single-hero">
+              <!-- 左栏：记忆钩子图 + 情绪贴纸 + 窄屏字幕条 -->
+              <div v-if="singleResult.image_url" class="single-image-wrap">
+                <img :src="singleResult.image_url" :alt="selfTestMasked ? 'memory hook image' : singleResult.word" class="single-image" />
+                <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.mood && !selfTestMasked"
+                     class="mood-sticker" :class="moodClassOf(singleResult.hook_type)">{{ singleResult.scene_sentence.mood }}</div>
+                <!-- 窄屏字幕条：场景句压图，图句同框（桌面端隐藏） -->
+                <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en"
+                     class="single-caption" :class="{ 'is-masked': selfTestMasked }">
+                  <div class="single-caption-en">{{ singleResult.scene_sentence.en }}</div>
+                  <div class="single-caption-zh">{{ singleResult.scene_sentence.zh }}</div>
+                </div>
+              </div>
+              <div v-else-if="singleResult.image_error" class="empty-state single-image-fallback">
+                <el-icon><warning-filled /></el-icon>
+                <p>{{ singleResult.image_error }}</p>
+              </div>
 
-            <!-- 词伙搭配 -->
-            <div v-if="singleResult.collocation && singleResult.collocation.phrase_en" class="single-section">
-              <div class="single-section-title"><el-icon><edit-pen /></el-icon> 词伙搭配</div>
-              <div class="single-collocation">
-                <span class="phrase-en">{{ singleResult.collocation.phrase_en }}</span>
-                <el-tag size="small" type="info" class="ml-sm">{{ singleResult.collocation.collocation_type }}</el-tag>
-                <div class="phrase-zh">{{ singleResult.collocation.phrase_zh }}</div>
+              <!-- 右栏：词条信息（自测未揭晓时模糊防泄漏） -->
+              <div class="single-hero-content" :class="{ 'is-masked': selfTestMasked }">
+                <!-- ① 词伙搭配（次区降权） -->
+                <div v-if="singleResult.collocation && singleResult.collocation.phrase_en" class="single-section is-secondary">
+                  <div class="single-section-title"><el-icon><edit-pen /></el-icon> 词伙搭配</div>
+                  <div class="single-collocation">
+                    <span class="phrase-en">{{ singleResult.collocation.phrase_en }}</span>
+                    <el-tag size="small" type="info" class="ml-sm">{{ singleResult.collocation.collocation_type }}</el-tag>
+                    <div class="phrase-zh">{{ singleResult.collocation.phrase_zh }}</div>
+                  </div>
+                </div>
+
+                <!-- ② 场景句中英（窄屏由图上字幕条替代，此处隐藏） -->
+                <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en" class="single-section single-scene-section">
+                  <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句</div>
+                  <div class="single-sentence-en">{{ singleResult.scene_sentence.en }}</div>
+                  <div class="single-sentence-zh">{{ singleResult.scene_sentence.zh }}</div>
+                </div>
+
+                <!-- ③ 派生词族（次区降权） -->
+                <div v-if="singleResult.derivatives && singleResult.derivatives.length" class="single-section is-secondary">
+                  <div class="single-section-title"><el-icon><Share /></el-icon> 派生词族</div>
+                  <div class="single-derivatives">
+                    <el-tag v-for="d in singleResult.derivatives" :key="d.word" class="derivative-tag" effect="plain">
+                      <span style="font-weight:600">{{ d.word }}</span>
+                      <span class="pos-mono" style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
+                      <span>{{ d.meaning_zh }}</span>
+                    </el-tag>
+                  </div>
+                </div>
+
+                <!-- ④ 遮词自测操作条（测试效应） -->
+                <div class="single-selftest">
+                  <template v-if="!selfTest.active">
+                    <el-button type="primary" plain :icon="View" @click="startSelfTest">遮词自测</el-button>
+                    <span v-if="selfTestRecord" class="selftest-meta">
+                      已自测 {{ selfTestRecord.tested_count }} 次 · 最近{{ selfTestRecord.last_result === 'remembered' ? '记住了' : '没记住' }}
+                    </span>
+                  </template>
+                  <template v-else-if="!selfTest.revealed">
+                    <span class="selftest-hint">看图回忆：这画面里的单词是什么？</span>
+                    <el-button type="success" :icon="View" @click="revealSelfTest">揭晓答案</el-button>
+                  </template>
+                  <template v-else-if="!selfTest.answered">
+                    <span class="selftest-hint">刚才能想起来吗？</span>
+                    <el-button type="success" plain :icon="CircleCheck" @click="finishSelfTest(true, singleResult.word)">记住了</el-button>
+                    <el-button type="danger" plain :icon="CircleClose" @click="finishSelfTest(false, singleResult.word)">没记住</el-button>
+                  </template>
+                  <template v-else>
+                    <el-tag :type="selfTest.answered === 'remembered' ? 'success' : 'warning'">
+                      {{ selfTest.answered === 'remembered' ? '已记录 · 掌握得不错' : '已记录 · 已加入待复习' }}
+                    </el-tag>
+                    <el-button link type="primary" :icon="Refresh" @click="startSelfTest">再测一次</el-button>
+                  </template>
+                </div>
               </div>
             </div>
 
-            <!-- 场景句中英 -->
-            <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en" class="single-section">
-              <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句
-                <el-tag v-if="singleResult.scene_sentence.mood" size="small" class="ml-sm" type="warning">{{ singleResult.scene_sentence.mood }}</el-tag>
-              </div>
-              <div class="single-sentence-en">{{ singleResult.scene_sentence.en }}</div>
-              <div class="single-sentence-zh">{{ singleResult.scene_sentence.zh }}</div>
-            </div>
-
-            <!-- 派生词族 -->
-            <div v-if="singleResult.derivatives && singleResult.derivatives.length" class="single-section">
-              <div class="single-section-title"><el-icon><Share /></el-icon> 派生词族</div>
-              <div class="single-derivatives">
-                <el-tag v-for="d in singleResult.derivatives" :key="d.word" class="derivative-tag" effect="plain">
-                  <span style="font-weight:600">{{ d.word }}</span>
-                  <span class="pos-mono" style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
-                  <span>{{ d.meaning_zh }}</span>
-                </el-tag>
-              </div>
-            </div>
-
-            <!-- Image prompt 用于参考 -->
-            <div v-if="singleResult.image_prompt" class="single-section">
-              <div class="single-section-title text-secondary" style="font-size:12px"><el-icon><Brush /></el-icon> 图像 Prompt（参考）</div>
+            <!-- Image prompt 折叠（调试参考用，移出主卡视觉层级） -->
+            <details v-if="singleResult.image_prompt" class="single-prompt-details">
+              <summary><el-icon><Brush /></el-icon> 图像 Prompt（参考）</summary>
               <div class="single-prompt">{{ singleResult.image_prompt }}</div>
-            </div>
+            </details>
 
             <div v-if="singleResult.audio_error" class="text-secondary mt-md" style="font-size:12px;color:var(--danger)">{{ singleResult.audio_error }}</div>
 
@@ -1525,13 +1562,13 @@
             </div>
           </div>
           <template v-else-if="resultData">
-            <!-- 单点深耕结果 -->
+            <!-- 单点深耕结果（与生成页同构的新卡片布局：分栏 + 贴纸 + 遮词自测） -->
             <template v-if="resultData.generation_type==='single'">
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">记忆钩子卡片 · {{ (resultData.words||[])[0] || '' }}
-                      <el-tag v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].hook_type" size="small" class="ml-sm" type="warning">{{ (resultData.panels||[])[0].hook_type }}</el-tag>
+                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？' : resultSingleCard.word }}</span>
+                      <el-tag v-if="resultSingleCard.hook_type" size="small" class="ml-sm" type="warning">{{ resultSingleCard.hook_type }}</el-tag>
                     </span>
                     <div class="flex gap-sm">
                       <el-tag size="small" type="info">{{ resultData.image_model }}</el-tag>
@@ -1540,51 +1577,87 @@
                   </div>
                 </template>
 
-                <!-- 1 张记忆钩子图 -->
-                <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].image_url" class="single-image-wrap">
-                  <img :src="(resultData.panels||[])[0].image_url" :alt="(resultData.words||[])[0]||'word'" class="single-image" />
-                </div>
-                <div v-else-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].image_error" class="empty-state">
-                  <el-icon><warning-filled /></el-icon>
-                  <p>{{ (resultData.panels||[])[0].image_error }}</p>
-                </div>
+                <!-- 主锚：左图（45%）+ 右词条（55%），图与场景句相邻同框 -->
+                <div class="single-hero">
+                  <!-- 左栏：记忆钩子图 + 情绪贴纸 + 窄屏字幕条 -->
+                  <div v-if="resultSingleCard.image_url" class="single-image-wrap">
+                    <img :src="resultSingleCard.image_url" :alt="selfTestMasked ? 'memory hook image' : resultSingleCard.word" class="single-image" />
+                    <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.mood && !selfTestMasked"
+                         class="mood-sticker" :class="moodClassOf(resultSingleCard.hook_type)">{{ resultSingleCard.scene_sentence.mood }}</div>
+                    <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en"
+                         class="single-caption" :class="{ 'is-masked': selfTestMasked }">
+                      <div class="single-caption-en">{{ resultSingleCard.scene_sentence.en }}</div>
+                      <div class="single-caption-zh">{{ resultSingleCard.scene_sentence.zh }}</div>
+                    </div>
+                  </div>
+                  <div v-else-if="resultSingleCard.image_error" class="empty-state single-image-fallback">
+                    <el-icon><warning-filled /></el-icon>
+                    <p>{{ resultSingleCard.image_error }}</p>
+                  </div>
 
-                <!-- 词伙搭配 -->
-                <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].collocation && (resultData.panels||[])[0].collocation.phrase_en" class="single-section">
-                  <div class="single-section-title"><el-icon><edit-pen /></el-icon> 词伙搭配</div>
-                  <div class="single-collocation">
-                    <span class="phrase-en">{{ (resultData.panels||[])[0].collocation.phrase_en }}</span>
-                    <el-tag size="small" type="info" class="ml-sm">{{ (resultData.panels||[])[0].collocation.collocation_type }}</el-tag>
-                    <div class="phrase-zh">{{ (resultData.panels||[])[0].collocation.phrase_zh }}</div>
+                  <!-- 右栏：词条信息（自测未揭晓时模糊防泄漏） -->
+                  <div class="single-hero-content" :class="{ 'is-masked': selfTestMasked }">
+                    <!-- ① 词伙搭配（次区降权） -->
+                    <div v-if="resultSingleCard.collocation && resultSingleCard.collocation.phrase_en" class="single-section is-secondary">
+                      <div class="single-section-title"><el-icon><edit-pen /></el-icon> 词伙搭配</div>
+                      <div class="single-collocation">
+                        <span class="phrase-en">{{ resultSingleCard.collocation.phrase_en }}</span>
+                        <el-tag size="small" type="info" class="ml-sm">{{ resultSingleCard.collocation.collocation_type }}</el-tag>
+                        <div class="phrase-zh">{{ resultSingleCard.collocation.phrase_zh }}</div>
+                      </div>
+                    </div>
+
+                    <!-- ② 场景句中英（窄屏由图上字幕条替代，此处隐藏） -->
+                    <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en" class="single-section single-scene-section">
+                      <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句</div>
+                      <div class="single-sentence-en">{{ resultSingleCard.scene_sentence.en }}</div>
+                      <div class="single-sentence-zh">{{ resultSingleCard.scene_sentence.zh }}</div>
+                    </div>
+
+                    <!-- ③ 派生词族（次区降权） -->
+                    <div v-if="resultSingleCard.derivatives && resultSingleCard.derivatives.length" class="single-section is-secondary">
+                      <div class="single-section-title"><el-icon><Share /></el-icon> 派生词族</div>
+                      <div class="single-derivatives">
+                        <el-tag v-for="d in resultSingleCard.derivatives" :key="d.word" class="derivative-tag" effect="plain">
+                          <span style="font-weight:600">{{ d.word }}</span>
+                          <span class="pos-mono" style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
+                          <span>{{ d.meaning_zh }}</span>
+                        </el-tag>
+                      </div>
+                    </div>
+
+                    <!-- ④ 遮词自测操作条（测试效应） -->
+                    <div class="single-selftest">
+                      <template v-if="!selfTest.active">
+                        <el-button type="primary" plain :icon="View" @click="startSelfTest">遮词自测</el-button>
+                        <span v-if="selfTestRecord" class="selftest-meta">
+                          已自测 {{ selfTestRecord.tested_count }} 次 · 最近{{ selfTestRecord.last_result === 'remembered' ? '记住了' : '没记住' }}
+                        </span>
+                      </template>
+                      <template v-else-if="!selfTest.revealed">
+                        <span class="selftest-hint">看图回忆：这画面里的单词是什么？</span>
+                        <el-button type="success" :icon="View" @click="revealSelfTest">揭晓答案</el-button>
+                      </template>
+                      <template v-else-if="!selfTest.answered">
+                        <span class="selftest-hint">刚才能想起来吗？</span>
+                        <el-button type="success" plain :icon="CircleCheck" @click="finishSelfTest(true, resultSingleCard.word)">记住了</el-button>
+                        <el-button type="danger" plain :icon="CircleClose" @click="finishSelfTest(false, resultSingleCard.word)">没记住</el-button>
+                      </template>
+                      <template v-else>
+                        <el-tag :type="selfTest.answered === 'remembered' ? 'success' : 'warning'">
+                          {{ selfTest.answered === 'remembered' ? '已记录 · 掌握得不错' : '已记录 · 已加入待复习' }}
+                        </el-tag>
+                        <el-button link type="primary" :icon="Refresh" @click="startSelfTest">再测一次</el-button>
+                      </template>
+                    </div>
                   </div>
                 </div>
 
-                <!-- 场景句中英 -->
-                <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].scene_sentence && (resultData.panels||[])[0].scene_sentence.en" class="single-section">
-                  <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句
-                    <el-tag v-if="(resultData.panels||[])[0].scene_sentence.mood" size="small" class="ml-sm" type="warning">{{ (resultData.panels||[])[0].scene_sentence.mood }}</el-tag>
-                  </div>
-                  <div class="single-sentence-en">{{ (resultData.panels||[])[0].scene_sentence.en }}</div>
-                  <div class="single-sentence-zh">{{ (resultData.panels||[])[0].scene_sentence.zh }}</div>
-                </div>
-
-                <!-- 派生词族 -->
-                <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].derivatives && (resultData.panels||[])[0].derivatives.length" class="single-section">
-                  <div class="single-section-title"><el-icon><Share /></el-icon> 派生词族</div>
-                  <div class="single-derivatives">
-                    <el-tag v-for="d in (resultData.panels||[])[0].derivatives" :key="d.word" class="derivative-tag" effect="plain">
-                      <span style="font-weight:600">{{ d.word }}</span>
-                      <span class="pos-mono" style="color:var(--text-tertiary);margin:0 4px">{{ d.pos }}</span>
-                      <span>{{ d.meaning_zh }}</span>
-                    </el-tag>
-                  </div>
-                </div>
-
-                <!-- Image prompt -->
-                <div v-if="(resultData.panels||[])[0] && (resultData.panels||[])[0].image_prompt" class="single-section">
-                  <div class="single-section-title text-secondary" style="font-size:12px"><el-icon><Brush /></el-icon> 图像 Prompt（参考）</div>
-                  <div class="single-prompt">{{ (resultData.panels||[])[0].image_prompt }}</div>
-                </div>
+                <!-- Image prompt 折叠（调试参考用，移出主卡视觉层级） -->
+                <details v-if="resultSingleCard.image_prompt" class="single-prompt-details">
+                  <summary><el-icon><Brush /></el-icon> 图像 Prompt（参考）</summary>
+                  <div class="single-prompt">{{ resultSingleCard.image_prompt }}</div>
+                </details>
               </el-card>
 
               <!-- 音频区 -->
@@ -2416,6 +2489,60 @@ const app = createApp({
     const singleAudioLoading = ref(false)
     const singleAudioEl = ref(null)
 
+    // ====== 遮词自测（第一层 · 测试效应）：看图回忆 → 揭晓 → 自我报告 ======
+    // 生成页卡片与历史详情页卡片共用同一套自测状态（按词记录，finishSelfTest 由模板传入当前词）
+    const SELFTEST_KEY = 'toeic_selftest_v1'
+    const selfTest = reactive({ active: false, revealed: false, answered: '' })
+    const selfTestRecord = ref(null)
+    const selfTestMasked = computed(() => selfTest.active && !selfTest.revealed)
+
+    function loadSelfTestData() {
+      try { return JSON.parse(localStorage.getItem(SELFTEST_KEY) || '{}') || {} }
+      catch (_) { return {} }
+    }
+    function startSelfTest() {
+      selfTest.active = true
+      selfTest.revealed = false
+      selfTest.answered = ''
+    }
+    function revealSelfTest() { selfTest.revealed = true }
+    function finishSelfTest(remembered, word) {
+      word = (word || '').trim().toLowerCase()
+      if (!word) return
+      selfTest.answered = remembered ? 'remembered' : 'forgot'
+      try {
+        const data = loadSelfTestData()
+        const prev = data[word] || { tested_count: 0 }
+        data[word] = {
+          tested_count: prev.tested_count + 1,
+          last_result: selfTest.answered,
+          pending_review: !remembered,
+          updated_at: new Date().toISOString(),
+        }
+        localStorage.setItem(SELFTEST_KEY, JSON.stringify(data))
+        selfTestRecord.value = data[word]
+      } catch (_) { /* localStorage 不可用时静默忽略 */ }
+      ElementPlus.ElMessage.success(remembered ? '不错！主动回忆一次胜过重看十遍' : '没关系，已标记待复习，后面会再安排')
+    }
+    // 换卡片时重置自测状态并回显该词历史自测记录
+    function restoreSelfTest(word) {
+      selfTest.active = false
+      selfTest.revealed = false
+      selfTest.answered = ''
+      selfTestRecord.value = word ? (loadSelfTestData()[word] || null) : null
+    }
+    watch(() => singleResult.value?.word, (w) => restoreSelfTest(w))
+
+    // 情绪贴纸配色：按 hook_type 四策略（双义碰撞=撞色 / 夸张场景=高饱和暖色 / 具象比喻=蓝紫 / 对比记忆=左右分屏）
+    function moodClassOf(t) {
+      t = t || ''
+      if (t.includes('双义')) return 'is-clash'
+      if (t.includes('夸张')) return 'is-warm'
+      if (t.includes('具象')) return 'is-abstract'
+      if (t.includes('对比')) return 'is-split'
+      return ''
+    }
+
     // 历史
     const historyData = ref([])
     const historyTotal = ref(0)
@@ -2490,6 +2617,23 @@ const app = createApp({
     // 结果
     const resultData = ref(null)
     const resultLoading = ref(false)
+    // 历史详情页单点卡片：把 resultData 归一为与生成页 singleResult 同构，复用新卡片布局与自测交互
+    const resultSingleCard = computed(() => {
+      const d = resultData.value
+      if (!d || d.generation_type !== 'single') return null
+      const p = (d.panels || [])[0] || {}
+      return {
+        word: (d.words || [])[0] || '',
+        hook_type: p.hook_type || '',
+        collocation: p.collocation || null,
+        scene_sentence: p.scene_sentence || null,
+        derivatives: p.derivatives || [],
+        image_prompt: p.image_prompt || '',
+        image_url: p.image_url || '',
+        image_error: p.image_error || '',
+      }
+    })
+    watch(() => resultSingleCard.value?.word, (w) => restoreSelfTest(w))
     const audioLoading = ref(false)
     const regenerateTtsModel = ref('qwen-audio-3.0-tts-plus')
     const regenerateVoice = ref('')
@@ -3456,6 +3600,9 @@ const app = createApp({
       VideoPlay: ElIcons.VideoPlay,
       List: ElIcons.List,
       Close: ElIcons.Close,
+      View: ElIcons.View,
+      CircleCheck: ElIcons.CircleCheck,
+      CircleClose: ElIcons.CircleClose,
     }
 
     return {
@@ -3474,6 +3621,8 @@ const app = createApp({
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
+      selfTest, selfTestRecord, selfTestMasked, moodClassOf,
+      startSelfTest, revealSelfTest, finishSelfTest,
       artStyleOptions,
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
       openWordPicker, searchWords, confirmWordPick,
@@ -3486,7 +3635,7 @@ const app = createApp({
       morphemeCandidateTotal, morphemeDetectRunning, morphemeDetectResult,
       morphemeSelWords, goMorpheme, runMorphemeDetectSelected,
       morphemeWordSearch, morphemeWords, morphemeWordTotal, morphemeWordPage, morphemeWordsLoading,
-      resultData, resultLoading, audioLoading, regenerateTtsModel, regenerateVoice, regenerateSpeed,
+      resultData, resultSingleCard, resultLoading, audioLoading, regenerateTtsModel, regenerateVoice, regenerateSpeed,
       sceneView, scenes, scenesLoading, sceneDetail, sceneDetailLoading,
       sceneDetectLoading, sceneDetectResult, sceneSuggestions, sceneAdoptingIdx,
       sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,

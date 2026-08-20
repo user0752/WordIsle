@@ -983,10 +983,14 @@
   .polysemy-note-word { font-weight: 600; color: var(--gold); flex-shrink: 0; }
   .polysemy-note-text { color: var(--text-secondary); }
 
-  /* ===== 单点深耕 ===== */
+  /* ===== 单点深耕 · 主锚左右分栏（图句同框双编码） ===== */
+  .single-hero { display: flex; gap: 22px; align-items: stretch; }
+  .single-hero .single-image-wrap { flex: 0 0 45%; margin: 0; max-width: none; position: relative; }
+  .single-hero .single-image-fallback { flex: 0 0 45%; }
+  .single-hero-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .single-image-wrap { margin: 0 auto 20px; max-width: 600px; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
   .single-image { width: 100%; height: auto; display: block; }
-  .single-section { padding: 14px 0; border-top: 1px dashed var(--border-light, #e5e5e7); }
+  .single-section { padding: 14px 0; border-top: 1px dashed var(--border-light, #e5e5e7); transition: filter 0.35s var(--ease-out); }
   .single-section:first-of-type { border-top: none; }
   .single-section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .single-section-title .el-icon, .card-title .el-icon { color: var(--accent); font-size: 15px; }
@@ -997,6 +1001,62 @@
   .single-derivatives { display: flex; flex-wrap: wrap; gap: 8px; }
   .derivative-tag { padding: 8px 12px !important; height: auto !important; line-height: 1.4 !important; }
   .single-prompt { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; padding: 8px 12px; background: var(--bg-surface); border-radius: 6px; font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+
+  /* 次区降权（组块：主锚=图+句，词伙/词族灰化） */
+  .single-section.is-secondary .single-section-title { color: var(--text-tertiary); font-size: 13px; }
+  .single-section.is-secondary .single-collocation .phrase-en { font-size: 16px; }
+  .single-section.is-secondary .phrase-zh,
+  .single-section.is-secondary .derivative-tag { color: var(--text-secondary); }
+
+  /* 情绪贴纸（综艺花字感）：mood 压图右上角，四策略配色 */
+  .mood-sticker {
+    position: absolute; top: 20px; right: 20px; z-index: 2;
+    transform: rotate(2deg);
+    padding: 4px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.5px; color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.35);
+    pointer-events: none;
+    max-width: calc(100% - 40px);
+  }
+  .mood-sticker.is-clash { background: linear-gradient(115deg, #ff5e5e 0%, #ff5e5e 42%, #1f9e8e 58%, #1f9e8e 100%); }
+  .mood-sticker.is-warm { background: linear-gradient(120deg, #ff9f43, #ee5253); }
+  .mood-sticker.is-abstract { background: linear-gradient(120deg, #5f7cff, #9b5bff); }
+  .mood-sticker.is-split { background: linear-gradient(90deg, #2d6cdf 0 50%, #ffb02e 50% 100%); }
+
+  /* 窄屏字幕条：场景句压图（桌面端隐藏，双编码兜底） */
+  .single-caption {
+    display: none; position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2;
+    background: rgba(16, 20, 24, 0.74); color: #fff;
+    padding: 8px 12px; border-radius: 6px;
+    backdrop-filter: blur(2px);
+    transition: filter 0.35s var(--ease-out);
+  }
+  .single-caption-en { font-size: 14px; line-height: 1.6; font-weight: 500; font-family: 'Source Serif 4', 'Noto Serif SC', Georgia, serif; }
+  .single-caption-zh { font-size: 12px; line-height: 1.5; opacity: 0.85; margin-top: 3px; }
+
+  /* 遮词自测：未揭晓时模糊词条防泄漏（词伙/场景句/词族均含目标词） */
+  .single-hero-content.is-masked .single-section,
+  .single-caption.is-masked { filter: blur(7px); user-select: none; pointer-events: none; }
+  .word-masked { color: var(--gold); letter-spacing: 2px; }
+
+  /* 遮词自测操作条 */
+  .single-selftest {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-light, #e5e5e7);
+  }
+  .selftest-hint { font-size: 13px; color: var(--text-secondary); }
+  .selftest-meta { font-size: 12px; color: var(--text-tertiary); }
+
+  /* 图 Prompt 折叠（调试参考，移出主卡视觉层级） */
+  .single-prompt-details { margin-top: 12px; border-top: 1px dashed var(--border-light, #e5e5e7); padding-top: 10px; }
+  .single-prompt-details summary {
+    font-size: 12px; color: var(--text-tertiary); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px; user-select: none;
+  }
+  .single-prompt-details summary .el-icon { font-size: 13px; color: var(--text-tertiary); }
+  .single-prompt-details summary:hover { color: var(--text-secondary); }
+  .single-prompt-details[open] summary { margin-bottom: 8px; }
 
   /* ===== Mono 元数据 ===== */
   .mono, .panel-index-num, .stat-num, .recent-item-time,
@@ -1230,6 +1290,12 @@
     .panel-card, .panel-card:nth-child(even) { flex-direction: column; }
     .panel-image-wrap, .panel-image-fallback { width: 100%; }
     .panel-index { flex-direction: row; width: auto; align-items: center; gap: 8px; }
+
+    /* 单点深耕卡：单列堆叠，场景句改字幕条压图（图句仍同框） */
+    .single-hero { flex-direction: column; gap: 14px; }
+    .single-hero .single-image-wrap, .single-hero .single-image-fallback { flex: none; }
+    .single-scene-section { display: none; }
+    .single-caption { display: block; }
 
     /* 首页 */
     .home-stats { grid-template-columns: 1fr; gap: 10px; }

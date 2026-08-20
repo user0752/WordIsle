@@ -436,6 +436,7 @@ Given one English target word, output:
 
 ## IMAGE REQUIREMENT
 - image_prompt MUST follow the chosen strategy and make the word the visual focus.
+- WORD-IN-IMAGE (critical): the target word ITSELF must appear inside the image as part of the MAIN SUBJECT — either as large bold lowercase typography integrated into the scene (painted on the object, looming in the sky, formed by objects), or as a visual pun where the word's letters physically build / label the subject (e.g. the word "broker" with a visibly broken "k"). Never render it as a tiny caption or a corner label.
 - image_prompt MUST be in English, 1-3 sentences, following the ART STYLE specified in the user prompt (default: surreal comic / flat illustration).
 - The image is the recall cue: seeing the picture reminds the user of the word.
 - Any English word text rendered INSIDE the image (e.g. a label, sign, caption, or the target word itself) MUST be written in lowercase letters.
@@ -461,7 +462,7 @@ Given one English target word, output:
     "zh": "他像抱着易碎的婴儿一样提交了一份200万美元的投标书。",
     "mood": "荒诞 / 反差 / 黑色幽默"
   },
-  "image_prompt": "Surreal comic, flat colors: a nervous man in a suit tenderly cradling a massive proposal document like a baby in a cold corporate boardroom. Bold flat colors, exaggerated tender expression, absurd juxtaposition.",
+  "image_prompt": "Surreal comic, flat colors: a nervous man in a suit tenderly cradling a massive proposal document like a baby in a cold corporate boardroom, the word 'tender' painted in huge bold lowercase letters across the document cover as the visual focus. Bold flat colors, exaggerated tender expression, absurd juxtaposition.",
   "derivatives": [
     { "word": "submission", "pos": "n.", "meaning_zh": "提交物；服从" },
     { "word": "submissive", "pos": "adj.", "meaning_zh": "服从的；顺从的" }
