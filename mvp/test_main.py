@@ -1130,10 +1130,12 @@ class ReviewApiTestCase(unittest.TestCase):
         for q in questions:
             self.assertIn(q["word"], ("preference", "nograph"))
             if q["type"] in ("image_recall", "match"):
-                correct = q["word"] if q["type"] == "image_recall" else q["correct_zh"]
-                self.assertIn(correct, q["options"])
+                # 看图选义 / 中英匹配：正确项中文义（卡词伙优先）在选项中且去重
+                self.assertEqual(q["correct_zh"], "优先考虑")
+                self.assertTrue(q["correct_zh"])
+                self.assertIn(q["correct_zh"], q["options"])
                 self.assertEqual(len(q["options"]), len(set(q["options"])))  # 选项去重
-            if q["type"] == "cloze":
+            elif q["type"] == "cloze":
                 self.assertIn("____", q["sentence_masked"])
 
     def test_quiz_degrades_no_image_to_match(self):

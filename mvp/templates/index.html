@@ -1107,7 +1107,7 @@
           <div class="page-header">
             <div>
               <h2 class="page-title"><span class="title-accent"></span>记忆测试</h2>
-              <p class="page-subtitle">Leitner 间隔重复复习 · 看图回忆 / 中英匹配 / 语境拼写，巩固长期记忆</p>
+              <p class="page-subtitle">Leitner 间隔重复复习 · 看图选义 / 中英匹配 / 语境拼写，巩固长期记忆</p>
             </div>
             <el-button v-if="!reviewSession.active" :icon="Refresh" @click="loadReviewStats()">刷新</el-button>
           </div>
@@ -1171,13 +1171,13 @@
                 <span class="review-q-hint">{{ questionTypeHint(reviewQuestion.type) }}</span>
               </div>
 
-              <!-- 看图说词 -->
+              <!-- 看图选义：记忆中钩子图，选对应中文义（图内英文词作语义线索） -->
               <template v-if="reviewQuestion.type === 'image_recall'">
                 <div class="review-image-wrap">
                   <img v-if="reviewQuestion.image_url" :src="reviewQuestion.image_url" :alt="reviewQuestion.word" class="review-image" />
                   <div v-else class="review-image review-image-empty"><el-icon :size="28"><Picture /></el-icon></div>
                 </div>
-                <div class="review-options">
+                <div class="review-options is-zh">
                   <el-button v-for="opt in reviewQuestion.options" :key="opt" class="review-option"
                     :type="reviewOptionState(opt)" :disabled="!!reviewSession.answered"
                     @click="reviewChoose(opt)">{{ opt }}</el-button>
@@ -1246,7 +1246,7 @@
                   <div class="review-mode-icon"><el-icon :size="30"><AlarmClock /></el-icon></div>
                   <div class="review-mode-title">今日复习</div>
                   <div class="review-mode-subtitle">{{ reviewStats.due_now }} 张到期卡</div>
-                  <div class="review-mode-desc">看图说词 · 到期卡按最老优先，答对升盒、答错回盒 1</div>
+                  <div class="review-mode-desc">看图选义 · 到期卡按最老优先，答对升盒、答错回盒 1</div>
                   <el-button type="primary" plain class="review-mode-btn" :disabled="reviewStats.due_now === 0">
                     {{ reviewStats.due_now === 0 ? '今日已清空' : '开始复习' }}
                   </el-button>
@@ -1256,7 +1256,7 @@
                   <div class="review-mode-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
                   <div class="review-mode-title">自由测试</div>
                   <div class="review-mode-subtitle">10 题 · 三种题型混合</div>
-                  <div class="review-mode-desc">看图说词 + 中英匹配 + 场景句挖空，到期词优先</div>
+                  <div class="review-mode-desc">看图选义 + 中英匹配 + 场景句挖空，到期词优先</div>
                   <el-button type="primary" plain class="review-mode-btn">开始测试</el-button>
                 </div>
               </div>
@@ -2708,10 +2708,10 @@ const app = createApp({
     watch(() => singleResult.value?.word, (w) => restoreSelfTest(w))
 
     // ====== 记忆测试（独立测试页）：Leitner 间隔重复 ======
-    const QUESTION_TYPE_LABELS = { image_recall: '看图说词', match: '中英匹配', cloze: '场景句挖空' }
+    const QUESTION_TYPE_LABELS = { image_recall: '看图选义', match: '中英匹配', cloze: '场景句挖空' }
     const QUESTION_TYPE_HINTS = {
-      image_recall: '看画面主体回忆目标词，再从选项中选出它',
-      match: '选出这个词对应的中文释义 / 常用词伙',
+      image_recall: '看图：回忆图中单词的中文意思，再从选项中选出',
+      match: '看这个英文单词，选出对应的中文释义 / 常用词伙',
       cloze: '回忆场景句中被挖空的词，直接拼写（大小写不敏感）',
     }
     const reviewStats = ref(null)
@@ -2764,12 +2764,22 @@ const app = createApp({
               : '当前没有到期的复习卡')
             return
           }
-          // 看图说词：本批到期词互为干扰项（池不足时自然降级为直接回忆）
-          questions = items.map(it => ({
-            type: 'image_recall', word: it.word, meaning_zh: it.meaning_zh || '',
-            image_url: it.image_url || null, box: it.box,
-            options: _dueOptions(items, it.word),
-          }))
+          // 看图选义：题干=记忆钩子图，选对应中文义；屏幕上有图的词互为干扰项。
+          // 无中文义的词无法出"选义"题，跳过（等补释义后或因 quiz 模式降级出题）。
+          const eligible = items.filter(it => (it.phrase_zh || it.meaning_zh))
+          if (!eligible.length) {
+            ElementPlus.ElMessage.info('这批到期卡都还没有中文释义，暂时出不了题，可在自由测试里复习')
+            return
+          }
+          questions = eligible.map(it => {
+            const correct = it.phrase_zh || it.meaning_zh
+            return {
+              type: 'image_recall', word: it.word, meaning_zh: it.meaning_zh || '',
+              image_url: it.image_url || null, box: it.box,
+              correct_zh: correct,
+              options: _dueZhOptions(eligible, it.word, correct),
+            }
+          })
         } else {
           const res = await api('/api/review/quiz?count=10')
           questions = res.questions || []
@@ -2786,15 +2796,21 @@ const app = createApp({
       } catch (e) { showModelError(e, '获取测试题失败') }
     }
 
-    function _dueOptions(items, word) {
-      const shuffled = items.filter(i => i.word !== word).map(i => i.word).sort(() => Math.random() - 0.5)
-      return [...shuffled.slice(0, 3), word].sort(() => Math.random() - 0.5)
+    function _dueZhOptions(items, word, correct) {
+      // 干扰项=同批其他到期词的中文义（词伙优先），不足则退化为直接回忆（无干扰项）
+      const distractors = items
+        .filter(it => it.word !== word)
+        .map(it => it.phrase_zh || it.meaning_zh)
+        .filter(Boolean)
+        .sort(() => Math.random() - 0.5)
+      const uniq = [...new Set(distractors.filter(d => d !== correct))].slice(0, 3)
+      return [...uniq, correct].sort(() => Math.random() - 0.5)
     }
 
     function reviewOptionState(opt) {
       if (!reviewSession.answered) return 'default'
       const q = reviewQuestion.value
-      const correctVal = q.type === 'match' ? q.correct_zh : q.word
+      const correctVal = q.correct_zh || q.word
       if (opt === correctVal) return 'success'
       if (opt === reviewSession.answered.choice) return 'danger'
       return 'default'
@@ -2803,7 +2819,7 @@ const app = createApp({
     function reviewChoose(opt) {
       if (reviewSession.answered || reviewSubmitting.value) return
       const q = reviewQuestion.value
-      const correctVal = q.type === 'match' ? q.correct_zh : q.word
+      const correctVal = q.correct_zh || q.word
       const correct = opt === correctVal
       _applyAnswer(correct, opt)
     }

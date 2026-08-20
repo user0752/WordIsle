@@ -803,9 +803,11 @@ async def review_due(override_limit: bool = False):
         items = []
         for r in due_rows[:remaining]:
             panel, gen_id = _load_review_material(conn, r["word"], r["generation_id"])
+            colloc = ((panel or {}).get("collocation") or {})
             items.append({
                 "word": r["word"],
                 "meaning_zh": r["meaning_zh"] or "",
+                "phrase_zh": (colloc.get("phrase_zh") or "").strip(),
                 "box": r["box"],
                 "next_review_at": r["next_review_at"],
                 "lapses": r["lapses"],
@@ -939,9 +941,7 @@ async def review_quiz(count: int = 10, types: str = "image_recall,match,cloze"):
         pool = (due_rows + other_rows)[:n]
         if not pool:
             return {"questions": [], "total_words": 0}
-        # 干扰项池（随机化）：词库全量词 + 词库非空中文释义
-        word_pool = [r["word"] for r in conn.execute(
-            "SELECT word FROM words ORDER BY RANDOM() LIMIT 200").fetchall()]
+        # 干扰项池（随机化）：词库非空中文释义（看图选义 / 中英匹配的选项）
         zh_pool = [r["meaning_zh"] for r in conn.execute(
             "SELECT meaning_zh FROM words WHERE meaning_zh != '' ORDER BY RANDOM() LIMIT 200"
         ).fetchall()]
@@ -954,8 +954,9 @@ async def review_quiz(count: int = 10, types: str = "image_recall,match,cloze"):
             scene = ((panel or {}).get("scene_sentence") or {})
             phrase_zh = (colloc.get("phrase_zh") or "").strip()
             qtype = allowed_types[i % len(allowed_types)]
-            # 素材降级链
-            if qtype == "image_recall" and not ((panel or {}).get("image_url") or "").strip():
+            # 素材降级链（看图选义需"图 + 中文义"；无图或无中文退化为纯词题 match）
+            if qtype == "image_recall" and (not ((panel or {}).get("image_url") or "").strip()
+                                            or not (phrase_zh or meaning)):
                 qtype = "match"
             if qtype == "match" and not (phrase_zh or meaning):
                 qtype = "cloze"
@@ -973,27 +974,18 @@ async def review_quiz(count: int = 10, types: str = "image_recall,match,cloze"):
                     "image_url": (panel or {}).get("image_url") or None,
                 })
                 continue
-            if qtype == "image_recall":
-                questions.append({
-                    "type": "image_recall", "word": word, "box": r["box"],
-                    "image_url": (panel or {}).get("image_url"),
-                    "options": _pick_options(word_pool, word, 3, exclude=word),
-                    "sentence_en": (scene.get("en") or "").strip(),
-                    "sentence_zh": (scene.get("zh") or "").strip(),
-                    "phrase_en": (colloc.get("phrase_en") or "").strip(),
-                    "phrase_zh": phrase_zh, "meaning_zh": meaning,
-                })
-            else:  # match：给中文词伙/释义，选对应用法归属（正确项优先卡片词伙，词库释义兜底）
+            if qtype in ("image_recall", "match"):
+                # 看图选义 / 中英匹配：题干词或图，选正确中文义（优先卡片词伙，词库释义兜底）
                 correct_zh = phrase_zh or meaning
                 questions.append({
-                    "type": "match", "word": word, "box": r["box"],
-                    "phrase_en": (colloc.get("phrase_en") or "").strip(),
+                    "type": qtype, "word": word, "box": r["box"],
+                    "image_url": (panel or {}).get("image_url") or None,
                     "correct_zh": correct_zh,
                     "options": _pick_options(zh_pool, correct_zh, 3),
                     "sentence_en": (scene.get("en") or "").strip(),
                     "sentence_zh": (scene.get("zh") or "").strip(),
-                    "meaning_zh": meaning,
-                    "image_url": (panel or {}).get("image_url") or None,
+                    "phrase_en": (colloc.get("phrase_en") or "").strip(),
+                    "phrase_zh": phrase_zh, "meaning_zh": meaning,
                 })
         conn.commit()  # 素材反查修复落库
         return {"questions": questions, "total_words": len(pool)}
