@@ -468,13 +468,18 @@ async def _run_single_compile(p: dict):
         json.dumps([], ensure_ascii=False),
         "", "single", "",
     ))
-    conn.execute("INSERT OR IGNORE INTO words(word) VALUES(?)", (word_clean,))
+    meaning_zh = (result.get("meaning_zh") or "").strip()
+    conn.execute("""
+        INSERT INTO words(word, meaning_zh) VALUES(?, ?)
+        ON CONFLICT(word) DO UPDATE SET meaning_zh = CASE WHEN COALESCE(words.meaning_zh, '') = '' THEN excluded.meaning_zh ELSE words.meaning_zh END
+    """, (word_clean, meaning_zh))
     conn.commit()
     conn.close()
 
     resp = {
         "id": gen_id, "generation_type": "single", "status": "success",
-        "word": word_clean, "collocation": result.get("collocation", {}),
+        "word": word_clean, "meaning_zh": meaning_zh,
+        "collocation": result.get("collocation", {}),
         "scene_sentence": scene_sentence, "image_prompt": result.get("image_prompt", ""),
         "hook_type": result.get("hook_type", ""), "image_url": image_url,
         "image_error": image_error, "derivatives": result.get("derivatives", []),

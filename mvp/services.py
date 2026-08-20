@@ -451,6 +451,7 @@ Given one English target word, output:
 ## JSON STRUCTURE
 {
   "word": "tender",
+  "meaning_zh": "投标；投标书；温柔的",
   "hook_type": "双义碰撞",
   "collocation": {
     "phrase_en": "submit a tender",

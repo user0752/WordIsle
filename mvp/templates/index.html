@@ -442,8 +442,9 @@
           <el-card v-if="singleResult" shadow="never">
             <template #header>
               <div class="flex-between">
-                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？' : singleResult.word }}</span>
-                  <el-tag v-if="singleResult.hook_type" size="small" class="ml-sm" type="warning">{{ singleResult.hook_type }}</el-tag>
+                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？？？' : singleResult.word }}</span>
+                  <span v-if="singleResult.meaning_zh && !selfTestMasked" class="word-meaning">{{ singleResult.meaning_zh }}</span>
+                  <el-tag v-if="singleResult.hook_type && !selfTestMasked" size="small" class="ml-sm" type="warning">{{ singleResult.hook_type }}</el-tag>
                 </span>
                 <div class="flex gap-sm">
                   <el-button v-if="singleResult.has_audio" link type="primary" :icon="VideoPlay" @click="playSingleAudio">播放朗读</el-button>
@@ -1567,8 +1568,9 @@
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？' : resultSingleCard.word }}</span>
-                      <el-tag v-if="resultSingleCard.hook_type" size="small" class="ml-sm" type="warning">{{ resultSingleCard.hook_type }}</el-tag>
+                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？？？' : resultSingleCard.word }}</span>
+                      <span v-if="resultSingleCard.meaning_zh && !selfTestMasked" class="word-meaning">{{ resultSingleCard.meaning_zh }}</span>
+                      <el-tag v-if="resultSingleCard.hook_type && !selfTestMasked" size="small" class="ml-sm" type="warning">{{ resultSingleCard.hook_type }}</el-tag>
                     </span>
                     <div class="flex gap-sm">
                       <el-tag size="small" type="info">{{ resultData.image_model }}</el-tag>
@@ -2624,6 +2626,7 @@ const app = createApp({
       const p = (d.panels || [])[0] || {}
       return {
         word: (d.words || [])[0] || '',
+        meaning_zh: d.meaning_zh || '',
         hook_type: p.hook_type || '',
         collocation: p.collocation || null,
         scene_sentence: p.scene_sentence || null,
