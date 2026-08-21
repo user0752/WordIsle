@@ -237,29 +237,36 @@
               <el-table-column type="selection" width="50"></el-table-column>
               <el-table-column label="单词" min-width="140">
                 <template #default="{row}">
-                  <span style="font-weight:600">{{ row.word }}</span>
+                  <span
+                    style="font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px"
+                    :style="{ color: row._playing ? 'var(--el-color-primary)' : '' }"
+                    title="点击播放发音"
+                    @click="playWordAudio(row)"
+                  >
+                    <el-icon v-if="row._audioLoading" class="is-loading" style="font-size:13px"><Loading /></el-icon>
+                    {{ row.word }}
+                  </span>
                 </template>
               </el-table-column>
-              <el-table-column label="音标" width="180">
+              <el-table-column label="音标" width="210">
                 <template #default="{row}">
                   <div style="display:flex;align-items:center;gap:6px">
                     <span style="color:#666;font-size:13px">{{ row.phonetic || '—' }}</span>
                     <el-button
-                      v-if="row.phonetic"
-                      link
-                      size="small"
-                      :icon="row._playing ? 'VideoPause' : 'VideoPlay'"
-                      @click="speakWord(row)"
-                      :loading="row._loadingPhonetic"
-                    ></el-button>
-                    <el-button
-                      v-else
+                      v-if="!row.phonetic"
                       link
                       size="small"
                       type="primary"
                       @click="fetchPhonetic(row)"
                       :loading="row._loadingPhonetic"
-                    >获取</el-button>
+                    >音标</el-button>
+                    <el-button
+                      link
+                      size="small"
+                      :icon="row._playing ? 'VideoPause' : 'VideoPlay'"
+                      @click="playWordAudio(row)"
+                      :disabled="row._audioLoading"
+                    ></el-button>
                   </div>
                 </template>
               </el-table-column>
@@ -2230,6 +2237,37 @@
               提示：全部调用点默认与兜底降级模型统一为百炼 · Qwen3.7 Flash（qwen3.7-flash-2026-07-15），可在此处切换其他模型；选定模型失败（如限流）时自动降级到默认模型。
             </p>
           </el-card>
+
+          <!-- 单词发音 TTS 模型选择 -->
+          <el-card shadow="never" class="mt-md">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><Microphone /></el-icon>
+                <span style="font-weight:600">单词发音 · TTS 模型</span>
+                <span class="text-secondary" style="font-size:12px">单词库发音/添加·导入时预生成、以及无缓存时点击即播均使用此模型</span>
+              </div>
+            </template>
+            <div class="flex align-center gap-sm">
+              <el-select v-model="ttsWordModel" placeholder="选择单词发音语音合成模型" style="width:300px" @change="onTtsWordModelChange">
+                <el-option-group v-for="g in ttsWordModels" :key="g.group" :label="g.group">
+                  <el-option v-for="m in g.items" :key="m.value" :label="m.value" :value="m.value">
+                    <span>{{ m.value }}</span>
+                  </el-option>
+                </el-option-group>
+              </el-select>
+              <el-select v-model="ttsWordVoice" placeholder="选择音色" style="width:220px" clearable>
+                <el-option label="模型默认音色" value=""></el-option>
+                <el-option v-for="v in ttsWordVoiceOptions" :key="v" :label="v" :value="v"></el-option>
+              </el-select>
+            </div>
+            <div class="flex gap-sm mt-md">
+              <el-button type="primary" :loading="ttsSaving" @click="saveTtsSettings">保存设置</el-button>
+              <el-button @click="loadTtsSettings">重置为当前值</el-button>
+            </div>
+            <p class="text-secondary" style="font-size:12px;margin-top:10px">
+              提示：默认使用 {{ ttsWordDefault }}。切换模型后，未缓存的单词会按新模型生成；已缓存的音频按各自生成时的模型/音色继续播放。
+            </p>
+          </el-card>
         </div>
       </main>
     </div>
@@ -2599,6 +2637,45 @@ const app = createApp({
       } catch(e) {
         ElementPlus.ElMessage.error('保存失败：' + e.message)
       } finally { llmSaving.value = false }
+    }
+
+    // 设置页：单词发音 TTS 模型
+    const ttsWordModel = ref('cosyvoice-v3-flash')   // 当前选择（来自后端）
+    const ttsWordDefault = ref('cosyvoice-v3-flash') // 后端默认值
+    const ttsWordModels = ref([])                     // 分组模型清单 [{group, items:[{value,default_voice,voices}]}]
+    const ttsWordVoice = ref('')                      // 当前音色（空=模型默认）
+    const ttsSaving = ref(false)
+    const ttsWordVoiceOptions = computed(() => {
+      for (const g of ttsWordModels.value) {
+        const m = g.items.find(m => m.value === ttsWordModel.value)
+        if (m) return m.voices || []
+      }
+      return []
+    })
+    function onTtsWordModelChange() {
+      // 切换模型后，若已选音色不属于新模型则回退到默认音色
+      if (ttsWordVoice.value && !ttsWordVoiceOptions.value.includes(ttsWordVoice.value)) {
+        ttsWordVoice.value = ''
+      }
+    }
+    async function loadTtsSettings() {
+      try {
+        const res = await api('/api/settings/tts')
+        ttsWordModels.value = res.models || []
+        ttsWordModel.value = res.current || res.default || 'cosyvoice-v3-flash'
+        ttsWordDefault.value = res.default || 'cosyvoice-v3-flash'
+        ttsWordVoice.value = res.current_voice || ''
+      } catch(e) { /* silent */ }
+    }
+    async function saveTtsSettings() {
+      ttsSaving.value = true
+      try {
+        const res = await api('/api/settings/tts', { method:'POST', body: JSON.stringify({ tts_model: ttsWordModel.value, tts_voice: ttsWordVoice.value }) })
+        ElementPlus.ElMessage.success(`已保存单词发音 TTS：模型 ${res.tts_model} / 音色 ${res.tts_voice}`)
+        await loadTtsSettings()
+      } catch(e) {
+        ElementPlus.ElMessage.error('保存失败：' + e.message)
+      } finally { ttsSaving.value = false }
     }
 
     // 单词库
@@ -3083,21 +3160,31 @@ const app = createApp({
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
       finally { row._loadingPhonetic = false }
     }
-    function speakWord(row) {
-      if (!('speechSynthesis' in window)) return
+    // 单词发音：每次点击向后端查询当前设置音色下的音频（命中缓存毫秒返回；未缓存则按当前音色生成），
+    // 避免本地复用旧音色缓存，保证切换音色后按新音色播放。
+    const _wordAudio = new Audio()
+    async function playWordAudio(row) {
       if (row._playing) {
-        window.speechSynthesis.cancel()
+        _wordAudio.pause()
         row._playing = false
         return
       }
-      window.speechSynthesis.cancel()
-      const u = new SpeechSynthesisUtterance(row.word)
-      u.lang = 'en-US'
-      u.rate = 0.85
-      u.onend = () => { row._playing = false }
-      u.onerror = () => { row._playing = false }
-      row._playing = true
-      window.speechSynthesis.speak(u)
+      if (row._audioLoading) return
+      row._audioLoading = true
+      try {
+        const res = await api(`/api/words/${row.id}/audio`, {method:'POST'})
+        const url = res.url
+        if (!url) return
+        _wordAudio.src = url
+        _wordAudio.onended = () => { row._playing = false }
+        _wordAudio.onerror = () => { row._playing = false }
+        row._playing = true
+        _wordAudio.play().catch(() => { row._playing = false })
+      } catch(e) {
+        ElementPlus.ElMessage.error(e.message)
+      } finally {
+        row._audioLoading = false
+      }
     }
     async function deleteWord(row) {
       try {
@@ -3915,7 +4002,7 @@ const app = createApp({
       if (idx==='morphemes') { loadMorphemeRoots(); loadMorphemeWords(); loadMorphemeCandidates() }
       if (idx==='scenes') { sceneView.value='list'; loadScenes() }
       if (idx==='usage') loadUsage()
-      if (idx==='settings') loadLlmSettings()
+      if (idx==='settings') { loadLlmSettings(); loadTtsSettings() }
     }
 
     // ====== 初始化 ======
@@ -3982,6 +4069,7 @@ const app = createApp({
       View: ElIcons.View,
       CircleCheck: ElIcons.CircleCheck,
       CircleClose: ElIcons.CircleClose,
+      Microphone: ElIcons.Microphone,
     }
 
     return {
@@ -4024,7 +4112,7 @@ const app = createApp({
       sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,
       formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
-      fetchPhonetic, speakWord,
+      fetchPhonetic, playWordAudio,
       handleParse, doImport, triggerFileInput, handleFileChange,
       handleCompile, handleSingleCompile, regenerateSingleAudio, playSingleAudio, loadHistory, viewResult, deleteHistoryItem, onHistoryFilterChange, loadRecentItems, generationTypeLabel, generationTypeTag,
       searchPolysemy, loadPolysemyHot, loadCandidates, runAutoDetect, deletePolysemy,
@@ -4035,6 +4123,7 @@ const app = createApp({
       loadScenes, openSceneDetail, runSceneDetect, adoptScene,
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,
       llmModels, llmRouteList, llmRouteForm, llmSaving, loadLlmSettings, saveLlmSettings,
+      ttsWordModel, ttsWordDefault, ttsWordModels, ttsWordVoice, ttsWordVoiceOptions, ttsSaving, loadTtsSettings, saveTtsSettings, onTtsWordModelChange,
       ...Icons,
     }
   }

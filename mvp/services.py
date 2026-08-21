@@ -992,16 +992,76 @@ async def _call_llm_with_fallback(
 # 百炼 TTS 语音合成
 # ========================================================================
 
+# Qwen-Audio-TTS 系列走新版统一 HTTP 语音合成通道（SpeechSynthesizer 端点），
+# CosyVoice 系列走 dashscope HttpSpeechSynthesizer 客户端。两者 HTTP REST，规避 WebSocket 网络问题。
+QWEN_TTS_HTTP_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+QWEN_TTS_MODELS = {"qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash"}
+
+
+async def _call_qwen_audio_http(text: str, voice: str, model: str, speed: float, feature: str) -> bytes:
+    """调用百炼非实时 HTTP TTS（SpeechSynthesizer 端点）合成 Qwen-Audio 语音，返回 mp3 二进制。
+    成功响应为 JSON 结构，音频通过 output.audio.url 下载。"""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            QWEN_TTS_HTTP_ENDPOINT,
+            headers={"Authorization": f"Bearer {TTS_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "input": {
+                    "text": text,
+                    "voice": voice,
+                    "rate": float(speed),
+                    "format": "mp3",
+                },
+            },
+        )
+        if resp.status_code != 200:
+            try:
+                detail = resp.json().get("message") or resp.json().get("error") or resp.text
+            except Exception:
+                detail = resp.text[:300]
+            raise HTTPException(500, f"Qwen-Audio TTS 合成失败 ({model}/{voice}): {detail}")
+
+        try:
+            data = resp.json()
+            audio_url = data["output"]["audio"]["url"]
+        except Exception:
+            raise HTTPException(500, f"Qwen-Audio TTS 返回异常: {resp.text[:300]}")
+        if not audio_url:
+            raise HTTPException(500, "Qwen-Audio TTS 未返回音频地址")
+
+        audio_resp = await client.get(audio_url)
+        audio_resp.raise_for_status()
+        return audio_resp.content
+
+
 async def call_tts(text: str, voice=None, speed=1.0, model=None, feature: str = "音频合成"):
-    """调用百炼 HTTP TTS API 合成语音，返回 mp3 二进制。feature 用于日志标注调用来源功能。"""
+    """调用百炼 HTTP TTS API 合成语音，返回 mp3 二进制。feature 用于日志标注调用来源功能。
+    按模型分派：qwen-audio 系列走 SpeechSynthesizer HTTP 端点，其余（CosyVoice）走 dashscope
+    HttpSpeechSynthesizer 客户端。"""
     if not TTS_API_KEY:
         raise HTTPException(500, "请先设置 TTS_API_KEY 环境变量")
 
-    dashscope.api_key = TTS_API_KEY
     voice_name = voice or TTS_VOICE
     model_name = model or TTS_MODEL
     logger.info("TTS 合成调用 [%s] model=%s voice=%s 字数=%s", feature, model_name, voice_name, len(text))
+    t0 = time.monotonic()
 
+    # Qwen-Audio 系列：走新版统一 HTTP SpeechSynthesizer 端点
+    if model_name in QWEN_TTS_MODELS:
+        try:
+            audio_bytes = await _call_qwen_audio_http(text, voice_name, model_name, speed, feature)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Qwen-Audio TTS 合成请求失败 [%s] model=%s error=%r", feature, model_name, e)
+            raise HTTPException(500, f"Qwen-Audio TTS 合成请求失败 ({model_name}/{voice_name}): {e}")
+        record_model_usage("tts", model_name, f"{feature} · 音色 {voice_name}", _estimate_tokens(text))
+        logger.info("TTS 合成成功 [%s] model=%s voice=%s 耗时=%.1fs", feature, model_name, voice_name, time.monotonic() - t0)
+        return audio_bytes
+
+    # CosyVoice 系列：走 dashscope HttpSpeechSynthesizer 客户端
+    dashscope.api_key = TTS_API_KEY
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
@@ -1023,7 +1083,6 @@ async def call_tts(text: str, voice=None, speed=1.0, model=None, feature: str = 
         msg = (result.message or "返回空结果") if result else "返回空结果"
         raise HTTPException(500, f"TTS 合成失败: {msg}")
 
-    t0 = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             audio_resp = await client.get(result.audio_url)

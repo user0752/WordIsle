@@ -41,12 +41,21 @@ TTS_API_KEY  = os.getenv("TTS_API_KEY", "")
 TTS_VOICE    = os.getenv("TTS_VOICE", "loongandy_v3")
 TTS_MODEL    = os.getenv("TTS_MODEL", "cosyvoice-v3-flash")
 
-# 模型 → 默认推荐音色。模型与音色必须同系列，避免不兼容（Qwen 系列用 loongmary/loongeva/loongjohn，
+# 模型 → 默认推荐音色。模型与音色必须同系列，避免不兼容（Qwen-Audio-TTS 系列用 longanhuan_*，
 # CosyVoice 系列用 loongandy/loongbeth/loongemily/loongeric）。切换模型时音色应随之切换。
 TTS_DEFAULT_VOICE = {
-    "qwen-audio-3.0-tts-plus": "loongmary",
-    "cosyvoice-v3-plus":       "loongandy_v3",
+    "qwen-audio-3.0-tts-plus": "longanhuan_v3.6",
     "cosyvoice-v3-flash":      "loongandy_v3",
+}
+
+# 可选 TTS 模型清单（与前端 constants.js 的 TTS_MODELS 对齐，用于设置页校验/单词发音）。
+# 仅收录经实测可用的模型：cosyvoice-v3-plus 当前 TTS 通道下不可用（engine 418），故未收录。
+TTS_MODEL_VALUES = ["qwen-audio-3.0-tts-plus", "cosyvoice-v3-flash"]
+
+# 各 TTS 模型可选音色清单（单词发音设置页"音色"下拉，与模型同系列，均为实测可用）
+TTS_MODEL_VOICES = {
+    "qwen-audio-3.0-tts-plus": ["longanhuan_v3.6"],
+    "cosyvoice-v3-flash":      ["loongandy_v3", "loongbeth_v3", "loongemily_v3", "loongeric_v3"],
 }
 
 

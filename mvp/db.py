@@ -89,6 +89,7 @@ def init_db():
             pos TEXT DEFAULT '',
             meaning_zh TEXT DEFAULT '',
             phonetic TEXT DEFAULT '',
+            audio_url TEXT DEFAULT '',
             frequency_level TEXT DEFAULT '',
             frequency_source TEXT DEFAULT 'llm',
             created_at TEXT DEFAULT (datetime('now','localtime'))
@@ -326,6 +327,11 @@ def init_db():
     # 迁移：为 words 添加 phonetic 列（音标）
     try:
         conn.execute("ALTER TABLE words ADD COLUMN phonetic TEXT DEFAULT ''")
+    except Exception:
+        pass
+    # 迁移：为 words 添加 audio_url 列（单词发音缓存）
+    try:
+        conn.execute("ALTER TABLE words ADD COLUMN audio_url TEXT DEFAULT ''")
     except Exception:
         pass
     # 迁移：已入库的熟词僻意种子频率一次性并入 words（仅在 words 频率为空时补齐）

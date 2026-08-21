@@ -1095,6 +1095,48 @@ async def save_llm_settings(req: Request):
     return {"ok": True, "saved": saved, "errors": errors}
 
 
+@router.get("/api/settings/tts")
+async def get_tts_settings():
+    """返回单词发音 TTS 模型设置：可用模型/音色清单与当前选择。"""
+    from db import get_setting
+    current = get_setting("tts_word_model", "") or TTS_MODEL
+    if current not in TTS_MODEL_VALUES:
+        current = TTS_MODEL
+    current_voice = get_setting("tts_word_voice", "") or default_tts_voice(current)
+    # 供前端下拉展示（含分组音色）
+    group_map = {}
+    for value in TTS_MODEL_VALUES:
+        if value.startswith("qwen-audio"):
+            g = "Qwen-Audio-TTS 系列"
+        else:
+            g = "CosyVoice 系列"
+        voices = TTS_MODEL_VOICES.get(value, [])
+        default_voice = default_tts_voice(value)
+        group_map.setdefault(g, []).append({
+            "value": value,
+            "default_voice": default_voice,
+            "voices": [v for v in voices if v != default_voice],
+        })
+    models = [{"group": g, "items": items} for g, items in group_map.items()]
+    return {"models": models, "current": current, "current_voice": current_voice, "default": TTS_MODEL}
+
+
+@router.post("/api/settings/tts")
+async def save_tts_settings(req: Request):
+    """保存单词发音 TTS 模型与音色（body: {tts_model, tts_voice}）。tts_voice 留空表示使用默认音色。"""
+    from db import set_setting
+    body = await _safe_json(req)
+    value = (body.get("tts_model") or "").strip()
+    if value not in TTS_MODEL_VALUES:
+        raise HTTPException(400, f"不支持的 TTS 模型: {value}")
+    voice = (body.get("tts_voice") or "").strip()
+    if voice and voice not in (TTS_MODEL_VOICES.get(value, []) + [default_tts_voice(value)]):
+        raise HTTPException(400, f"模型 {value} 不支持音色: {voice}")
+    set_setting("tts_word_model", value)
+    set_setting("tts_word_voice", voice)
+    return {"ok": True, "tts_model": value, "tts_voice": voice or default_tts_voice(value)}
+
+
 def _parse_video_body(body: dict) -> dict:
     """解析并校验视频编译请求参数（同步/流式共用）。"""
     raw_words   = _coerce_str(body.get("words", ""))
@@ -1414,6 +1456,8 @@ async def _run_single_add_stream(word: str, pos: str, meaning_zh: str, frequency
         inherit_link_frequency(conn, word)
         conn.commit()
         yield ("step", {"step": "write", "label": f"写入单词 {word}", "status": "ok"})
+        # 预生成发音缓存（无 TTS 配置或失败时不阻断存词）
+        await _ensure_word_audio(word)
         row = conn.execute("SELECT * FROM words WHERE id=?", (wid,)).fetchone()
     except sqlite3.IntegrityError:
         yield ("step", {"step": "write", "label": f"写入单词 {word}", "status": "failed", "message": f"单词 '{word}' 已存在"})
@@ -1496,6 +1540,67 @@ async def delete_word(word_id: int):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+async def _ensure_word_audio(word: str) -> str:
+    """生成单个单词的 TTS 发音并缓存到 AUDIOS_DIR，返回 /audios/... URL。
+    已有缓存直接返回；无 TTS 配置或生成失败返回空串（不抛出，不阻断调用方）。
+    合成模型取自设置页「单词发音 TTS 模型」（tts_word_model），未配置时回退默认 TTS_MODEL。"""
+    word = str(word or "").strip().lower()
+    if not word:
+        return ""
+    from db import get_setting
+    model = get_setting("tts_word_model", "") or TTS_MODEL
+    voice = get_setting("tts_word_voice", "") or default_tts_voice(model)
+    file_name = f"word_{word}_{voice}.mp3"
+    url = f"/audios/{file_name}"
+    # 已有缓存文件且数据库已记录则直接返回
+    if (AUDIOS_DIR / file_name).exists():
+        return url
+    if not TTS_API_KEY:
+        return ""
+    try:
+        audio_bytes = await call_tts(word, voice=voice, speed=1.0, model=model, feature="单词发音")
+    except Exception as e:
+        logger.warning("单词发音合成失败 [%s] error=%r", word, e)
+        return ""
+    consume_daily_quota("tts")
+    (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
+    record_model_usage("tts", model, detail=f"单词发音 {word}", tokens=len(word))
+    # 回填 words.audio_url（即时提交，避免写锁悬置）
+    try:
+        conn = get_db()
+        conn.execute("UPDATE words SET audio_url=? WHERE word=?", (url, word))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return url
+
+
+@router.post("/api/words/{word_id}/audio")
+async def fetch_word_audio(word_id: int):
+    """获取当前设置音色下的单词发音：命中该音色缓存直接返回，否则按当前音色生成并缓存。
+    一个单词按音色隔离多个文件（word_{word}_{voice}.mp3），切换音色后按新音色重新判定，不复用旧音色。"""
+    from db import get_setting
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM words WHERE id=?", (word_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "单词不存在")
+        word = row["word"]
+        # 按当前设置的音色解析目标文件名，命中对应音色缓存才直接返回；旧音色缓存不复用
+        model = get_setting("tts_word_model", "") or TTS_MODEL
+        voice = get_setting("tts_word_voice", "") or default_tts_voice(model)
+        file_name = f"word_{word}_{voice}.mp3"
+        if (AUDIOS_DIR / file_name).exists():
+            return {"url": f"/audios/{file_name}", "cached": True}
+        url = await _ensure_word_audio(word)
+        if not url:
+            raise HTTPException(500, f"发音生成失败：请检查 TTS_API_KEY 设置")
+        return {"url": url, "cached": False}
+    finally:
+        conn.close()
 
 
 @router.post("/api/words/batch-delete")
@@ -1617,6 +1722,9 @@ async def import_words(req: Request):
                             )
                             enriched += 1
             conn.commit()
+            # 预生成新词发音缓存（逐词串行，失败跳过不阻断导入）
+            for w in new_words:
+                await _ensure_word_audio(w)
     finally:
         conn.close()
     return {"imported": imported, "duplicated": duplicated, "total_input": len(word_list), "enriched": enriched}
@@ -1680,6 +1788,14 @@ async def _run_import_stream(word_list):
                 conn.commit()
                 enriched += ok
                 yield ("step", {"step": step_key, "label": step_label, "status": "ok", "message": f"补全 {ok} 个"})
+        # 预生成新词发音缓存（逐词串行，无 TTS 配置或失败跳过不阻断导入）
+        if new_words:
+            yield ("step", {"step": "tts", "model": TTS_MODEL, "label": f"生成 {len(new_words)} 个单词发音", "status": "running"})
+            audio_ok = 0
+            for w in new_words:
+                if await _ensure_word_audio(w):
+                    audio_ok += 1
+            yield ("step", {"step": "tts", "model": TTS_MODEL, "label": "生成单词发音", "status": "ok", "message": f"成功 {audio_ok}/{len(new_words)} 个"})
     finally:
         conn.close()
 
