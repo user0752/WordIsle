@@ -79,7 +79,7 @@
           <!-- 回顾 -->
           <div class="menu-divider"><span>回顾</span></div>
           <el-menu-item index="review">
-            <el-icon><AlarmClock /></el-icon>
+            <el-icon><Timer /></el-icon>
             <span>记忆测试</span>
           </el-menu-item>
           <el-menu-item index="history">
@@ -1243,7 +1243,7 @@
                   @click="reviewStats.due_now > 0 && startReviewSession('due')"
                   @keyup.enter="reviewStats.due_now > 0 && startReviewSession('due')">
                   <span class="review-mode-index">01</span>
-                  <div class="review-mode-icon"><el-icon :size="30"><AlarmClock /></el-icon></div>
+                  <div class="review-mode-icon"><el-icon :size="30"><Timer /></el-icon></div>
                   <div class="review-mode-title">今日复习</div>
                   <div class="review-mode-subtitle">{{ reviewStats.due_now }} 张到期卡</div>
                   <div class="review-mode-desc">看图选义 · 到期卡按最老优先，答对升盒、答错回盒 1</div>
@@ -1262,7 +1262,7 @@
               </div>
             </template>
             <div v-else class="empty-state">
-              <el-icon><AlarmClock /></el-icon>
+              <el-icon><Timer /></el-icon>
               <p>复习队列还是空的</p>
               <p class="empty-sub">在「单点深耕」生成记忆卡片后遮词自测，点「没记住」的词会自动加入这里，按遗忘曲线安排复习。</p>
               <el-button type="primary" plain @click="currentPage='single'">去单点深耕</el-button>
