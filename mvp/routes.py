@@ -13,6 +13,7 @@ import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -1426,7 +1427,7 @@ async def _run_single_add_stream(word: str, pos: str, meaning_zh: str, frequency
 @router.patch("/api/words/{word_id}")
 async def update_word(word_id: int, req: Request):
     body = await _safe_json(req)
-    allowed = {"pos", "meaning_zh"}
+    allowed = {"pos", "meaning_zh", "phonetic"}
     updates = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
     if not updates:
         raise HTTPException(400, "无有效字段")
@@ -1440,6 +1441,52 @@ async def update_word(word_id: int, req: Request):
     if not row:
         raise HTTPException(404, "单词不存在")
     return dict(row)
+
+
+@router.post("/api/words/{word_id}/phonetic")
+async def fetch_phonetic(word_id: int):
+    """查询单词音标（调用免费词典 API），并存入数据库。"""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM words WHERE id=?", (word_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "单词不存在")
+        word = row["word"]
+        # 已有音标则直接返回
+        if row["phonetic"]:
+            return {"phonetic": row["phonetic"], "cached": True}
+
+        phonetic = ""
+        phonetic_error = ""
+        # 1) 先尝试免费词典 API
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data:
+                        phonetic = data[0].get("phonetic", "")
+                        if not phonetic:
+                            for p in data[0].get("phonetics", []):
+                                text = p.get("text", "")
+                                if text:
+                                    phonetic = text
+                                    break
+        except Exception as e:
+            phonetic_error = f"词典查询失败：{e}"
+
+        # 2) 词典 API 无音标时，用 LLM 补全
+        if not phonetic:
+            try:
+                phonetic = await call_word_phonetic(word)
+            except Exception as e:
+                phonetic_error = f"LLM 补全失败：{e}"
+
+        conn.execute("UPDATE words SET phonetic=? WHERE id=?", (phonetic, word_id))
+        conn.commit()
+        return {"phonetic": phonetic, "cached": False, "error": phonetic_error or None}
+    finally:
+        conn.close()
 
 
 @router.delete("/api/words/{word_id}")

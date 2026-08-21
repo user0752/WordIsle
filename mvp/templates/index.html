@@ -240,6 +240,29 @@
                   <span style="font-weight:600">{{ row.word }}</span>
                 </template>
               </el-table-column>
+              <el-table-column label="音标" width="180">
+                <template #default="{row}">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="color:#666;font-size:13px">{{ row.phonetic || '—' }}</span>
+                    <el-button
+                      v-if="row.phonetic"
+                      link
+                      size="small"
+                      :icon="row._playing ? 'VideoPause' : 'VideoPlay'"
+                      @click="speakWord(row)"
+                      :loading="row._loadingPhonetic"
+                    ></el-button>
+                    <el-button
+                      v-else
+                      link
+                      size="small"
+                      type="primary"
+                      @click="fetchPhonetic(row)"
+                      :loading="row._loadingPhonetic"
+                    >获取</el-button>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="词性" width="100">
                 <template #default="{row}">
                   <el-input v-model="row.pos" size="small" placeholder="词性" style="width:90px" @change="()=>updateWord(row,'pos',row.pos)"></el-input>
@@ -3051,6 +3074,31 @@ const app = createApp({
         await api(`/api/words/${row.id}`, {method:'PATCH', body:JSON.stringify({[field]:val})})
       } catch(e) { ElementPlus.ElMessage.error(e.message) }
     }
+    async function fetchPhonetic(row) {
+      row._loadingPhonetic = true
+      try {
+        const res = await api(`/api/words/${row.id}/phonetic`, {method:'POST'})
+        row.phonetic = res.phonetic || ''
+        if (!res.phonetic && res.error) ElementPlus.ElMessage.warning(res.error)
+      } catch(e) { ElementPlus.ElMessage.error(e.message) }
+      finally { row._loadingPhonetic = false }
+    }
+    function speakWord(row) {
+      if (!('speechSynthesis' in window)) return
+      if (row._playing) {
+        window.speechSynthesis.cancel()
+        row._playing = false
+        return
+      }
+      window.speechSynthesis.cancel()
+      const u = new SpeechSynthesisUtterance(row.word)
+      u.lang = 'en-US'
+      u.rate = 0.85
+      u.onend = () => { row._playing = false }
+      u.onerror = () => { row._playing = false }
+      row._playing = true
+      window.speechSynthesis.speak(u)
+    }
     async function deleteWord(row) {
       try {
         await ElementPlus.ElMessageBox.confirm(`确定删除单词 "${row.word}" 吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
@@ -3928,6 +3976,7 @@ const app = createApp({
       HomeFilled: ElIcons.HomeFilled,
       House: ElIcons.House,
       VideoPlay: ElIcons.VideoPlay,
+      VideoPause: ElIcons.VideoPause,
       List: ElIcons.List,
       Close: ElIcons.Close,
       View: ElIcons.View,
@@ -3975,6 +4024,7 @@ const app = createApp({
       sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,
       formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
+      fetchPhonetic, speakWord,
       handleParse, doImport, triggerFileInput, handleFileChange,
       handleCompile, handleSingleCompile, regenerateSingleAudio, playSingleAudio, loadHistory, viewResult, deleteHistoryItem, onHistoryFilterChange, loadRecentItems, generationTypeLabel, generationTypeTag,
       searchPolysemy, loadPolysemyHot, loadCandidates, runAutoDetect, deletePolysemy,

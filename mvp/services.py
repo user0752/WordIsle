@@ -38,6 +38,7 @@ __all__ = [
     "_get_image_model_config",
     "call_polysemy_detection",
     "call_word_enrichment",
+    "call_word_phonetic",
     "call_morpheme_detect",
     "call_morpheme_seed",
     "call_deepseek_scene_detect",
@@ -1736,6 +1737,55 @@ async def call_word_enrichment(words: list[str]) -> dict:
             "frequency_level": str(r.get("frequency_level", ""))[:16],
         })
     return {"results": cleaned, "skipped": False}
+
+
+# ========================================================================
+# 单词音标（LLM 补全）
+# ========================================================================
+
+PHONETIC_SYSTEM = """You are an English pronunciation assistant. Given an English word, return its standard American English IPA phonetic transcription.
+Rules:
+- Use standard IPA notation between slashes, e.g. /ˈsuːpərvaɪz/.
+- Use the main/primary pronunciation for the most common sense of the word.
+- Handle inflected forms (e.g. supervise → its base pronunciation is still /ˈsuːpərvaɪz/).
+Output ONLY a valid JSON object, no markdown, no extra text.
+
+JSON STRUCTURE:
+{"word": "supervise", "phonetic": "/ˈsuːpərvaɪz/"}"""
+
+
+async def call_word_phonetic(word: str) -> str:
+    """调用 LLM 补全单个单词音标（走该调用点模型，失败降级默认模型）。成功返回 IPA 字符串，失败返回空串。"""
+    word = str(word or "").strip().lower()
+    if not word:
+        return ""
+    if not get_route_llm("enrich").get("api_key"):
+        return ""
+    messages = [
+        {"role": "system", "content": PHONETIC_SYSTEM},
+        {"role": "user", "content": f"WORD: {word}"},
+    ]
+    data = await _call_llm_with_fallback(
+        messages=messages,
+        route_key="enrich",
+        temperature=0.0,
+        max_tokens=64,
+        response_format={"type": "json_object"},
+        timeout=20.0,
+        detail="单词音标",
+    )
+    if data is None:
+        return ""
+    content = (data["choices"][0]["message"]["content"] or "").strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    try:
+        parsed = json.loads(content)
+        ph = str(parsed.get("phonetic", "")).strip()
+        return ph
+    except (json.JSONDecodeError, AttributeError, ValueError):
+        return ""
 
 
 # ========================================================================
