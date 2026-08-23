@@ -447,9 +447,13 @@
                     </el-option>
                   </el-option-group>
                 </el-select>
-                <span v-if="singleForm.tts_model" class="ml-sm" style="font-size:12px;color:var(--text-tertiary)">
-                  <br>当前默认音色: {{ getModelDefaultVoice(singleForm.tts_model) }}
-                </span>
+                <el-select v-model="singleForm.tts_voice" placeholder="选择音色" style="width:280px;margin-left:12px" clearable>
+                  <el-option label="模型默认音色" value=""></el-option>
+                  <el-option v-for="v in getVoiceOptions(singleForm.tts_model)" :key="v.value" :label="v.value" :value="v.value">
+                    <span>{{ v.value }}</span>
+                    <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:12px">{{ v.note }}</span>
+                  </el-option>
+                </el-select>
               </el-form-item>
             </el-form>
           </el-card>
@@ -682,9 +686,13 @@
                     </el-option>
                   </el-option-group>
                 </el-select>
-                <span v-if="compileForm.tts_model" class="ml-sm" style="font-size:12px;color:var(--text-tertiary)">
-                  <br>当前默认音色: {{ getModelDefaultVoice(compileForm.tts_model) }}
-                </span>
+                <el-select v-model="compileForm.tts_voice" placeholder="选择音色" style="width:280px;margin-left:12px" clearable>
+                  <el-option label="模型默认音色" value=""></el-option>
+                  <el-option v-for="v in getVoiceOptions(compileForm.tts_model)" :key="v.value" :label="v.value" :value="v.value">
+                    <span>{{ v.value }}</span>
+                    <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:12px">{{ v.note }}</span>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <el-divider></el-divider>
               <el-form-item>
@@ -784,9 +792,13 @@
                     </el-option>
                   </el-option-group>
                 </el-select>
-                <span v-if="videoForm.tts_model" class="ml-sm" style="font-size:12px;color:var(--text-tertiary)">
-                  <br>默认音色: {{ getModelDefaultVoice(videoForm.tts_model) }}
-                </span>
+                <el-select v-model="videoForm.tts_voice" placeholder="选择音色" style="width:280px;margin-left:12px" clearable>
+                  <el-option label="模型默认音色" value=""></el-option>
+                  <el-option v-for="v in getVoiceOptions(videoForm.tts_model)" :key="v.value" :label="v.value" :value="v.value">
+                    <span>{{ v.value }}</span>
+                    <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:12px">{{ v.note }}</span>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="videoForm.theme_hint" placeholder="可选，如：投资失败 / 项目危机 / 采购谈判。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
@@ -1032,6 +1044,24 @@
                       </div>
                     </el-option>
                   </el-select>
+                  <el-switch v-model="sceneCompileForm.generate_audio" active-text="即时音频"></el-switch>
+                  <template v-if="sceneCompileForm.generate_audio">
+                    <el-select v-model="sceneCompileForm.tts_model" placeholder="TTS 模型" style="width:440px" size="small">
+                      <el-option-group v-for="(items, label) in groupedTtsModels" :key="label" :label="label">
+                        <el-option v-for="m in items" :key="m.value" :label="m.label" :value="m.value">
+                          <span style="font-size:13px">{{ m.label }}</span>
+                          <br><span style="font-size:11px;color:var(--text-tertiary)">推荐音色: {{ m.voices }}</span>
+                        </el-option>
+                      </el-option-group>
+                    </el-select>
+                    <el-select v-model="sceneCompileForm.tts_voice" placeholder="选择音色" style="width:280px" size="small" clearable>
+                      <el-option label="模型默认音色" value=""></el-option>
+                      <el-option v-for="v in getVoiceOptions(sceneCompileForm.tts_model)" :key="v.value" :label="v.value" :value="v.value">
+                        <span>{{ v.value }}</span>
+                        <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:12px">{{ v.note }}</span>
+                      </el-option>
+                    </el-select>
+                  </template>
                   <el-button type="primary" :icon="MagicStick" :loading="sceneCompileLoading" @click="compileScene">开始编译</el-button>
                 </div>
               </el-card>
@@ -1889,7 +1919,13 @@
                       </el-option>
                     </el-option-group>
                   </el-select>
-                  <el-input v-model="regenerateVoice" placeholder="音色名 (留空用默认)" style="width:180px" size="small"></el-input>
+                  <el-select v-model="regenerateVoice" placeholder="选择音色" style="width:220px" size="small" clearable filterable>
+                    <el-option label="模型默认音色" value=""></el-option>
+                    <el-option v-for="v in getVoiceOptions(regenerateTtsModel)" :key="v.value" :label="v.value" :value="v.value">
+                      <span>{{ v.value }}</span>
+                      <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:11px">{{ v.note }}</span>
+                    </el-option>
+                  </el-select>
                   <div style="display:flex;align-items:center;gap:6px">
                     <span style="font-size:12px;color:var(--text-tertiary);white-space:nowrap">语速</span>
                     <el-slider v-model="regenerateSpeed" :min="0.5" :max="2.0" :step="0.1" style="width:100px" size="small"></el-slider>
@@ -2048,7 +2084,13 @@
                     </el-option>
                   </el-option-group>
                 </el-select>
-                <el-input v-model="regenerateVoice" placeholder="音色名 (留空用默认)" style="width:180px" size="small"></el-input>
+                <el-select v-model="regenerateVoice" placeholder="选择音色" style="width:220px" size="small" clearable filterable>
+                    <el-option label="模型默认音色" value=""></el-option>
+                    <el-option v-for="v in getVoiceOptions(regenerateTtsModel)" :key="v.value" :label="v.value" :value="v.value">
+                      <span>{{ v.value }}</span>
+                      <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:11px">{{ v.note }}</span>
+                    </el-option>
+                  </el-select>
                 <div style="display:flex;align-items:center;gap:6px">
                   <span style="font-size:12px;color:var(--text-tertiary);white-space:nowrap">语速</span>
                   <el-slider v-model="regenerateSpeed" :min="0.5" :max="2.0" :step="0.1" style="width:100px" size="small"></el-slider>
@@ -2255,10 +2297,18 @@
                   </el-option>
                 </el-option-group>
               </el-select>
-              <el-select v-model="ttsWordVoice" placeholder="选择音色" style="width:220px" clearable>
-                <el-option label="模型默认音色" value=""></el-option>
-                <el-option v-for="v in ttsWordVoiceOptions" :key="v" :label="v" :value="v"></el-option>
+              <el-select v-model="ttsWordVoice" placeholder="选择音色" style="width:300px" clearable>
+                <el-option label="模型默认音色" value="">
+                  <span v-if="ttsWordDefaultNote" style="color:var(--text-tertiary);font-size:12px">{{ ttsWordDefaultNote }}</span>
+                </el-option>
+                <el-option v-for="v in ttsWordVoiceOptions" :key="v.value" :label="v.value" :value="v.value">
+                  <span>{{ v.value }}</span>
+                  <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:12px">{{ v.note }}</span>
+                </el-option>
               </el-select>
+              <span v-if="ttsWordVoiceOptions.length === 0" style="font-size:12px;color:var(--text-tertiary);margin-left:8px">
+                该系列仅有唯一音色，无需切换
+              </span>
             </div>
             <div class="flex gap-sm mt-md">
               <el-button type="primary" :loading="ttsSaving" @click="saveTtsSettings">保存设置</el-button>
@@ -2652,11 +2702,27 @@ const app = createApp({
       }
       return []
     })
+    const ttsWordDefaultNote = computed(() => {
+      for (const g of ttsWordModels.value) {
+        const m = g.items.find(m => m.value === ttsWordModel.value)
+        if (m) return m.default_note || ''
+      }
+      return ''
+    })
     function onTtsWordModelChange() {
       // 切换模型后，若已选音色不属于新模型则回退到默认音色
-      if (ttsWordVoice.value && !ttsWordVoiceOptions.value.includes(ttsWordVoice.value)) {
+      const validValues = ttsWordVoiceOptions.value.map(v => v.value || v)
+      if (ttsWordVoice.value && !validValues.includes(ttsWordVoice.value)) {
         ttsWordVoice.value = ''
       }
+    }
+    // 编译表单音色下拉的选项来源（基于后端返回的带备注音色数据）
+    function getVoiceOptions(modelValue) {
+      for (const g of ttsWordModels.value) {
+        const m = g.items.find(m => m.value === modelValue)
+        if (m) return m.voices || []
+      }
+      return []
     }
     async function loadTtsSettings() {
       try {
@@ -2705,13 +2771,13 @@ const app = createApp({
     const compileWords = ref([])
     const compileForm = reactive({
       style:'absurd', panel_count:4, theme_hint:'', image_model:'', art_style:'',
-      generate_audio:true, tts_model:'cosyvoice-v3-flash',
+      generate_audio:true, tts_model:'cosyvoice-v3-flash', tts_voice:'',
     })
     const compiling = ref(false)
 
     // 视频编译
     const videoForm = reactive({
-      video_model:'wan2.2-t2v-plus', duration:5, theme_hint:'', tts_model:'cosyvoice-v3-flash', art_style:'auto',
+      video_model:'wan2.2-t2v-plus', duration:5, theme_hint:'', tts_model:'cosyvoice-v3-flash', tts_voice:'', art_style:'auto',
     })
     const videoCompiling = ref(false)
     const videoResult = ref(null)
@@ -2722,7 +2788,7 @@ const app = createApp({
     // 单点深耕
     const singleForm = reactive({
       word:'', theme_hint:'', image_model:'',
-      art_style:'comic', generate_audio:true, tts_model:'cosyvoice-v3-flash',
+      art_style:'comic', generate_audio:true, tts_model:'cosyvoice-v3-flash', tts_voice:'',
     })
 
     // 单点深耕可配置画风
@@ -2866,6 +2932,7 @@ const app = createApp({
           }
           // 看图选义：题干=记忆钩子图，选对应中文义；屏幕上有图的词互为干扰项。
           // 无中文义的词无法出"选义"题，跳过（等补释义后或因 quiz 模式降级出题）。
+          const zhPool = res.zh_pool || []
           const eligible = items.filter(it => (it.phrase_zh || it.meaning_zh))
           if (!eligible.length) {
             ElementPlus.ElMessage.info('这批到期卡都还没有中文释义，暂时出不了题，可在自由测试里复习')
@@ -2877,7 +2944,7 @@ const app = createApp({
               type: 'image_recall', word: it.word, meaning_zh: it.meaning_zh || '',
               image_url: it.image_url || null, box: it.box,
               correct_zh: correct,
-              options: _dueZhOptions(eligible, it.word, correct),
+              options: _dueZhOptions(eligible, it.word, correct, zhPool),
             }
           })
         } else {
@@ -2896,15 +2963,20 @@ const app = createApp({
       } catch (e) { showModelError(e, '获取测试题失败') }
     }
 
-    function _dueZhOptions(items, word, correct) {
-      // 干扰项=同批其他到期词的中文义（词伙优先），不足则退化为直接回忆（无干扰项）
-      const distractors = items
+    function _dueZhOptions(items, word, correct, zhPool = []) {
+      // 干扰项优先取同批其他到期词的中文义（词伙优先，屏幕上有图的词互为干扰项）；
+      // 同批不足 3 个时，从整库随机中文义池补充，保证始终有干扰项。
+      let distractors = items
         .filter(it => it.word !== word)
         .map(it => it.phrase_zh || it.meaning_zh)
         .filter(Boolean)
-        .sort(() => Math.random() - 0.5)
-      const uniq = [...new Set(distractors.filter(d => d !== correct))].slice(0, 3)
-      return [...uniq, correct].sort(() => Math.random() - 0.5)
+      const seen = new Set(distractors)
+      for (const m of (zhPool || [])) {
+        if (seen.size >= 3) break
+        if (m && m !== correct && !seen.has(m)) seen.add(m)
+      }
+      distractors = [...seen].filter(d => d !== correct).sort(() => Math.random() - 0.5).slice(0, 3)
+      return [...distractors, correct].sort(() => Math.random() - 0.5)
     }
 
     function reviewOptionState(opt) {
@@ -3077,7 +3149,7 @@ const app = createApp({
     const sceneDetectResult = ref(null)
     const sceneSuggestions = ref([])
     const sceneAdoptingIdx = ref(-1)
-    const sceneCompileForm = reactive({ style: 'scene', panel_count: 4, theme_hint: '', image_model: '', art_style: '' })
+    const sceneCompileForm = reactive({ style: 'scene', panel_count: 4, theme_hint: '', image_model: '', art_style: '', generate_audio: true, tts_model: 'cosyvoice-v3-flash', tts_voice: '' })
     const sceneCompileLoading = ref(false)
 
     // ---- 表单偏好记忆（localStorage）：记住各编译表单的模型/风格/画面数等，刷新不丢 ----
@@ -3088,7 +3160,7 @@ const app = createApp({
           compile: { image_model: compileForm.image_model, art_style: compileForm.art_style, style: compileForm.style, panel_count: compileForm.panel_count, generate_audio: compileForm.generate_audio, tts_model: compileForm.tts_model },
           single: { image_model: singleForm.image_model, art_style: singleForm.art_style, generate_audio: singleForm.generate_audio, tts_model: singleForm.tts_model },
           video: { video_model: videoForm.video_model, duration: videoForm.duration, art_style: videoForm.art_style, tts_model: videoForm.tts_model },
-          scene: { image_model: sceneCompileForm.image_model, art_style: sceneCompileForm.art_style, style: sceneCompileForm.style, panel_count: sceneCompileForm.panel_count },
+          scene: { image_model: sceneCompileForm.image_model, art_style: sceneCompileForm.art_style, style: sceneCompileForm.style, panel_count: sceneCompileForm.panel_count, generate_audio: sceneCompileForm.generate_audio, tts_model: sceneCompileForm.tts_model },
         }
         localStorage.setItem(FORM_PREFS_KEY, JSON.stringify(data))
       } catch (_) { /* localStorage 不可用时静默忽略 */ }
@@ -3109,7 +3181,7 @@ const app = createApp({
         if (c) { _applyFormPref(compileForm, c, ['style','panel_count','generate_audio','tts_model']); if (imgOk(c.image_model)) compileForm.image_model = c.image_model; if (c.art_style !== undefined) compileForm.art_style = c.art_style }
         if (s) { _applyFormPref(singleForm, s, ['generate_audio','tts_model']); if (imgOk(s.image_model)) singleForm.image_model = s.image_model; if (s.art_style !== undefined) singleForm.art_style = s.art_style }
         if (v) { _applyFormPref(videoForm, v, ['duration','tts_model']); if (vidOk(v.video_model)) videoForm.video_model = v.video_model; if (v.art_style !== undefined) videoForm.art_style = v.art_style }
-        if (sc) { _applyFormPref(sceneCompileForm, sc, ['style','panel_count']); if (imgOk(sc.image_model)) sceneCompileForm.image_model = sc.image_model; if (sc.art_style !== undefined) sceneCompileForm.art_style = sc.art_style }
+        if (sc) { _applyFormPref(sceneCompileForm, sc, ['style','panel_count','generate_audio','tts_model']); if (imgOk(sc.image_model)) sceneCompileForm.image_model = sc.image_model; if (sc.art_style !== undefined) sceneCompileForm.art_style = sc.art_style }
       } catch (_) {}
     }
     const sceneEditVisible = ref(false)
@@ -3357,6 +3429,7 @@ const app = createApp({
           art_style: compileForm.art_style,
           generate_audio_immediately: compileForm.generate_audio,
           tts_model: compileForm.tts_model,
+          tts_voice: compileForm.tts_voice || '',
         })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success(`编译完成${res && res.image_success_count!=null ? '（图片 '+res.image_success_count+'/'+(res.panels||[]).length+'）' : ''}`)
         resultData.value = res
@@ -3390,6 +3463,7 @@ const app = createApp({
           video_model: videoForm.video_model,
           duration: videoForm.duration,
           tts_model: videoForm.tts_model,
+          voice: videoForm.tts_voice || '',
           art_style: videoForm.art_style,
         })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success('视频编译完成')
@@ -3418,6 +3492,7 @@ const app = createApp({
           art_style: singleForm.art_style,
           generate_audio_immediately: singleForm.generate_audio,
           tts_model: singleForm.tts_model,
+          tts_voice: singleForm.tts_voice || '',
         })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         if (res && res.image_error) {
           ElementPlus.ElMessage.warning(`深耕完成但图片失败：${res.image_error}`)
@@ -3977,6 +4052,9 @@ const app = createApp({
             theme_hint: sceneCompileForm.theme_hint,
             image_model: sceneCompileForm.image_model,
             art_style: sceneCompileForm.art_style,
+            generate_audio_immediately: sceneCompileForm.generate_audio,
+            tts_model: sceneCompileForm.tts_model,
+            tts_voice: sceneCompileForm.tts_voice || '',
           }),
         }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success((r && r.message) || '编译完成')
@@ -4016,6 +4094,7 @@ const app = createApp({
       loadHomeStats()
       loadUsage()
       migrateSelfTestToReview()
+      loadTtsSettings()  // 编译表单音色下拉依赖该数据，需在启动时一并加载
     })
 
     // 模型选项加载完成后，恢复表单偏好（严格校验模型仍存在，避免失效模型）
@@ -4123,7 +4202,7 @@ const app = createApp({
       loadScenes, openSceneDetail, runSceneDetect, adoptScene,
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,
       llmModels, llmRouteList, llmRouteForm, llmSaving, loadLlmSettings, saveLlmSettings,
-      ttsWordModel, ttsWordDefault, ttsWordModels, ttsWordVoice, ttsWordVoiceOptions, ttsSaving, loadTtsSettings, saveTtsSettings, onTtsWordModelChange,
+      ttsWordModel, ttsWordDefault, ttsWordModels, ttsWordVoice, ttsWordVoiceOptions, ttsSaving, loadTtsSettings, saveTtsSettings, onTtsWordModelChange, getVoiceOptions,
       ...Icons,
     }
   }

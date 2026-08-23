@@ -58,6 +58,15 @@ TTS_MODEL_VOICES = {
     "cosyvoice-v3-flash":      ["loongandy_v3", "loongbeth_v3", "loongemily_v3", "loongeric_v3"],
 }
 
+# 音色说明（前端设置页音色下拉展示用）
+TTS_VOICE_NOTES = {
+    "loongandy_v3":  "美式男 · 自然清晰",
+    "loongbeth_v3":  "美式女 · 温柔甜美",
+    "loongemily_v3": "英式女 · 优雅标准",
+    "loongeric_v3":  "英式男 · 沉稳专业",
+    "longanhuan_v3.6": "系统默认 · 支持多语种",
+}
+
 
 def default_tts_voice(model: str) -> str:
     """返回某 TTS 模型的默认音色；未知名则回退到全局默认音色。"""
@@ -290,8 +299,8 @@ BAILIAN_LLM_BASE_URL = os.getenv("BAILIAN_LLM_BASE_URL", "https://dashscope.aliy
 
 # ========================================================================
 # LLM 模型路由（设置页可切换每个调用点使用的模型）
-# 五个候选：百炼 Qwen3.7-Flash（默认/兜底）/ 百炼 Qwen3.7-Max Preview（限时5折）
-#          / 百炼 Qwen3.7-Max 2026-05-17 快照 / 百炼 DeepSeek-V4-Flash / DeepSeek 官方
+# 五个候选：百炼 Qwen3.7-Flash（默认/兜底）/ 百炼 Qwen3.7-Plus 2026-05-26 / 百炼 Qwen3.7-Plus
+#          / 百炼 DeepSeek-V4-Flash / DeepSeek 官方
 # value 为内部标识；base_url/api_key/model 为该模型实际调用参数。
 # ========================================================================
 
@@ -309,27 +318,27 @@ LLM_MODELS = [
         "recommended": True,
     },
     {
-        "value": "bailian-qwen3.7-max",
-        "label": "百炼 · Qwen3.7 Max Preview（限时5折）",
+        "value": "bailian-qwen3.7-plus-2026-05-26",
+        "label": "百炼 · Qwen3.7 Plus 2026-05-26",
         "channel": "bailian",
         "base_url": BAILIAN_LLM_BASE_URL,
         "api_key": IMAGE_API_KEY,
-        "model": "qwen3.7-max-preview",
-        "tier": "限时",
-        "price": "限时5折 输入 6 / 输出 18 元(每百万token)",
-        "note": "千问3.7 Max Preview 旗舰，限时 5 折；免费额度 100 万 token（8.24 到期）",
+        "model": "qwen3.7-plus-2026-05-26",
+        "tier": "旗舰",
+        "price": "输入 3 / 输出 8 元(每百万token)",
+        "note": "千问3.7 Plus 2026-05-26；免费额度即将到期，请留意",
         "recommended": False,
     },
     {
-        "value": "bailian-qwen3.7-max-2026-05-17",
-        "label": "百炼 · Qwen3.7 Max 0517（旗舰快照）",
+        "value": "bailian-qwen3.7-plus",
+        "label": "百炼 · Qwen3.7 Plus",
         "channel": "bailian",
         "base_url": BAILIAN_LLM_BASE_URL,
         "api_key": IMAGE_API_KEY,
-        "model": "qwen3.7-max-2026-05-17",
+        "model": "qwen3.7-plus",
         "tier": "旗舰",
-        "price": "输入 12 / 输出 36 元(每百万token)",
-        "note": "千问3.7 Max 2026-05-17 快照版（固定版本）；免费额度 100 万 token（8.24 到期）",
+        "price": "输入 3 / 输出 8 元(每百万token)",
+        "note": "千问3.7 Plus；免费额度截止到 9.1",
         "recommended": False,
     },
     {

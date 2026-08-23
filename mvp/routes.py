@@ -219,6 +219,7 @@ def _parse_generate_body(body: dict) -> dict:
     image_model  = _resolve_image_model(body.get("image_model"))
     generate_audio = _to_bool(body.get("generate_audio_immediately", False))
     tts_model    = body.get("tts_model", TTS_MODEL) if generate_audio else None
+    tts_voice    = (body.get("tts_voice") or "").strip() if generate_audio else ""
     style        = body.get("style", "absurd")  # 缺省 'absurd'；显式传 '' 为旧版微电影
     art_style    = body.get("art_style", "")    # 可选画风，空=不指定
 
@@ -232,6 +233,7 @@ def _parse_generate_body(body: dict) -> dict:
     return {
         "words": words, "panel_count": panel_count, "theme_hint": theme_hint,
         "image_model": image_model, "generate_audio": generate_audio, "tts_model": tts_model,
+        "tts_voice": tts_voice,
         "style": style, "art_style": art_style,
     }
 
@@ -337,7 +339,7 @@ async def _run_generate(p: dict):
             yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": resp["audio_error"]})
         else:
             try:
-                voice = default_tts_voice(tts_model)
+                voice = p.get("tts_voice") or default_tts_voice(tts_model)
                 audio_bytes = await call_tts(full_body_en, voice, 1.0, tts_model, feature="批量编译音频")
                 file_name = f"{gen_id}_{voice}_100_{tts_model}.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
@@ -402,13 +404,15 @@ def _parse_single_body(body: dict) -> dict:
     image_model = _resolve_image_model(body.get("image_model"))
     generate_audio = _to_bool(body.get("generate_audio_immediately", False))
     tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
+    tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
     word_clean = _re.sub(r"[^a-zA-Z\-']", "", word_raw).lower()
     if not word_clean or len(word_clean) < 2:
         raise HTTPException(400, "请输入一个有效英文单词")
     art_style = body.get("art_style", "comic")
     return {
         "word": word_clean, "theme_hint": theme_hint, "image_model": image_model,
-        "art_style": art_style, "generate_audio": generate_audio, "tts_model": tts_model,
+        "art_style": art_style, "generate_audio": generate_audio,
+        "tts_model": tts_model, "tts_voice": tts_voice,
     }
 
 
@@ -497,7 +501,7 @@ async def _run_single_compile(p: dict):
             yield ("step", {"step": "tts", "model": tts_model, "status": "failed", "message": resp["audio_error"]})
         else:
             try:
-                voice = default_tts_voice(tts_model)
+                voice = p.get("tts_voice") or default_tts_voice(tts_model)
                 audio_bytes = await call_tts(body_en, voice, 1.0, tts_model, feature="单点深耕音频")
                 file_name = f"{gen_id}_{voice}_100_{tts_model}.mp3"
                 (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
@@ -817,6 +821,11 @@ async def review_due(override_limit: bool = False):
                 "image_url": (panel or {}).get("image_url") or None,
                 "has_image": bool(panel and (panel.get("image_url") or "").strip()),
             })
+        # 干扰项池（整库随机中文义）：看图选义选项不足时由前端补充，
+        # 避免单批到期词过少导致题目只剩正确选项、无干扰项。
+        zh_pool = [r["meaning_zh"] for r in conn.execute(
+            "SELECT meaning_zh FROM words WHERE meaning_zh != '' ORDER BY RANDOM() LIMIT 300"
+        ).fetchall()]
         conn.commit()  # 素材反查修复落库
         return {
             "items": items,
@@ -825,6 +834,7 @@ async def review_due(override_limit: bool = False):
             "daily_limit": REVIEW_DAILY_LIMIT,
             "answered_today": answered_today,
             "override_limit": bool(override_limit),
+            "zh_pool": zh_pool,
         }
     finally:
         conn.close()
@@ -1112,10 +1122,17 @@ async def get_tts_settings():
             g = "CosyVoice 系列"
         voices = TTS_MODEL_VOICES.get(value, [])
         default_voice = default_tts_voice(value)
+        voice_list = []
+        for v in voices:
+            if v == default_voice:
+                continue
+            note = TTS_VOICE_NOTES.get(v, "")
+            voice_list.append({"value": v, "note": note})
         group_map.setdefault(g, []).append({
             "value": value,
             "default_voice": default_voice,
-            "voices": [v for v in voices if v != default_voice],
+            "default_note": TTS_VOICE_NOTES.get(default_voice, ""),
+            "voices": voice_list,
         })
     models = [{"group": g, "items": items} for g, items in group_map.items()]
     return {"models": models, "current": current, "current_voice": current_voice, "default": TTS_MODEL}
@@ -3257,8 +3274,9 @@ def delete_scene(scene_id: int):
         conn.close()
 
 
-async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, image_model: str, art_style: str):
-    """场景编译核心流程（生成器）：LLM → 批量文生图，逐步 yield 状态。"""
+async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, image_model: str, art_style: str,
+                             generate_audio: bool = False, tts_model: str = None, tts_voice: str = ""):
+    """场景编译核心流程（生成器）：LLM → 批量文生图 → 可选 TTS，逐步 yield 状态。"""
     style = "scene"
     conn = get_db()
     try:
@@ -3347,6 +3365,35 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
                             "label": f"生成 {len(panels)} 张图", "status": "ok"})
 
         full_body_en = " ".join(p.get("sentence_en", "") for p in panels_json)
+
+        # 可选 TTS：编译完成后为整条场景剧情生成 TTS 听力音频（与其他编译功能对齐）
+        audio_url, audio_error, actual_tts = "", "", ""
+        if generate_audio and full_body_en:
+            actual_tts = tts_model or TTS_MODEL
+            yield ("step", {"step": "tts", "model": actual_tts, "label": "合成整段剧情音频", "status": "running"})
+            if not consume_daily_quota("tts"):
+                audio_error = "今日 TTS 合成已达上限，未生成音频"
+                yield ("step", {"step": "tts", "model": actual_tts, "status": "failed", "message": audio_error})
+            else:
+                try:
+                    voice = tts_voice or default_tts_voice(actual_tts)
+                    audio_bytes = await call_tts(full_body_en, voice, 1.0, actual_tts, feature="场景编译音频")
+                    file_name = f"{gen_id}_{voice}_100_{actual_tts}.mp3"
+                    (AUDIOS_DIR / file_name).write_bytes(audio_bytes)
+                    conn.execute(
+                        "INSERT INTO audios (generation_id,file_name,voice,speed,tts_model) VALUES (?,?,?,?,?)",
+                        (gen_id, file_name, voice, 1.0, actual_tts),
+                    )
+                    conn.commit()
+                    audio_url = f"/audios/{file_name}"
+                    yield ("step", {"step": "tts", "model": actual_tts, "status": "ok"})
+                except HTTPException as e:
+                    audio_error = e.detail
+                    yield ("step", {"step": "tts", "model": actual_tts, "status": "failed", "message": e.detail})
+                except Exception as e:
+                    audio_error = f"音频生成失败: {e}"
+                    yield ("step", {"step": "tts", "model": actual_tts, "status": "failed", "message": str(e)})
+
         conn.execute("""
             INSERT INTO generations (id,words,panel_count,theme_hint,
                                      story_title,theme,story_synopsis,body_en,model,image_model,panels,
@@ -3369,6 +3416,8 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
             "gen_id": gen_id, "scene_id": scene_id, "scene_name": s["name_en"],
             "word_count": len(word_list), "panel_count": actual_panel_count,
             "image_success_count": image_ok_count,
+            "audio_url": audio_url, "audio_error": audio_error,
+            "has_audio": bool(audio_url), "tts_model": actual_tts or None,
             "message": f"场景「{s['name_en']}」已编译 {len(word_list)} 词 → {actual_panel_count} 画面连环画（{style or '微电影'}），图片 {image_ok_count}/{actual_panel_count}",
         })
     finally:
@@ -3383,7 +3432,11 @@ async def compile_scene(scene_id: int, request: Request):
     theme_hint = str(body.get("theme_hint", "") or "")
     image_model = _resolve_image_model(body.get("image_model"))
     art_style = body.get("art_style", "")  # 可选画风，空=不指定
-    return await _consume_result(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style))
+    generate_audio = _to_bool(body.get("generate_audio_immediately", True))
+    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
+    tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    return await _consume_result(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style,
+                                                    generate_audio, tts_model, tts_voice))
 
 
 @router.post("/api/scenes/{scene_id}/compile-stream")
@@ -3394,7 +3447,11 @@ async def compile_scene_stream(scene_id: int, request: Request):
     theme_hint = str(body.get("theme_hint", "") or "")
     image_model = _resolve_image_model(body.get("image_model"))
     art_style = body.get("art_style", "")  # 可选画风，空=不指定
+    generate_audio = _to_bool(body.get("generate_audio_immediately", True))
+    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
+    tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
     return StreamingResponse(
-        _sse_stream(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style)),
+        _sse_stream(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style,
+                                       generate_audio, tts_model, tts_voice)),
         media_type="text/event-stream",
     )
