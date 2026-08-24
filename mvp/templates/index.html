@@ -152,19 +152,24 @@
               </div>
             </div>
             <div class="island-stage">
-              <svg viewBox="0 0 720 260" class="island-svg" role="img" aria-label="词屿绿化图">
-                <!-- 海面 -->
-                <ellipse cx="360" cy="225" rx="330" ry="34" fill="rgba(58,125,106,.10)"/>
-                <ellipse cx="360" cy="230" rx="250" ry="24" fill="rgba(58,125,106,.14)"/>
-                <!-- 岛体：绿化率越高颜色越深 -->
-                <path class="island-land" :d="islandLandPath" :class="'green-'+islandGreenTier"/>
-                <!-- 树 = 治愈词；未治愈槽位显示为浅色土坑 -->
+              <svg viewBox="0 0 1280 720" class="island-svg" role="img" aria-label="词屿绿化图">
+                <defs>
+                  <!-- 树图片白色键控：把白底变为透明，融入岛屿背景 -->
+                  <filter id="treeKeyOut" x="-20%" y="-20%" width="140%" height="140%">
+                    <feColorMatrix in="SourceGraphic" type="matrix" values="
+                      1 0 0 0 0
+                      0 1 0 0 0
+                      0 0 1 0 0
+                      -1.15 -1.15 -1.15 3.15 0"/>
+                    <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="rgba(40,70,50,.3)"/>
+                  </filter>
+                </defs>
+                <!-- 背景：精美岛屿插画 -->
+                <image href="/static/images/island-bg.jpg" x="0" y="0" width="1280" height="720"/>
+                <!-- 树 = 治愈词（随机混搭水彩树图片）；未治愈槽位不显示 -->
                 <g v-for="(t, i) in islandTreeSlots" :key="i" class="island-tree" :transform="`translate(${t.x},${t.y}) scale(${t.s})`">
-                  <ellipse v-if="!t.tree" cx="0" cy="2" rx="7" ry="2.5" class="island-pit"/>
-                  <template v-else>
-                    <rect x="-1.5" y="-10" width="3" height="12" rx="1.5" class="tree-trunk"/>
-                    <circle :cx="t.cx1" :cy="t.cy1" :r="t.r1" class="tree-canopy" :class="'tree-'+(i%4)"/>
-                    <circle :cx="t.cx2" :cy="t.cy2" :r="t.r2" class="tree-canopy" :class="'tree-'+((i+1)%4)"/>
+                  <template v-if="t.tree">
+                    <image :href="t.img" x="-26" y="-58" width="52" height="60" class="tree-img" filter="url(#treeKeyOut)"/>
                     <title>{{ t.tree.word }} · {{ (t.tree.healed_at||'').slice(0,10) }} 治愈</title>
                   </template>
                 </g>
@@ -245,7 +250,7 @@
                     <div class="recent-item-synopsis">{{ r.story_synopsis || (r.words||[]).join(', ') }}</div>
                     <div class="recent-item-tags">
                       <el-tag size="small" :type="generationTypeTag(r.generation_type)" effect="plain">{{ generationTypeLabel(r.generation_type) }}</el-tag>
-                      <el-tag v-if="r.track==='tech'" size="small" type="primary" effect="dark">💻 程序员语境</el-tag>
+                      <el-tag v-if="r.track==='tech'" size="small" type="primary" effect="dark"><el-icon style="vertical-align:-2px;margin-right:2px"><Monitor /></el-icon>程序员语境</el-tag>
                       <el-tag v-if="r.style==='absurd'" size="small" type="warning" effect="plain">荒诞三连弹</el-tag>
                       <el-tag v-else-if="r.style==='conflict'" size="small" type="danger" effect="plain">冲突连环</el-tag>
                       <el-tag v-if="r.theme" size="small" effect="plain">{{ r.theme }}</el-tag>
@@ -367,8 +372,8 @@
           <!-- 上岛模式切换：直接丢词 / 文章提词 -->
           <el-card shadow="never" class="mb-md">
             <el-radio-group v-model="importMode" size="large">
-              <el-radio-button value="words">✍️ 直接丢词</el-radio-button>
-              <el-radio-button value="article">📄 文章提词（内容生岛）</el-radio-button>
+              <el-radio-button value="words"><el-icon style="vertical-align:-2px;margin-right:4px"><component :is="EditPen" /></el-icon>直接丢词</el-radio-button>
+              <el-radio-button value="article"><el-icon style="vertical-align:-2px;margin-right:4px"><Document /></el-icon>文章提词（内容生岛）</el-radio-button>
             </el-radio-group>
             <div class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
               <span v-if="importMode==='words'">手动粘贴单词列表——适合从背词 APP 的错词本里捞顽固词</span>
@@ -545,8 +550,8 @@
               </el-form-item>
               <el-form-item label="语境赛道">
                 <el-radio-group v-model="singleForm.track">
-                  <el-radio-button value="general">🏝️ 通用语境</el-radio-button>
-                  <el-radio-button value="tech">💻 程序员语境</el-radio-button>
+                  <el-radio-button value="general"><el-icon style="vertical-align:-2px;margin-right:4px"><component :is="HomeFilled" /></el-icon>通用语境</el-radio-button>
+                  <el-radio-button value="tech"><el-icon style="vertical-align:-2px;margin-right:4px"><Monitor /></el-icon>程序员语境</el-radio-button>
                 </el-radio-group>
                 <div v-if="singleForm.track==='tech'" class="mt-sm" style="font-size:12px;color:var(--text-tertiary);width:100%">
                   词伙与场景句将长在程序员世界：commit message / PR review / 技术文档 / 终端报错 / standup 汇报
@@ -782,8 +787,8 @@
               </el-form-item>
               <el-form-item label="语境赛道">
                 <el-radio-group v-model="compileForm.track">
-                  <el-radio-button value="general">🏝️ 通用语境</el-radio-button>
-                  <el-radio-button value="tech">💻 程序员语境</el-radio-button>
+                  <el-radio-button value="general"><el-icon style="vertical-align:-2px;margin-right:4px"><component :is="HomeFilled" /></el-icon>通用语境</el-radio-button>
+                  <el-radio-button value="tech"><el-icon style="vertical-align:-2px;margin-right:4px"><Monitor /></el-icon>程序员语境</el-radio-button>
                 </el-radio-group>
                 <div v-if="compileForm.track==='tech'" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
                   剧情将发生在程序员世界：code review 对峙 / 生产事故排查 / hackathon / 技术文档史诗
@@ -955,8 +960,8 @@
               </el-form-item>
               <el-form-item label="语境赛道">
                 <el-radio-group v-model="videoForm.track">
-                  <el-radio-button value="general">🏝️ 通用语境</el-radio-button>
-                  <el-radio-button value="tech">💻 程序员语境</el-radio-button>
+                  <el-radio-button value="general"><el-icon style="vertical-align:-2px;margin-right:4px"><component :is="HomeFilled" /></el-icon>通用语境</el-radio-button>
+                  <el-radio-button value="tech"><el-icon style="vertical-align:-2px;margin-right:4px"><Monitor /></el-icon>程序员语境</el-radio-button>
                 </el-radio-group>
                 <div v-if="videoForm.track==='tech'" class="mt-sm" style="font-size:12px;color:var(--text-tertiary);width:100%">
                   微电影将发生在程序员世界：生产事故复盘 / 灰度发布惊魂 / 深夜 on-call / 重构史诗
@@ -1611,7 +1616,7 @@
                     <div class="story-card-actions">
                       <div class="story-card-tags">
                         <el-tag size="small" :type="generationTypeTag(h.generation_type)" effect="plain">{{ generationTypeLabel(h.generation_type) }}</el-tag>
-                        <el-tag v-if="h.track==='tech'" size="small" type="primary" effect="dark">💻 程序员语境</el-tag>
+                        <el-tag v-if="h.track==='tech'" size="small" type="primary" effect="dark"><el-icon style="vertical-align:-2px;margin-right:2px"><Monitor /></el-icon>程序员语境</el-tag>
                         <el-tag v-if="h.style==='absurd'" size="small" type="warning" effect="plain">荒诞三连弹</el-tag>
                         <el-tag v-else-if="h.style==='conflict'" size="small" type="danger" effect="plain">冲突连环</el-tag>
                         <el-tag size="small" type="info">{{ h.panel_count }} 画面</el-tag>
@@ -3332,12 +3337,27 @@ const app = createApp({
 
     // ====== 我的词屿（岛屿绿化）：治愈一个词 = 岛上多一棵树 ======
     const islandStats = ref(null)
+    // 可随机混搭的水彩树图片（底部对齐土坑位置）
+    const TREE_IMGS = [
+      '/static/images/tree-palm.jpg',     // 棕榈树
+      '/static/images/tree-coconut.jpg',  // 椰子树
+      '/static/images/tree-banana.jpg',   // 芭蕉树
+      '/static/images/tree-pine.jpg',     // 小松树
+      '/static/images/tree-sakura.jpg',   // 樱花树
+      '/static/images/tree-willow.jpg',   // 垂柳
+    ]
     // 树槽位：岛面上错落分布（后 4 个是解锁位，治愈 ≥12 后出现）
+    // 坐标直接对应原图 1280×720 像素（viewBox 与图片尺寸一致）
+    // 岛面范围：x≈160~1050, y≈260(山顶)~510(海岸线)，整体收拢在岛中心避免出界
     const ISLAND_TREE_SLOTS = [
-      { x: 210, y: 196, s: 1.00 }, { x: 262, y: 178, s: 1.10 }, { x: 318, y: 168, s: 0.95 },
-      { x: 374, y: 172, s: 1.05 }, { x: 428, y: 184, s: 0.98 }, { x: 486, y: 198, s: 1.08 },
-      { x: 244, y: 152, s: 0.92 }, { x: 300, y: 138, s: 1.04 }, { x: 356, y: 130, s: 0.96 },
-      { x: 412, y: 142, s: 1.02 }, { x: 466, y: 160, s: 0.94 }, { x: 282, y: 112, s: 0.88 },
+      // 前排（海岸线内侧，y≈450）
+      { x: 360, y: 455, s: 1.00 }, { x: 480, y: 450, s: 1.08 }, { x: 600, y: 448, s: 0.95 },
+      { x: 720, y: 450, s: 1.05 }, { x: 840, y: 455, s: 0.98 },
+      // 中排（山坡中段，y≈375）
+      { x: 420, y: 378, s: 0.92 }, { x: 525, y: 370, s: 1.04 }, { x: 630, y: 366, s: 0.96 },
+      { x: 735, y: 372, s: 1.02 },
+      // 后排（靠近山顶，y≈315）
+      { x: 470, y: 318, s: 0.88 }, { x: 570, y: 310, s: 0.94 }, { x: 670, y: 315, s: 0.90 },
     ]
     const islandTreeSlots = computed(() => {
       const st = islandStats.value
@@ -3346,28 +3366,18 @@ const app = createApp({
       const slots = [...ISLAND_TREE_SLOTS]
       // 治愈超过 12 棵后，追加外圈解锁位
       if (trees.length > slots.length) {
-        slots.push({ x: 186, y: 214, s: 0.9 }, { x: 340, y: 208, s: 0.92 }, { x: 512, y: 172, s: 0.88 }, { x: 340, y: 92, s: 0.9 })
+        slots.push({ x: 300, y: 462, s: 0.88 }, { x: 900, y: 460, s: 0.86 }, { x: 570, y: 285, s: 0.84 }, { x: 570, y: 405, s: 0.92 })
       }
       return slots.map((slot, i) => {
         const tree = trees[i] || null
-        // 每棵树冠随机感（固定 seed 派生，避免每次刷新跳变）
-        const seed = tree ? tree.word.length + i : i
+        // 随机混搭树种：固定 seed 派生，避免每次刷新跳变
+        const seed = tree ? tree.word.length * 31 + i * 17 : i
         return {
           ...slot, tree,
-          cx1: ((seed * 7) % 9) - 4, cy1: -22 - (seed % 5), r1: 10 + (seed % 4),
-          cx2: ((seed * 5) % 7) - 3, cy2: -30 - (seed % 4), r2: 7 + (seed % 3),
+          img: tree ? TREE_IMGS[seed % TREE_IMGS.length] : null,
         }
       })
     })
-    const islandGreenTier = computed(() => {
-      const h = islandStats.value?.healed ?? 0
-      if (h >= 30) return 4
-      if (h >= 15) return 3
-      if (h >= 5) return 2
-      if (h >= 1) return 1
-      return 0
-    })
-    const islandLandPath = "M120 208 C160 156 250 128 360 124 C470 128 560 156 600 208 C560 236 470 248 360 248 C250 248 160 236 120 208 Z"
     async function loadIslandStats() {
       try { islandStats.value = await api('/api/island/stats') } catch (_) { /* silent */ }
     }
@@ -4576,7 +4586,7 @@ const app = createApp({
       openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
       recentItems, recentLoading, homeStats, homeStatsLoaded, loadHomeStats,
-      islandStats, islandTreeSlots, islandGreenTier, islandLandPath, loadIslandStats,
+      islandStats, islandTreeSlots, loadIslandStats,
       polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
       candidateTotal, autoDetectRunning, autoDetectResult,
       polysemySelectedSet, polysemySelectedCount, polysemyAllSelected, polysemyIndeterminate,
