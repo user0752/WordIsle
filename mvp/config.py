@@ -379,6 +379,7 @@ LLM_ROUTES = [
     {"key": "scene_collocations", "label": "场景词伙", "desc": "场景内词伙搭配生成", "default": "bailian-qwen3.7-flash"},
     {"key": "morpheme", "label": "构词拆解",     "desc": "单词构词拆解判定 / 词根推荐词生成", "default": "bailian-qwen3.7-flash"},
     {"key": "morpheme_seed", "label": "构词拆解·词根推荐", "desc": "为词根树推荐同构词（懒填充/添加成员）", "default": "bailian-qwen3.7-flash"},
+    {"key": "extract", "label": "文章提词", "desc": "从粘贴的文章/文档中提取值得学习的单词", "default": "bailian-qwen3.7-flash"},
 ]
 
 LLM_ROUTE_DEFAULT = {r["key"]: r["default"] for r in LLM_ROUTES}

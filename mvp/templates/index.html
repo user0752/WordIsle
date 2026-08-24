@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#3a7d6a">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a7d6a'/%3E%3Cpath d='M16 9c-2-1.4-4.6-2-8-2v16c3.4 0 6 .6 8 2 2-1.4 4.6-2 8-2V7c-3.4 0-6 .6-8 2z' fill='%23f5f5f7'/%3E%3Cpath d='M16 11v12' stroke='%23b8953a' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
-<title>TOEIC 顽固词深度加工系统</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a7d6a'/%3E%3Ccircle cx='22.5' cy='8.5' r='3' fill='%23f0d58c'/%3E%3Cpath d='M9 21.5c0-4.2 3.2-7.5 7-7.5s7 3.3 7 7.5z' fill='%23f5f5f7'/%3E%3Cpath d='M3 26c2.5 0 3.5-2 6-2s3.5 2 6 2 3.5-2 6-2 3.5 2 6 2' stroke='%23f5f5f7' stroke-width='1.6' fill='none' stroke-linecap='round' opacity='0.9'/%3E%3C/svg%3E">
+<title>词屿 WordIsle · 顽固词疗养岛</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -21,7 +21,7 @@
         <div class="logo-icon">
           <el-icon :size="16"><Reading /></el-icon>
         </div>
-        <span class="logo-text">TOEIC 顽固词</span>
+        <span class="logo-text">词屿 WordIsle</span>
       </div>
     </header>
 
@@ -43,7 +43,7 @@
           </el-menu-item>
           <el-menu-item index="import">
             <el-icon><Upload /></el-icon>
-            <span class="menu-item-with-busy"><span>导入单词</span><el-icon v-if="menuBusy('import')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
+            <span class="menu-item-with-busy"><span>顽固词上岛</span><el-icon v-if="menuBusy('import')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
 
           <!-- 内容编译 -->
@@ -82,6 +82,10 @@
             <el-icon><Timer /></el-icon>
             <span>记忆测试</span>
           </el-menu-item>
+          <el-menu-item index="healed">
+            <el-icon><Trophy /></el-icon>
+            <span>治愈图鉴</span>
+          </el-menu-item>
           <el-menu-item index="history">
             <el-icon><Document /></el-icon>
             <span>历史记录</span>
@@ -106,8 +110,8 @@
         <div v-if="currentPage==='home'" class="page-container">
           <div class="page-header">
             <div>
-              <h2 class="page-title"><span class="title-accent"></span>TOEIC 顽固词深度加工</h2>
-              <p class="page-subtitle">三种编译方式，把死记硬背变成场景记忆</p>
+              <h2 class="page-title"><span class="title-accent"></span>词屿 WordIsle · 顽固词疗养岛</h2>
+              <p class="page-subtitle">背了八遍还记不住的词，送来岛上——AI 生成语境，让它们在场景里生根</p>
             </div>
           </div>
 
@@ -119,6 +123,11 @@
               <span class="home-stat-sub">顽固词汇库</span>
             </div>
             <div class="home-stat-item">
+              <span class="home-stat-label">已治愈</span>
+              <span class="home-stat-num is-gold">{{ homeStats.healed ?? '—' }}</span>
+              <span class="home-stat-sub">{{ homeStats.healed ? '平均疗养 ' + (homeStats.avg_days ?? 0) + ' 天' : '岛上还没长出树' }}</span>
+            </div>
+            <div class="home-stat-item">
               <span class="home-stat-label">已生成故事</span>
               <span class="home-stat-num">{{ homeStats.texts ?? '—' }}</span>
               <span class="home-stat-sub">单点深耕 / 连环画 / 视频</span>
@@ -127,6 +136,46 @@
               <span class="home-stat-label">反馈满意度</span>
               <span class="home-stat-num is-gold">{{ homeStats.satisfaction != null ? homeStats.satisfaction + '%' : '—' }}</span>
               <span class="home-stat-sub">已反馈 {{ homeStats.rated ?? 0 }} 条</span>
+            </div>
+          </div>
+
+          <!-- 我的词屿：治愈一个词，岛上多一棵树 -->
+          <div class="island-panel" v-if="islandStats">
+            <div class="island-header">
+              <div>
+                <span class="island-title">🏝️ 我的词屿</span>
+                <el-tag size="small" type="success" effect="dark" class="ml-sm">{{ islandStats.level }}</el-tag>
+              </div>
+              <div class="island-meta">
+                <span>🌳 树木 {{ islandStats.healed }} / 疗养中 {{ islandStats.in_review }}</span>
+                <span>⛵ 航海日志 {{ islandStats.streak }} 天</span>
+              </div>
+            </div>
+            <div class="island-stage">
+              <svg viewBox="0 0 720 260" class="island-svg" role="img" aria-label="词屿绿化图">
+                <!-- 海面 -->
+                <ellipse cx="360" cy="225" rx="330" ry="34" fill="rgba(58,125,106,.10)"/>
+                <ellipse cx="360" cy="230" rx="250" ry="24" fill="rgba(58,125,106,.14)"/>
+                <!-- 岛体：绿化率越高颜色越深 -->
+                <path class="island-land" :d="islandLandPath" :class="'green-'+islandGreenTier"/>
+                <!-- 树 = 治愈词；未治愈槽位显示为浅色土坑 -->
+                <g v-for="(t, i) in islandTreeSlots" :key="i" class="island-tree" :transform="`translate(${t.x},${t.y}) scale(${t.s})`">
+                  <ellipse v-if="!t.tree" cx="0" cy="2" rx="7" ry="2.5" class="island-pit"/>
+                  <template v-else>
+                    <rect x="-1.5" y="-10" width="3" height="12" rx="1.5" class="tree-trunk"/>
+                    <circle :cx="t.cx1" :cy="t.cy1" :r="t.r1" class="tree-canopy" :class="'tree-'+(i%4)"/>
+                    <circle :cx="t.cx2" :cy="t.cy2" :r="t.r2" class="tree-canopy" :class="'tree-'+((i+1)%4)"/>
+                    <title>{{ t.tree.word }} · {{ (t.tree.healed_at||'').slice(0,10) }} 治愈</title>
+                  </template>
+                </g>
+              </svg>
+              <div class="island-caption">
+                <p class="island-desc">{{ islandStats.level_desc }}</p>
+                <p class="island-next" v-if="islandStats.next_threshold != null">
+                  再治愈 {{ islandStats.next_threshold - islandStats.healed }} 个词 → {{ islandStats.next_level }}
+                </p>
+                <p class="island-next" v-else>已达最高绿化阶段，这座森林属于你</p>
+              </div>
             </div>
           </div>
 
@@ -196,6 +245,7 @@
                     <div class="recent-item-synopsis">{{ r.story_synopsis || (r.words||[]).join(', ') }}</div>
                     <div class="recent-item-tags">
                       <el-tag size="small" :type="generationTypeTag(r.generation_type)" effect="plain">{{ generationTypeLabel(r.generation_type) }}</el-tag>
+                      <el-tag v-if="r.track==='tech'" size="small" type="primary" effect="dark">💻 程序员语境</el-tag>
                       <el-tag v-if="r.style==='absurd'" size="small" type="warning" effect="plain">荒诞三连弹</el-tag>
                       <el-tag v-else-if="r.style==='conflict'" size="small" type="danger" effect="plain">冲突连环</el-tag>
                       <el-tag v-if="r.theme" size="small" effect="plain">{{ r.theme }}</el-tag>
@@ -214,10 +264,10 @@
           <div class="page-header">
             <div>
               <h2 class="page-title"><span class="title-accent"></span>单词库</h2>
-              <p class="page-subtitle">管理你的托业顽固词汇</p>
+              <p class="page-subtitle">管理你捞上岛的顽固词 · 治愈一个，岛上多一棵树</p>
             </div>
             <div class="flex gap-sm">
-              <el-button :icon="Upload" @click="currentPage='import'">导入单词</el-button>
+              <el-button :icon="Upload" @click="currentPage='import'">顽固词上岛</el-button>
               <el-button type="primary" :icon="Plus" @click="showAddWordDialog=true">添加单词</el-button>
             </div>
           </div>
@@ -245,6 +295,7 @@
                   >
                     <el-icon v-if="row._audioLoading" class="is-loading" style="font-size:13px"><Loading /></el-icon>
                     {{ row.word }}
+                    <el-tag v-if="row.healed_at" size="small" type="success" effect="plain" style="margin-left:6px">🌴 治愈</el-tag>
                   </span>
                 </template>
               </el-table-column>
@@ -289,8 +340,10 @@
               <el-table-column label="导入时间" width="160">
                 <template #default="{row}"><span class="text-secondary">{{ formatDate(row.created_at) }}</span></template>
               </el-table-column>
-              <el-table-column label="操作" width="100" fixed="right">
+              <el-table-column label="操作" width="170" fixed="right">
                 <template #default="{row}">
+                  <el-button v-if="!row.healed_at" link type="success" @click="toggleWordHealed(row)">治愈</el-button>
+                  <el-button v-else link type="warning" @click="toggleWordHealed(row)">撤销治愈</el-button>
                   <el-button link type="danger" :icon="Delete" @click="deleteWord(row)">删除</el-button>
                 </template>
               </el-table-column>
@@ -305,22 +358,36 @@
         <div v-if="currentPage==='import'" class="page-container">
           <div class="page-header">
             <div>
-              <h2 class="page-title"><span class="title-accent"></span>导入单词</h2>
-              <p class="page-subtitle">批量导入托业顽固词汇，支持换行或逗号分隔</p>
+              <h2 class="page-title"><span class="title-accent"></span>顽固词上岛</h2>
+              <p class="page-subtitle">从你的背词 APP 里捞出反复记不住的词，粘贴进来丢到岛上——AI 为它们生成语境，让词生根</p>
             </div>
             <el-button :icon="Back" @click="currentPage='words'">返回单词库</el-button>
           </div>
-          <el-row :gutter="24">
+
+          <!-- 上岛模式切换：直接丢词 / 文章提词 -->
+          <el-card shadow="never" class="mb-md">
+            <el-radio-group v-model="importMode" size="large">
+              <el-radio-button value="words">✍️ 直接丢词</el-radio-button>
+              <el-radio-button value="article">📄 文章提词（内容生岛）</el-radio-button>
+            </el-radio-group>
+            <div class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
+              <span v-if="importMode==='words'">手动粘贴单词列表——适合从背词 APP 的错词本里捞顽固词</span>
+              <span v-else>粘贴一篇英文文章 / README / changelog，AI 阅读后挑出值得学习的词——把今天读到的内容变成你的岛</span>
+            </div>
+          </el-card>
+
+          <!-- 模式一：直接丢词 -->
+          <el-row :gutter="24" v-if="importMode==='words'">
             <el-col :span="14">
               <el-card shadow="never">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">输入单词</span>
+                    <span class="card-title">丢词上岛</span>
                     <el-button :icon="UploadFilled" size="small" @click="triggerFileInput">从文件导入 (txt/csv)</el-button>
                     <input ref="fileInputRef" type="file" accept=".txt,.csv" style="display:none" @change="handleFileChange" />
                   </div>
                 </template>
-                <el-input v-model="importText" type="textarea" :rows="12" placeholder="请输入单词，支持换行分隔或逗号分隔，例如：&#10;accommodate&#10;negotiate, delegate&#10;procurement"></el-input>
+                <el-input v-model="importText" type="textarea" :rows="12" placeholder="把背了八遍还记不住的词丢进来，支持换行或逗号分隔，例如：&#10;accommodate&#10;negotiate, delegate&#10;procurement"></el-input>
                 <div class="flex gap-sm mt-md">
                   <el-button type="primary" :icon="Search" :loading="parsing" @click="handleParse">预览解析</el-button>
                   <el-button :icon="RefreshLeft" @click="importText=''">清空</el-button>
@@ -332,7 +399,7 @@
                 <template #header><span class="card-title">解析结果</span></template>
                 <div v-if="!parseResult" class="empty-state">
                   <el-icon><document-remove /></el-icon>
-                  <p>输入单词后点击"预览解析"查看结果</p>
+                  <p>丢入单词后点击"预览解析"查看结果</p>
                 </div>
                 <div v-else class="parse-result">
                   <el-row :gutter="16" class="stats-row">
@@ -365,7 +432,7 @@
                     </div>
                   </div>
                   <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="importing" :disabled="!parseResult.words.length" @click="doImport">
-                    确认导入 ({{ parseResult.words.length }} 个单词)
+                    确认上岛 ({{ parseResult.words.length }} 个顽固词)
                   </el-button>
 
                   <!-- 生成进度指示（单词导入：入库 + AI 补全词性释义） -->
@@ -386,6 +453,74 @@
               </el-card>
             </el-col>
           </el-row>
+
+          <!-- 模式二：文章提词（内容生岛） -->
+          <div v-if="importMode==='article'">
+            <el-card shadow="never" class="mb-md">
+              <template #header>
+                <div class="flex-between">
+                  <span class="card-title">粘贴文章</span>
+                  <span class="text-secondary" style="font-size:12px">技术博客 / README / changelog / 文档 / 新闻均可</span>
+                </div>
+              </template>
+              <el-input v-model="articleText" type="textarea" :rows="12" placeholder="粘贴一篇英文文章，AI 将阅读并挑出值得学习的单词，例如：&#10;Kubernetes 1.29 introduced several improvements to sidecar containers. Native sidecars solve the long-standing problem of job completion..."></el-input>
+              <div class="flex gap-sm mt-md" style="align-items:center;flex-wrap:wrap">
+                <el-button type="primary" :icon="MagicStick" :loading="extracting" @click="runExtract">AI 提词</el-button>
+                <el-button :icon="RefreshLeft" @click="articleText=''; extractResult=null">清空</el-button>
+                <span class="text-secondary" style="font-size:13px;margin-left:8px">最多提取</span>
+                <el-input-number v-model="extractMax" :min="3" :max="30" size="small" style="width:100px"></el-input-number>
+                <span class="text-secondary" style="font-size:13px">个词 · 提词约需 10-30 秒</span>
+              </div>
+
+              <!-- 提词/上岛进度 -->
+              <el-card v-if="genProgress.visible && (genProgress.feature==='extract' || genProgress.feature==='island')" shadow="never" class="mb-md gen-progress" style="margin-top:12px">
+                <div class="gen-progress-title">{{ genFeatureLabel }} · 生成进度<span class="gen-progress-elapsed">已等待 {{ genProgress.elapsed }} 秒</span><el-button size="small" type="danger" plain class="gen-cancel-btn" :icon="Close" @click="cancelGenProgress">取消生成</el-button></div>
+                <div class="gen-progress-hint">温馨提示：{{ genFeatureHint }}。过程中请勿关闭或刷新页面，以下为每一步实际调用与耗时：</div>
+                <div v-for="(s,i) in genProgress.steps" :key="i" class="gen-step">
+                  <span class="gen-step-status" :class="'is-'+s.status">
+                    {{ s.status==='running' ? '进行中' : (s.status==='ok' ? '完成' : (s.status==='failed' ? '失败' : '等待')) }}
+                  </span>
+                  <span class="gen-step-label">{{ s.label }}</span>
+                  <el-tag v-if="s.model" size="small" class="ml-sm" :type="s.status==='failed' ? 'danger' : 'primary'">{{ s.model }}</el-tag>
+                  <span v-if="s.elapsed!=null" class="gen-step-elapsed">{{ s.elapsed }}s</span>
+                  <span v-if="s.message && s.status!=='running'" :class="['gen-step-msg', s.status==='ok' ? 'is-ok' : '']">{{ s.message }}</span>
+                </div>
+              </el-card>
+            </el-card>
+
+            <!-- 提词结果：词卡片 + 原文语境句，可勾选 -->
+            <el-card v-if="extractResult" shadow="never">
+              <template #header>
+                <div class="flex-between">
+                  <span class="card-title">AI 提取了 {{ extractResult.words.length }} 个词 · 勾选要上岛的</span>
+                  <el-button size="small" link type="primary" @click="toggleExtractAll">{{ allExtractSelected ? '取消全选' : '全选新词' }}</el-button>
+                </div>
+              </template>
+              <div v-if="!extractResult.words.length" class="empty-state">
+                <p>这篇文章里没找到值得学习的词，换篇文章试试</p>
+              </div>
+              <div v-else class="extract-word-list">
+                <div v-for="w in extractResult.words" :key="w.word" class="extract-word-card" :class="{ 'is-checked': w.checked, 'is-existing': w.existing }" @click="w.checked=!w.checked">
+                  <el-checkbox :model-value="w.checked" @change="w.checked=!w.checked" @click.stop style="margin-right:10px"></el-checkbox>
+                  <div class="extract-word-body">
+                    <div class="extract-word-head">
+                      <span class="extract-word-text">{{ w.word }}</span>
+                      <el-tag v-if="w.pos" size="small" type="info" effect="plain">{{ w.pos }}</el-tag>
+                      <el-tag v-if="w.existing" size="small" type="warning" effect="plain">已在岛上</el-tag>
+                      <span class="extract-word-meaning">{{ w.meaning_zh }}</span>
+                    </div>
+                    <div v-if="w.context_en" class="extract-word-context">
+                      <span class="extract-word-context-en">{{ w.context_en }}</span>
+                      <span v-if="w.context_zh" class="extract-word-context-zh">{{ w.context_zh }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="islandConfirming" :disabled="!selectedExtractCount" @click="confirmIsland">
+                确认上岛 ({{ selectedExtractCount }} 个词，带着原文语境来过的地方)
+              </el-button>
+            </el-card>
+          </div>
         </div>
 
         <!-- 单点深耕 -->
@@ -407,6 +542,15 @@
                 <el-button type="primary" class="ml-md" :icon="Aim" :loading="singleCompiling" @click="handleSingleCompile">深耕</el-button>
                 <el-button class="ml-md" :icon="Collection" @click="openWordPicker">从词库选择</el-button>
                 <span class="ml-md text-secondary" style="font-size:13px">记忆卡片生成 + 文生图约需 1-2 分钟，请耐心等待</span>
+              </el-form-item>
+              <el-form-item label="语境赛道">
+                <el-radio-group v-model="singleForm.track">
+                  <el-radio-button value="general">🏝️ 通用语境</el-radio-button>
+                  <el-radio-button value="tech">💻 程序员语境</el-radio-button>
+                </el-radio-group>
+                <div v-if="singleForm.track==='tech'" class="mt-sm" style="font-size:12px;color:var(--text-tertiary);width:100%">
+                  词伙与场景句将长在程序员世界：commit message / PR review / 技术文档 / 终端报错 / standup 汇报
+                </div>
               </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="singleForm.theme_hint" placeholder="可选，如 finance / law / shipping。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
@@ -497,8 +641,8 @@
               <!-- 左栏：记忆钩子图 + 情绪贴纸 + 窄屏字幕条 -->
               <div v-if="singleResult.image_url" class="single-image-wrap">
                 <img :src="singleResult.image_url" :alt="selfTestMasked ? 'memory hook image' : singleResult.word" class="single-image" />
-                <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.mood && !selfTestMasked"
-                     class="mood-sticker" :class="moodClassOf(singleResult.hook_type)">{{ singleResult.scene_sentence.mood }}</div>
+                <div v-if="singleResult.scene_sentence && moodTextOf(singleResult.hook_type, singleResult.scene_sentence?.mood) && !selfTestMasked"
+                     class="mood-sticker" :class="moodClassOf(singleResult.hook_type)">{{ moodTextOf(singleResult.hook_type, singleResult.scene_sentence?.mood) }}</div>
                 <!-- 窄屏字幕条：场景句压图，图句同框（桌面端隐藏） -->
                 <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en"
                      class="single-caption" :class="{ 'is-masked': selfTestMasked }">
@@ -634,6 +778,15 @@
                   <span v-if="compileForm.style==='absurd'">3 个独立荒诞场景卡 · 高密度短句 · 适合快刷</span>
                   <span v-else-if="compileForm.style==='conflict'">两角色对立 × 3 回合冲突 · 漫画风 · 适合深度编码</span>
                   <span v-else>旧版微电影叙事 · 起承转合 4-5 画面</span>
+                </div>
+              </el-form-item>
+              <el-form-item label="语境赛道">
+                <el-radio-group v-model="compileForm.track">
+                  <el-radio-button value="general">🏝️ 通用语境</el-radio-button>
+                  <el-radio-button value="tech">💻 程序员语境</el-radio-button>
+                </el-radio-group>
+                <div v-if="compileForm.track==='tech'" class="mt-sm" style="font-size:12px;color:var(--text-tertiary)">
+                  剧情将发生在程序员世界：code review 对峙 / 生产事故排查 / hackathon / 技术文档史诗
                 </div>
               </el-form-item>
               <el-form-item v-if="compileForm.style===''" label="画面数量">
@@ -799,6 +952,15 @@
                     <span v-if="v.note" style="margin-left:8px;color:var(--text-tertiary);font-size:12px">{{ v.note }}</span>
                   </el-option>
                 </el-select>
+              </el-form-item>
+              <el-form-item label="语境赛道">
+                <el-radio-group v-model="videoForm.track">
+                  <el-radio-button value="general">🏝️ 通用语境</el-radio-button>
+                  <el-radio-button value="tech">💻 程序员语境</el-radio-button>
+                </el-radio-group>
+                <div v-if="videoForm.track==='tech'" class="mt-sm" style="font-size:12px;color:var(--text-tertiary);width:100%">
+                  微电影将发生在程序员世界：生产事故复盘 / 灰度发布惊魂 / 深夜 on-call / 重构史诗
+                </div>
               </el-form-item>
               <el-form-item label="主题方向">
                 <el-input v-model="videoForm.theme_hint" placeholder="可选，如：投资失败 / 项目危机 / 采购谈判。留空则 AI 自由发挥" style="width:460px" clearable></el-input>
@@ -1031,6 +1193,10 @@
                 <div class="flex gap-sm" style="flex-wrap:wrap;align-items:center">
                   <span class="text-secondary" style="font-size:12px;border:1px solid var(--border-default);border-radius:4px;padding:2px 8px">自然覆盖 · 高关联场景词连贯成故事</span>
                   <span class="text-secondary" style="font-size:12px">固定 3 画面</span>
+                  <el-radio-group v-model="sceneCompileForm.track" size="small">
+                    <el-radio-button value="general">🏝️ 通用</el-radio-button>
+                    <el-radio-button value="tech">💻 程序员</el-radio-button>
+                  </el-radio-group>
                   <el-select v-model="sceneCompileForm.art_style" placeholder="画风" clearable style="width:130px" size="small">
                     <el-option v-for="s in artStyleOptions" :key="s.value" :label="s.label" :value="s.value"></el-option>
                   </el-select>
@@ -1194,6 +1360,11 @@
               <span class="review-stat-num is-gold">{{ reviewStats.mastered }}</span>
               <span class="review-stat-sub">复习中 {{ reviewStats.in_progress }} · 新入队 {{ reviewStats.new }}</span>
             </div>
+            <div class="review-stat-item">
+              <span class="review-stat-label">已治愈</span>
+              <span class="review-stat-num is-accent">{{ reviewStats.healed ?? 0 }}</span>
+              <span class="review-stat-sub">自评治愈 · 岛上的树</span>
+            </div>
           </div>
 
           <!-- 练习进行中 -->
@@ -1287,9 +1458,12 @@
                     <span class="review-feedback-zh" v-if="reviewQuestion.phrase_zh">{{ reviewQuestion.phrase_zh }}</span>
                   </div>
                 </div>
-                <el-button type="primary" class="review-next-btn" @click="reviewNext">
-                  {{ reviewSession.index >= reviewSession.questions.length - 1 ? '查看总结' : '下一题 →' }}
-                </el-button>
+                <div class="review-feedback-actions" style="display:flex;gap:12px;align-self:flex-end">
+                  <el-button type="success" plain size="large" :loading="reviewHealing" @click="reviewHealCurrent">🌴 我已治愈</el-button>
+                  <el-button type="primary" class="review-next-btn" size="large" @click="reviewNext">
+                    {{ reviewSession.index >= reviewSession.questions.length - 1 ? '查看总结' : '下一题 →' }}
+                  </el-button>
+                </div>
               </div>
             </div>
           </el-card>
@@ -1322,11 +1496,64 @@
               </div>
             </template>
             <div v-else class="empty-state">
-              <el-icon><Timer /></el-icon>
-              <p>复习队列还是空的</p>
-              <p class="empty-sub">在「单点深耕」生成记忆卡片后遮词自测，点「没记住」的词会自动加入这里，按遗忘曲线安排复习。</p>
-              <el-button type="primary" plain @click="currentPage='single'">去单点深耕</el-button>
+              <template v-if="reviewStats && reviewStats.healed > 0">
+                <p style="font-size:40px">🌴</p>
+                <p>复习队列清空了——{{ reviewStats.healed }} 个词已治愈出岛</p>
+                <p class="empty-sub">等新的顽固词上岛，或去治愈图鉴看看你的岛。</p>
+                <el-button type="primary" plain @click="currentPage='healed'">去治愈图鉴</el-button>
+              </template>
+              <template v-else>
+                <el-icon><Timer /></el-icon>
+                <p>复习队列还是空的</p>
+                <p class="empty-sub">在「单点深耕」生成记忆卡片后遮词自测，点「没记住」的词会自动加入这里，按遗忘曲线安排复习。</p>
+                <el-button type="primary" plain @click="currentPage='single'">去单点深耕</el-button>
+              </template>
             </div>
+          </div>
+        </div>
+
+        <!-- 治愈图鉴 -->
+        <div v-if="currentPage==='healed'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>治愈图鉴</h2>
+              <p class="page-subtitle">每治愈一个顽固词，岛上就多一棵树 · 每张卡是一份疗养病历</p>
+            </div>
+            <el-button :icon="Refresh" @click="loadHealed()">刷新</el-button>
+          </div>
+
+          <div class="healed-summary" v-if="healedData && healedData.count > 0">
+            <div class="healed-summary-item">🌴 已治愈 <b>{{ healedData.count }}</b> 个词</div>
+            <div class="healed-summary-item">⏱ 平均疗养 <b>{{ healedData.avg_days }}</b> 天</div>
+          </div>
+
+          <div v-if="healedLoading" v-loading="true" style="min-height:300px"></div>
+          <div v-else-if="healedData && healedData.count > 0" class="healed-grid">
+            <el-card v-for="it in healedData.items" :key="it.word" shadow="never" class="healed-card">
+              <div class="healed-card-head">
+                <span class="healed-word">{{ it.word }}</span>
+                <span class="healed-phonetic" v-if="it.phonetic">{{ it.phonetic }}</span>
+                <span class="healed-badge">🌴</span>
+              </div>
+              <p class="healed-meaning">{{ it.meaning_zh || '（暂无释义）' }}</p>
+              <div class="healed-days">
+                <span class="healed-days-num">{{ it.healed_days }}</span>
+                <span class="healed-days-label">天疗养<br>{{ (it.created_at||'').slice(0,10) }} 上岛 → {{ (it.healed_at||'').slice(0,10) }} 治愈</span>
+              </div>
+              <div class="healed-meta">作答 {{ it.answered_count }} 题 · 答对 {{ it.correct_count }} · 遗忘 {{ it.lapses }} 次</div>
+              <div class="healed-therapies">
+                <el-tag v-for="(t, i) in therapyTags(it.therapies)" :key="i" size="small" effect="plain">{{ t }}</el-tag>
+              </div>
+              <div class="healed-actions">
+                <el-button link type="warning" size="small" @click="unhealWord(it.word)">撤销治愈</el-button>
+              </div>
+            </el-card>
+          </div>
+          <div v-else class="empty-state">
+            <p style="font-size:40px">🏝️</p>
+            <p>岛上还没有治愈的词</p>
+            <p class="empty-sub">去「记忆测试」答一题——觉得这个词已经生根了，就点「🌴 我已治愈」，它会带着病历卡搬进图鉴</p>
+            <el-button type="primary" plain @click="currentPage='review'">去记忆测试</el-button>
           </div>
         </div>
 
@@ -1384,6 +1611,7 @@
                     <div class="story-card-actions">
                       <div class="story-card-tags">
                         <el-tag size="small" :type="generationTypeTag(h.generation_type)" effect="plain">{{ generationTypeLabel(h.generation_type) }}</el-tag>
+                        <el-tag v-if="h.track==='tech'" size="small" type="primary" effect="dark">💻 程序员语境</el-tag>
                         <el-tag v-if="h.style==='absurd'" size="small" type="warning" effect="plain">荒诞三连弹</el-tag>
                         <el-tag v-else-if="h.style==='conflict'" size="small" type="danger" effect="plain">冲突连环</el-tag>
                         <el-tag size="small" type="info">{{ h.panel_count }} 画面</el-tag>
@@ -1416,12 +1644,12 @@
           <div class="page-header">
             <div>
               <h2 class="page-title"><span class="title-accent"></span>熟词僻意</h2>
-              <p class="page-subtitle">托业高频"熟词僻意"词汇，普通含义与商务含义对比
+              <p class="page-subtitle">考试高频"熟词僻意"词汇，普通含义与商务含义对比
                 <el-tag v-if="candidateTotal>0" size="small" type="info" effect="plain" style="margin-left:8px">待检测 {{ candidateTotal }} 词</el-tag>
               </p>
             </div>
             <div class="flex gap-sm">
-              <el-tooltip content="扫描单词库，调用AI自动识别托业高频熟词僻意并入库" placement="top">
+              <el-tooltip content="扫描单词库，调用AI自动识别考试高频熟词僻意并入库" placement="top">
                 <el-button type="success" :icon="MagicStick" :loading="autoDetectRunning" @click="runAutoDetect">
                   自动检测{{ candidateTotal>0 ? ` (${candidateTotal})` : '' }}
                 </el-button>
@@ -1472,7 +1700,7 @@
                 <el-button type="primary" :icon="Search" @click="searchPolysemy">搜索</el-button>
               </div>
               <span class="text-secondary" style="font-size:12px">
-                点击"自动检测"即可扫描单词库中 <b>{{ candidateTotal }}</b> 个未录入词条的单词，自动调用 AI 判断是否为托业高频熟词僻意
+                点击"自动检测"即可扫描单词库中 <b>{{ candidateTotal }}</b> 个未录入词条的单词，自动调用 AI 判断是否为考试高频熟词僻意
               </span>
             </div>
           </el-card>
@@ -1500,7 +1728,7 @@
                   </div>
                   <div class="meaning-arrow"><el-icon color="var(--accent)"><Bottom /></el-icon></div>
                   <div class="meaning-row business">
-                    <div class="meaning-label"><el-icon color="var(--gold)"><Briefcase /></el-icon> <span style="color:var(--gold)">托业含义</span></div>
+                    <div class="meaning-label"><el-icon color="var(--gold)"><Briefcase /></el-icon> <span style="color:var(--gold)">僻义含义</span></div>
                     <div class="meaning-en">{{ polysemyResult.business_meaning_en }}</div>
                     <div class="meaning-zh">{{ polysemyResult.business_meaning_zh }}</div>
                   </div>
@@ -1512,7 +1740,7 @@
                   </div>
                 </div>
                 <div v-if="polysemyResult.example_en" style="margin-top:12px">
-                  <span class="section-label">托业例句</span>
+                  <span class="section-label">僻义例句</span>
                   <p class="example-en">{{ polysemyResult.example_en }}</p>
                   <p class="example-zh">{{ polysemyResult.example_zh }}</p>
                 </div>
@@ -1565,7 +1793,7 @@
                       </div>
                       <div class="meaning-arrow"><el-icon color="var(--accent)"><Bottom /></el-icon></div>
                       <div class="meaning-row business">
-                        <div class="meaning-label"><el-icon color="var(--gold)"><Briefcase /></el-icon> <span style="color:var(--gold)">托业含义</span></div>
+                        <div class="meaning-label"><el-icon color="var(--gold)"><Briefcase /></el-icon> <span style="color:var(--gold)">僻义含义</span></div>
                         <div class="meaning-en">{{ entry.business_meaning_en }}</div>
                         <div class="meaning-zh">{{ entry.business_meaning_zh }}</div>
                       </div>
@@ -1661,7 +1889,7 @@
                 <el-button type="primary" :icon="Search" @click="searchMorphemeRoots">搜索</el-button>
               </div>
               <span class="text-secondary" style="font-size:12px">
-                点击"增量检查"扫描词库生成词根树：<b>已收录</b> 为词库真实词，<b>推荐</b> 为 AI 补充的同构托业核心词
+                点击"增量检查"扫描词库生成词根树：<b>已收录</b> 为词库真实词，<b>推荐</b> 为 AI 补充的同构核心词
               </span>
             </div>
           </el-card>
@@ -1816,8 +2044,8 @@
                   <!-- 左栏：记忆钩子图 + 情绪贴纸 + 窄屏字幕条 -->
                   <div v-if="resultSingleCard.image_url" class="single-image-wrap">
                     <img :src="resultSingleCard.image_url" :alt="selfTestMasked ? 'memory hook image' : resultSingleCard.word" class="single-image" />
-                    <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.mood && !selfTestMasked"
-                         class="mood-sticker" :class="moodClassOf(resultSingleCard.hook_type)">{{ resultSingleCard.scene_sentence.mood }}</div>
+                    <div v-if="resultSingleCard.scene_sentence && moodTextOf(resultSingleCard.hook_type, resultSingleCard.scene_sentence?.mood) && !selfTestMasked"
+                         class="mood-sticker" :class="moodClassOf(resultSingleCard.hook_type)">{{ moodTextOf(resultSingleCard.hook_type, resultSingleCard.scene_sentence?.mood) }}</div>
                     <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en"
                          class="single-caption" :class="{ 'is-masked': selfTestMasked }">
                       <div class="single-caption-en">{{ resultSingleCard.scene_sentence.en }}</div>
@@ -2459,7 +2687,7 @@ const app = createApp({
       single: { label: '单点深耕', hint: '记忆卡片生成 + 文生图约需 1-2 分钟' },
       video:  { label: '视频编译', hint: '脚本生成 + 文生视频约需 1-5 分钟' },
       scene:  { label: '场景编译', hint: '场景连环画生成通常需要 2-4 分钟，请耐心等待' },
-      import: { label: '单词导入', hint: '写入单词库并调用 AI 补充词性与中文释义（每 20 个一批），单词较多时通常需要 30 秒 - 2 分钟' },
+      import: { label: '顽固词上岛', hint: '写入单词库并调用 AI 补充词性与中文释义（每 20 个一批），单词较多时通常需要 30 秒 - 2 分钟' },
       addword: { label: '添加单词', hint: '写入单词库并调用 AI 补充词性与中文释义，通常需要几十秒，请耐心等待' },
       'scene-detect': { label: '场景检测', hint: 'AI 分析未分类单词并归入场景、生成词伙搭配，通常需要 30-60 秒，请耐心等待' },
       polysemy: { label: '熟词僻意检测', hint: '分批调用 AI 判定熟词僻意并入库，通常需要 30 秒 - 2 分钟，请耐心等待' },
@@ -2487,7 +2715,7 @@ const app = createApp({
     }
 
     // ---- 跨页面完成提醒：页面标题动态化 + 浏览器系统通知 ----
-    const DEFAULT_TITLE = 'TOEIC 顽固词深度加工系统'
+    const DEFAULT_TITLE = '词屿 WordIsle · 顽固词疗养岛'
     function _fmtClock(s) {
       const m = String(Math.floor(s / 60)).padStart(2, '0')
       const ss = String(s % 60).padStart(2, '0')
@@ -2770,14 +2998,14 @@ const app = createApp({
     // 编译
     const compileWords = ref([])
     const compileForm = reactive({
-      style:'absurd', panel_count:4, theme_hint:'', image_model:'', art_style:'',
+      style:'absurd', panel_count:4, theme_hint:'', image_model:'', art_style:'', track:'general',
       generate_audio:true, tts_model:'cosyvoice-v3-flash', tts_voice:'',
     })
     const compiling = ref(false)
 
     // 视频编译
     const videoForm = reactive({
-      video_model:'wan2.2-t2v-plus', duration:5, theme_hint:'', tts_model:'cosyvoice-v3-flash', tts_voice:'', art_style:'auto',
+      video_model:'wan2.2-t2v-plus', duration:5, theme_hint:'', tts_model:'cosyvoice-v3-flash', tts_voice:'', art_style:'auto', track:'general',
     })
     const videoCompiling = ref(false)
     const videoResult = ref(null)
@@ -2788,7 +3016,7 @@ const app = createApp({
     // 单点深耕
     const singleForm = reactive({
       word:'', theme_hint:'', image_model:'',
-      art_style:'comic', generate_audio:true, tts_model:'cosyvoice-v3-flash', tts_voice:'',
+      art_style:'comic', track:'general', generate_audio:true, tts_model:'cosyvoice-v3-flash', tts_voice:'',
     })
 
     // 单点深耕可配置画风
@@ -3027,9 +3255,45 @@ const app = createApp({
       }
     }
 
+    // 自评治愈：判定权在用户——觉得这个词在岛上"生根"了就点它
+    const reviewHealing = ref(false)
+    async function reviewHealCurrent() {
+      const q = reviewQuestion.value
+      if (!q || reviewHealing.value) return
+      reviewHealing.value = true
+      try {
+        await api('/api/review/heal', { method: 'POST', body: JSON.stringify({ word: q.word, healed: true }) })
+        ElementPlus.ElMessage.success(`「${q.word}」已治愈，岛上又多了一棵树 🌴`)
+        reviewNext()
+      } catch (e) { showModelError(e, '治愈标记失败') }
+      finally { reviewHealing.value = false }
+    }
+
     function exitReviewSession() {
       reviewSession.active = false
       loadReviewStats()
+    }
+
+    // ====== 治愈图鉴 ======
+    const HEALED_THERAPY_LABELS = { single: '单点深耕', batch: '批量编译', scene: '场景聚汇', video: '视频编译' }
+    const healedData = ref(null)
+    const healedLoading = ref(false)
+    async function loadHealed() {
+      healedLoading.value = true
+      try { healedData.value = await api('/api/review/healed') }
+      catch (e) { showModelError(e, '加载治愈图鉴失败') }
+      finally { healedLoading.value = false }
+    }
+    function therapyTags(t) {
+      const arr = Object.entries(t || {}).filter(([, n]) => n > 0).map(([k, n]) => `${HEALED_THERAPY_LABELS[k] || k} ×${n}`)
+      return arr.length ? arr : ['纯复习治愈']
+    }
+    async function unhealWord(w) {
+      try {
+        await api('/api/review/heal', { method: 'POST', body: JSON.stringify({ word: w, healed: false }) })
+        ElementPlus.ElMessage.info(`「${w}」重新回岛疗养`)
+        loadHealed()
+      } catch (e) { showModelError(e, '撤销治愈失败') }
     }
 
     // 情绪贴纸配色：按 hook_type 四策略（双义碰撞=撞色 / 夸张场景=高饱和暖色 / 具象比喻=蓝紫 / 对比记忆=左右分屏）
@@ -3039,6 +3303,17 @@ const app = createApp({
       if (t.includes('夸张')) return 'is-warm'
       if (t.includes('具象')) return 'is-abstract'
       if (t.includes('对比')) return 'is-split'
+      return ''
+    }
+
+    // 情绪标签文本兜底：LLM 未返回 mood 时按 hook_type 填充默认标签
+    function moodTextOf(hook_type, mood) {
+      if (mood) return mood
+      const t = hook_type || ''
+      if (t.includes('双义')) return '双义碰撞'
+      if (t.includes('夸张')) return '夸张 / 荒诞'
+      if (t.includes('具象')) return '具象比喻'
+      if (t.includes('对比')) return '对比记忆'
       return ''
     }
 
@@ -3055,18 +3330,63 @@ const app = createApp({
     const recentItems = ref([])
     const recentLoading = ref(false)
 
-    // 首页数据概览（词库 / 已生成故事 / 反馈满意度）
-    const homeStats = ref({ words: null, texts: null, satisfaction: null, rated: 0 })
+    // ====== 我的词屿（岛屿绿化）：治愈一个词 = 岛上多一棵树 ======
+    const islandStats = ref(null)
+    // 树槽位：岛面上错落分布（后 4 个是解锁位，治愈 ≥12 后出现）
+    const ISLAND_TREE_SLOTS = [
+      { x: 210, y: 196, s: 1.00 }, { x: 262, y: 178, s: 1.10 }, { x: 318, y: 168, s: 0.95 },
+      { x: 374, y: 172, s: 1.05 }, { x: 428, y: 184, s: 0.98 }, { x: 486, y: 198, s: 1.08 },
+      { x: 244, y: 152, s: 0.92 }, { x: 300, y: 138, s: 1.04 }, { x: 356, y: 130, s: 0.96 },
+      { x: 412, y: 142, s: 1.02 }, { x: 466, y: 160, s: 0.94 }, { x: 282, y: 112, s: 0.88 },
+    ]
+    const islandTreeSlots = computed(() => {
+      const st = islandStats.value
+      if (!st) return []
+      const trees = st.trees || []
+      const slots = [...ISLAND_TREE_SLOTS]
+      // 治愈超过 12 棵后，追加外圈解锁位
+      if (trees.length > slots.length) {
+        slots.push({ x: 186, y: 214, s: 0.9 }, { x: 340, y: 208, s: 0.92 }, { x: 512, y: 172, s: 0.88 }, { x: 340, y: 92, s: 0.9 })
+      }
+      return slots.map((slot, i) => {
+        const tree = trees[i] || null
+        // 每棵树冠随机感（固定 seed 派生，避免每次刷新跳变）
+        const seed = tree ? tree.word.length + i : i
+        return {
+          ...slot, tree,
+          cx1: ((seed * 7) % 9) - 4, cy1: -22 - (seed % 5), r1: 10 + (seed % 4),
+          cx2: ((seed * 5) % 7) - 3, cy2: -30 - (seed % 4), r2: 7 + (seed % 3),
+        }
+      })
+    })
+    const islandGreenTier = computed(() => {
+      const h = islandStats.value?.healed ?? 0
+      if (h >= 30) return 4
+      if (h >= 15) return 3
+      if (h >= 5) return 2
+      if (h >= 1) return 1
+      return 0
+    })
+    const islandLandPath = "M120 208 C160 156 250 128 360 124 C470 128 560 156 600 208 C560 236 470 248 360 248 C250 248 160 236 120 208 Z"
+    async function loadIslandStats() {
+      try { islandStats.value = await api('/api/island/stats') } catch (_) { /* silent */ }
+    }
+
+    // 首页数据概览（词库 / 已治愈 / 已生成故事 / 反馈满意度）
+    const homeStats = ref({ words: null, healed: null, avg_days: null, texts: null, satisfaction: null, rated: 0 })
     const homeStatsLoaded = ref(false)
     async function loadHomeStats() {
       try {
-        const [w, t, f] = await Promise.all([
+        const [w, t, f, h] = await Promise.all([
           api('/api/words?page=1&page_size=1'),
           api('/api/texts?page=1&page_size=1'),
           api('/api/feedback'),
+          api('/api/review/healed'),
         ])
         homeStats.value = {
           words: w.total || 0,
+          healed: (h && h.count) || 0,
+          avg_days: (h && h.avg_days) || 0,
           texts: t.total || 0,
           satisfaction: f && f.satisfaction != null ? Math.round(f.satisfaction * 100) : null,
           rated: (f && f.rated) || 0,
@@ -3149,7 +3469,7 @@ const app = createApp({
     const sceneDetectResult = ref(null)
     const sceneSuggestions = ref([])
     const sceneAdoptingIdx = ref(-1)
-    const sceneCompileForm = reactive({ style: 'scene', panel_count: 4, theme_hint: '', image_model: '', art_style: '', generate_audio: true, tts_model: 'cosyvoice-v3-flash', tts_voice: '' })
+    const sceneCompileForm = reactive({ style: 'scene', panel_count: 4, theme_hint: '', image_model: '', art_style: '', track: 'general', generate_audio: true, tts_model: 'cosyvoice-v3-flash', tts_voice: '' })
     const sceneCompileLoading = ref(false)
 
     // ---- 表单偏好记忆（localStorage）：记住各编译表单的模型/风格/画面数等，刷新不丢 ----
@@ -3157,10 +3477,10 @@ const app = createApp({
     function saveFormPrefs() {
       try {
         const data = {
-          compile: { image_model: compileForm.image_model, art_style: compileForm.art_style, style: compileForm.style, panel_count: compileForm.panel_count, generate_audio: compileForm.generate_audio, tts_model: compileForm.tts_model },
-          single: { image_model: singleForm.image_model, art_style: singleForm.art_style, generate_audio: singleForm.generate_audio, tts_model: singleForm.tts_model },
-          video: { video_model: videoForm.video_model, duration: videoForm.duration, art_style: videoForm.art_style, tts_model: videoForm.tts_model },
-          scene: { image_model: sceneCompileForm.image_model, art_style: sceneCompileForm.art_style, style: sceneCompileForm.style, panel_count: sceneCompileForm.panel_count, generate_audio: sceneCompileForm.generate_audio, tts_model: sceneCompileForm.tts_model },
+          compile: { image_model: compileForm.image_model, art_style: compileForm.art_style, style: compileForm.style, panel_count: compileForm.panel_count, track: compileForm.track, generate_audio: compileForm.generate_audio, tts_model: compileForm.tts_model },
+          single: { image_model: singleForm.image_model, art_style: singleForm.art_style, track: singleForm.track, generate_audio: singleForm.generate_audio, tts_model: singleForm.tts_model },
+          video: { video_model: videoForm.video_model, duration: videoForm.duration, art_style: videoForm.art_style, track: videoForm.track, tts_model: videoForm.tts_model },
+          scene: { image_model: sceneCompileForm.image_model, art_style: sceneCompileForm.art_style, style: sceneCompileForm.style, panel_count: sceneCompileForm.panel_count, track: sceneCompileForm.track, generate_audio: sceneCompileForm.generate_audio, tts_model: sceneCompileForm.tts_model },
         }
         localStorage.setItem(FORM_PREFS_KEY, JSON.stringify(data))
       } catch (_) { /* localStorage 不可用时静默忽略 */ }
@@ -3178,10 +3498,12 @@ const app = createApp({
         const imgOk = v => imageModels.value.some(m => m.value === v)
         const vidOk = v => videoModels.value.some(m => m.value === v)
         const c = data.compile, s = data.single, v = data.video, sc = data.scene
-        if (c) { _applyFormPref(compileForm, c, ['style','panel_count','generate_audio','tts_model']); if (imgOk(c.image_model)) compileForm.image_model = c.image_model; if (c.art_style !== undefined) compileForm.art_style = c.art_style }
-        if (s) { _applyFormPref(singleForm, s, ['generate_audio','tts_model']); if (imgOk(s.image_model)) singleForm.image_model = s.image_model; if (s.art_style !== undefined) singleForm.art_style = s.art_style }
-        if (v) { _applyFormPref(videoForm, v, ['duration','tts_model']); if (vidOk(v.video_model)) videoForm.video_model = v.video_model; if (v.art_style !== undefined) videoForm.art_style = v.art_style }
-        if (sc) { _applyFormPref(sceneCompileForm, sc, ['style','panel_count','generate_audio','tts_model']); if (imgOk(sc.image_model)) sceneCompileForm.image_model = sc.image_model; if (sc.art_style !== undefined) sceneCompileForm.art_style = sc.art_style }
+        // track 枚举校验：localStorage 被污染或旧版本值时回退 general，避免 radio 显示异常
+        const trackOk = v => v === 'general' || v === 'tech'
+        if (c) { _applyFormPref(compileForm, c, ['style','panel_count','generate_audio','tts_model']); if (imgOk(c.image_model)) compileForm.image_model = c.image_model; if (c.art_style !== undefined) compileForm.art_style = c.art_style; if (trackOk(c.track)) compileForm.track = c.track }
+        if (s) { _applyFormPref(singleForm, s, ['generate_audio','tts_model']); if (imgOk(s.image_model)) singleForm.image_model = s.image_model; if (s.art_style !== undefined) singleForm.art_style = s.art_style; if (trackOk(s.track)) singleForm.track = s.track }
+        if (v) { _applyFormPref(videoForm, v, ['duration','tts_model']); if (vidOk(v.video_model)) videoForm.video_model = v.video_model; if (v.art_style !== undefined) videoForm.art_style = v.art_style; if (trackOk(v.track)) videoForm.track = v.track }
+        if (sc) { _applyFormPref(sceneCompileForm, sc, ['style','panel_count','generate_audio','tts_model']); if (imgOk(sc.image_model)) sceneCompileForm.image_model = sc.image_model; if (sc.art_style !== undefined) sceneCompileForm.art_style = sc.art_style; if (trackOk(sc.track)) sceneCompileForm.track = sc.track }
       } catch (_) {}
     }
     const sceneEditVisible = ref(false)
@@ -3258,10 +3580,20 @@ const app = createApp({
         row._audioLoading = false
       }
     }
+    // 治愈自评（单词库行内操作）：治愈 = 岛上多一棵树；撤销 = 重新回岛疗养
+    async function toggleWordHealed(row) {
+      try {
+        const res = await api('/api/review/heal', { method: 'POST', body: JSON.stringify({ word: row.word, healed: !row.healed_at }) })
+        row.healed_at = res.healed ? (res.healed_at || '') : ''
+        if (res.healed) ElementPlus.ElMessage.success(`「${row.word}」已治愈，岛上又多了一棵树 🌴`)
+        else ElementPlus.ElMessage.info(`「${row.word}」重新回岛疗养`)
+      } catch (e) { showModelError(e, '治愈操作失败') }
+    }
+
     async function deleteWord(row) {
       try {
         await ElementPlus.ElMessageBox.confirm(`确定删除单词 "${row.word}" 吗？`,'提示',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})
-        const deletedInfo = { word: row.word, pos: row.pos || '', meaning_zh: row.meaning_zh || '' }
+        const deletedInfo = { word: row.word, pos: row.pos || '', meaning_zh: row.meaning_zh || '', healed_at: row.healed_at || '' }
         await api(`/api/words/${row.id}`, {method:'DELETE'})
         // 删除后弹出撤销确认框（10 秒内可恢复）
         ElementPlus.ElMessageBox.alert(
@@ -3387,7 +3719,7 @@ const app = createApp({
         const res = await apiStream('/api/words/import-stream', {
           method:'POST', body:JSON.stringify({words:parseResult.value.words})
         }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
-        ElementPlus.ElMessage.success(`导入完成：成功 ${res.imported} 个，重复 ${res.duplicated} 个`)
+        ElementPlus.ElMessage.success(`上岛完成：${res.imported} 个顽固词已登岛${res.duplicated ? `，${res.duplicated} 个已在岛上` : ''}，去「单点深耕」或「批量编译」给它们做深度疗养吧`)
         parseResult.value = null
         importText.value = ''
         currentPage.value = 'words'
@@ -3395,6 +3727,64 @@ const app = createApp({
         stopGenProgress(true)
       } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, '导入失败') }
       finally { importing.value = false }
+    }
+
+    // ====== 文章提词（内容生岛）：粘贴文章 → AI 提词 → 勾选 → 带释义上岛 ======
+    const importMode = ref('words')
+    const articleText = ref('')
+    const extractMax = ref(12)
+    const extracting = ref(false)
+    const extractResult = ref(null)
+    const islandConfirming = ref(false)
+    const selectedExtractCount = computed(() => (extractResult.value?.words || []).filter(w => w.checked).length)
+    const allExtractSelected = computed(() => {
+      const ws = extractResult.value?.words || []
+      const news = ws.filter(w => !w.existing)
+      return news.length > 0 && news.every(w => w.checked)
+    })
+    function toggleExtractAll() {
+      const ws = extractResult.value?.words || []
+      if (!ws.length) return
+      const target = !allExtractSelected.value
+      ws.forEach(w => { if (!w.existing) w.checked = target })
+    }
+    async function runExtract() {
+      const text = (articleText.value || '').trim()
+      if (text.length < 100) { ElementPlus.ElMessage.warning('文章太短，至少粘贴 100 个字符的英文内容'); return }
+      if (genBusy()) return
+      extracting.value = true
+      extractResult.value = null
+      startGenProgress('extract')
+      try {
+        const res = await apiStream('/api/island/extract-stream', {
+          method:'POST', body:JSON.stringify({ text, max_words: extractMax.value })
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
+        // 已在岛上的词默认不勾选，新词默认全勾
+        const words = (res.words || []).map(w => ({ ...w, checked: !w.existing }))
+        extractResult.value = { words }
+        stopGenProgress(true)
+      } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, 'AI 提词失败') }
+      finally { extracting.value = false }
+    }
+    async function confirmIsland() {
+      const items = (extractResult.value?.words || []).filter(w => w.checked)
+        .map(w => ({ word: w.word, pos: w.pos, meaning_zh: w.meaning_zh }))
+      if (!items.length) { ElementPlus.ElMessage.warning('请先勾选要上岛的词'); return }
+      if (genBusy()) return
+      islandConfirming.value = true
+      startGenProgress('island')
+      try {
+        const res = await apiStream('/api/island/confirm-stream', {
+          method:'POST', body:JSON.stringify({ items })
+        }, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
+        ElementPlus.ElMessage.success(`上岛完成：${res.imported} 个词已带着原文语境登岛${res.duplicated ? `，${res.duplicated} 个已在岛上` : ''}，去「单点深耕」或「批量编译」开始疗养吧`)
+        extractResult.value = null
+        articleText.value = ''
+        currentPage.value = 'words'
+        loadWords()
+        stopGenProgress(true)
+      } catch(e) { stopGenProgress(false); if (e?.name !== 'AbortError') showModelError(e, '上岛失败') }
+      finally { islandConfirming.value = false }
     }
     function triggerFileInput() { fileInputRef.value?.click() }
     function handleFileChange(e) {
@@ -3427,6 +3817,7 @@ const app = createApp({
           theme_hint: compileForm.theme_hint,
           image_model: compileForm.image_model,
           art_style: compileForm.art_style,
+          track: compileForm.track,
           generate_audio_immediately: compileForm.generate_audio,
           tts_model: compileForm.tts_model,
           tts_voice: compileForm.tts_voice || '',
@@ -3465,6 +3856,7 @@ const app = createApp({
           tts_model: videoForm.tts_model,
           voice: videoForm.tts_voice || '',
           art_style: videoForm.art_style,
+          track: videoForm.track,
         })}, { onStep: applyGenStep }, { signal: genProgress.value.controller?.signal })
         ElementPlus.ElMessage.success('视频编译完成')
         videoResult.value = res
@@ -3490,6 +3882,7 @@ const app = createApp({
           theme_hint: singleForm.theme_hint,
           image_model: singleForm.image_model,
           art_style: singleForm.art_style,
+          track: singleForm.track,
           generate_audio_immediately: singleForm.generate_audio,
           tts_model: singleForm.tts_model,
           tts_voice: singleForm.tts_voice || '',
@@ -4052,6 +4445,7 @@ const app = createApp({
             theme_hint: sceneCompileForm.theme_hint,
             image_model: sceneCompileForm.image_model,
             art_style: sceneCompileForm.art_style,
+            track: sceneCompileForm.track,
             generate_audio_immediately: sceneCompileForm.generate_audio,
             tts_model: sceneCompileForm.tts_model,
             tts_voice: sceneCompileForm.tts_voice || '',
@@ -4072,9 +4466,10 @@ const app = createApp({
     // ====== 菜单 ======
     function handleMenuSelect(idx) {
       currentPage.value = idx
-      if (idx==='home') { loadRecentItems(); loadHomeStats() }
+      if (idx==='home') { loadRecentItems(); loadHomeStats(); loadIslandStats() }
       if (idx==='words') loadWords()
       if (idx==='review') loadReviewStats()
+      if (idx==='healed') loadHealed()
       if (idx==='history') loadHistory()
       if (idx==='polysemy') { loadPolysemyHot(); loadCandidates() }
       if (idx==='morphemes') { loadMorphemeRoots(); loadMorphemeWords(); loadMorphemeCandidates() }
@@ -4092,6 +4487,7 @@ const app = createApp({
       loadVideoModels()
       loadRecentItems()
       loadHomeStats()
+      loadIslandStats()
       loadUsage()
       migrateSelfTestToReview()
       loadTtsSettings()  // 编译表单音色下拉依赖该数据，需在启动时一并加载
@@ -4167,17 +4563,20 @@ const app = createApp({
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
-      selfTest, selfTestRecord, selfTestMasked, moodClassOf,
+      selfTest, selfTestRecord, selfTestMasked, moodClassOf, moodTextOf,
       // 记忆测试（独立测试页）
-      reviewStats, reviewSession, reviewAnswerInput, reviewQuestion, reviewAccuracyPct,
+      reviewStats, reviewSession, reviewAnswerInput, reviewQuestion, reviewAccuracyPct, loadReviewStats,
       questionTypeLabel, questionTypeHint, reviewOptionState,
       startReviewSession, reviewChoose, reviewSubmitCloze, reviewNext, exitReviewSession,
+      reviewHealing, reviewHealCurrent,
+      healedData, healedLoading, loadHealed, therapyTags, unhealWord,
       startSelfTest, revealSelfTest, finishSelfTest,
       artStyleOptions,
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
       openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
       recentItems, recentLoading, homeStats, homeStatsLoaded, loadHomeStats,
+      islandStats, islandTreeSlots, islandGreenTier, islandLandPath, loadIslandStats,
       polysemySearch, polysemyResult, polysemyHot, polysemyTotal, polysemyPage, polysemyLoading,
       candidateTotal, autoDetectRunning, autoDetectResult,
       polysemySelectedSet, polysemySelectedCount, polysemyAllSelected, polysemyIndeterminate,
@@ -4191,8 +4590,10 @@ const app = createApp({
       sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,
       formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
-      fetchPhonetic, playWordAudio,
+      fetchPhonetic, playWordAudio, toggleWordHealed,
       handleParse, doImport, triggerFileInput, handleFileChange,
+      importMode, articleText, extractMax, extracting, extractResult, islandConfirming,
+      selectedExtractCount, allExtractSelected, toggleExtractAll, runExtract, confirmIsland,
       handleCompile, handleSingleCompile, regenerateSingleAudio, playSingleAudio, loadHistory, viewResult, deleteHistoryItem, onHistoryFilterChange, loadRecentItems, generationTypeLabel, generationTypeTag,
       searchPolysemy, loadPolysemyHot, loadCandidates, runAutoDetect, deletePolysemy,
       toggleSelectPolysemy, toggleSelectAllPolysemy, clearPolysemySelection, batchDeletePolysemy,

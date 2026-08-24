@@ -222,6 +222,9 @@ def _parse_generate_body(body: dict) -> dict:
     tts_voice    = (body.get("tts_voice") or "").strip() if generate_audio else ""
     style        = body.get("style", "absurd")  # 缺省 'absurd'；显式传 '' 为旧版微电影
     art_style    = body.get("art_style", "")    # 可选画风，空=不指定
+    track        = body.get("track", "general") # 语境赛道：general 通用 / tech 程序员
+    if track not in ("general", "tech"):
+        track = "general"
 
     words = normalize_words(raw_words)
     if not words:
@@ -234,7 +237,7 @@ def _parse_generate_body(body: dict) -> dict:
         "words": words, "panel_count": panel_count, "theme_hint": theme_hint,
         "image_model": image_model, "generate_audio": generate_audio, "tts_model": tts_model,
         "tts_voice": tts_voice,
-        "style": style, "art_style": art_style,
+        "style": style, "art_style": art_style, "track": track,
     }
 
 
@@ -243,14 +246,14 @@ async def _run_generate(p: dict):
     words, panel_count = p["words"], p["panel_count"]
     theme_hint, image_model = p["theme_hint"], p["image_model"]
     generate_audio, tts_model = p["generate_audio"], p["tts_model"]
-    style, art_style = p["style"], p["art_style"]
+    style, art_style, track = p["style"], p["art_style"], p["track"]
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, "今日 AI 生成已达上限")
 
     yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
-    result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style)
+    result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style, track=track)
     actual_llm = result.pop("_llm_model", None) or _llm_route_model("batch")
     degraded = actual_llm != _llm_route_model("batch")
     yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 生成剧情连环画", "status": "ok",
@@ -304,8 +307,8 @@ async def _run_generate(p: dict):
         INSERT INTO generations (id,words,panel_count,theme_hint,
                                  story_title,theme,story_synopsis,body_en,model,image_model,panels,
                                  polysemy_notes,included_words,missing_words,ending_moral,
-                                 generation_type,style)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 generation_type,style,track)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         gen_id, json.dumps(words), actual_panel_count, theme_hint,
         result.get("story_title", ""), result.get("theme", ""), result.get("story_synopsis", ""),
@@ -313,7 +316,7 @@ async def _run_generate(p: dict):
         json.dumps(result.get("polysemy_notes", {})),
         json.dumps(result.get("included_words", [])),
         json.dumps(result.get("missing_words", [])),
-        result.get("ending_moral", ""), "batch", style,
+        result.get("ending_moral", ""), "batch", style, track,
     ))
     for w in words:
         conn.execute("INSERT OR IGNORE INTO words(word) VALUES(?)", (w,))
@@ -321,7 +324,7 @@ async def _run_generate(p: dict):
     conn.close()
 
     resp = {
-        "id": gen_id, "status": "success", "generation_type": "batch", "style": style,
+        "id": gen_id, "status": "success", "generation_type": "batch", "style": style, "track": track,
         "story_title": result.get("story_title", ""), "theme": result.get("theme", ""),
         "story_synopsis": result.get("story_synopsis", ""), "ending_moral": result.get("ending_moral", ""),
         "panels": panels, "words": words,
@@ -409,10 +412,13 @@ def _parse_single_body(body: dict) -> dict:
     if not word_clean or len(word_clean) < 2:
         raise HTTPException(400, "请输入一个有效英文单词")
     art_style = body.get("art_style", "comic")
+    track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
+    if track not in ("general", "tech"):
+        track = "general"
     return {
         "word": word_clean, "theme_hint": theme_hint, "image_model": image_model,
         "art_style": art_style, "generate_audio": generate_audio,
-        "tts_model": tts_model, "tts_voice": tts_voice,
+        "tts_model": tts_model, "tts_voice": tts_voice, "track": track,
     }
 
 
@@ -421,13 +427,14 @@ async def _run_single_compile(p: dict):
     word_clean, theme_hint = p["word"], p["theme_hint"]
     image_model, art_style = p["image_model"], p["art_style"]
     generate_audio, tts_model = p["generate_audio"], p["tts_model"]
+    track = p["track"]
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, "今日 AI 生成已达上限")
 
     yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "running"})
     gen_id = str(uuid.uuid4())[:8]
-    result, usage = await call_deepseek_single(word_clean, theme_hint, art_style)
+    result, usage = await call_deepseek_single(word_clean, theme_hint, art_style, track)
     actual_llm = result.pop("_llm_model", None) or _llm_route_model("single")
     degraded = actual_llm != _llm_route_model("single")
     yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 生成记忆卡片", "status": "ok",
@@ -463,8 +470,8 @@ async def _run_single_compile(p: dict):
         INSERT INTO generations (id,words,panel_count,theme_hint,
                                  story_title,theme,story_synopsis,body_en,model,image_model,panels,
                                  polysemy_notes,included_words,missing_words,ending_moral,
-                                 generation_type,style)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 generation_type,style,track)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         gen_id, json.dumps([word_clean]), 1, theme_hint,
         f"{word_clean} · 单点深耕", "单点深耕", scene_sentence.get("zh", ""), body_en,
@@ -473,7 +480,7 @@ async def _run_single_compile(p: dict):
         json.dumps({}, ensure_ascii=False),
         json.dumps([word_clean], ensure_ascii=False),
         json.dumps([], ensure_ascii=False),
-        "", "single", "",
+        "", "single", "", track,
     ))
     meaning_zh = (result.get("meaning_zh") or "").strip()
     conn.execute("""
@@ -490,7 +497,7 @@ async def _run_single_compile(p: dict):
         "scene_sentence": scene_sentence, "image_prompt": result.get("image_prompt", ""),
         "hook_type": result.get("hook_type", ""), "image_url": image_url,
         "image_error": image_error, "derivatives": result.get("derivatives", []),
-        "image_model": image_model, "art_style": art_style,
+        "image_model": image_model, "art_style": art_style, "track": track,
         "has_audio": False, "audio_id": None,
     }
 
@@ -798,7 +805,8 @@ async def review_due(override_limit: bool = False):
             SELECT s.word, s.generation_id, s.box, s.next_review_at, s.lapses, s.correct_count,
                    COALESCE(w.meaning_zh, '') AS meaning_zh
             FROM review_schedule s LEFT JOIN words w ON w.word = s.word
-            WHERE s.next_review_at <= ? ORDER BY s.next_review_at ASC
+            WHERE s.next_review_at <= ? AND (w.healed_at IS NULL OR w.healed_at = '')
+            ORDER BY s.next_review_at ASC
         """, (now,)).fetchall()
         answered_today = conn.execute(
             "SELECT COUNT(*) c FROM review_log WHERE substr(answered_at,1,10)=?", (now[:10],)
@@ -881,6 +889,94 @@ async def review_answer(req: Request):
         conn.close()
 
 
+@router.post("/api/review/heal")
+async def review_heal(req: Request):
+    """顽固词治愈自评：治愈 = 岛上多一棵树（words.healed_at 记录时间，自动退出待复习）；
+    撤销治愈 = 重新回岛疗养（排期未动，自动回归复习队列）。判定权完全在用户自评。"""
+    body = await _safe_json(req)
+    word = _clean_review_word(body.get("word", ""))
+    if not word:
+        raise HTTPException(400, "word 不能为空")
+    healed = _to_bool(body.get("healed", True))
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT word, healed_at FROM words WHERE word=?", (word,)).fetchone()
+        if not row:
+            raise HTTPException(404, "该词不在词库中")
+        now = _review_now()
+        if healed:
+            if row["healed_at"]:
+                return {"word": word, "healed": True, "healed_at": row["healed_at"], "changed": False}
+            conn.execute("UPDATE words SET healed_at=? WHERE word=?", (now, word))
+            conn.commit()
+            return {"word": word, "healed": True, "healed_at": now, "changed": True}
+        conn.execute("UPDATE words SET healed_at='' WHERE word=?", (word,))
+        conn.commit()
+        return {"word": word, "healed": False, "healed_at": "", "changed": bool(row["healed_at"])}
+    finally:
+        conn.close()
+
+
+@router.get("/api/review/healed")
+async def review_healed_list():
+    """治愈图鉴：每个已治愈词一张病历卡 —— 上岛/治愈日期、疗养天数、
+    作答统计与疗法清单（单点深耕 / 批量编译 / 场景聚汇 / 视频编译）。"""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT w.word, w.pos, w.meaning_zh, w.phonetic, w.audio_url,
+                   w.created_at, w.healed_at,
+                   COALESCE(s.box, 0) AS box,
+                   COALESCE(s.correct_count, 0) AS correct_count,
+                   COALESCE(s.lapses, 0) AS lapses,
+                   (SELECT COUNT(*) FROM review_log l WHERE l.word = w.word) AS answered_count
+            FROM words w LEFT JOIN review_schedule s ON s.word = w.word
+            WHERE w.healed_at IS NOT NULL AND w.healed_at != ''
+            ORDER BY w.healed_at DESC
+        """).fetchall()
+        items = []
+        for r in rows:
+            w = r["word"]
+            like = f'%"{w}"%'
+            therapies = {"single": 0, "batch": 0, "scene": 0, "video": 0}
+            for g in conn.execute(
+                "SELECT generation_type FROM generations WHERE words LIKE ?", (like,)
+            ).fetchall():
+                t = g["generation_type"] or "batch"
+                therapies[t] = therapies.get(t, 0) + 1
+            therapies["video"] = conn.execute(
+                "SELECT COUNT(*) c FROM videos WHERE words LIKE ?", (like,)
+            ).fetchone()["c"]
+            days = 0
+            try:
+                days = max(0, (date.fromisoformat(r["healed_at"][:10]) - date.fromisoformat(r["created_at"][:10])).days)
+            except Exception:
+                days = 0
+            items.append({
+                "word": w,
+                "pos": r["pos"] or "",
+                "meaning_zh": r["meaning_zh"] or "",
+                "phonetic": r["phonetic"] or "",
+                "audio_url": r["audio_url"] or "",
+                "created_at": r["created_at"] or "",
+                "healed_at": r["healed_at"] or "",
+                "healed_days": days,
+                "box": r["box"],
+                "correct_count": r["correct_count"],
+                "lapses": r["lapses"],
+                "answered_count": r["answered_count"],
+                "therapies": therapies,
+            })
+        total_days = sum(i["healed_days"] for i in items)
+        return {
+            "items": items,
+            "count": len(items),
+            "avg_days": round(total_days / len(items), 1) if items else 0,
+        }
+    finally:
+        conn.close()
+
+
 @router.get("/api/review/stats")
 async def review_stats():
     """复习统计：盒子分布、正确率、连续打卡（review_log 按天聚合，非估算）。"""
@@ -888,7 +984,13 @@ async def review_stats():
     try:
         now = _review_now()
         boxes = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
-        for r in conn.execute("SELECT box, COUNT(*) c FROM review_schedule GROUP BY box").fetchall():
+        # 口径与 due/quiz 一致：治愈词已"出岛疗养"，不计入复习队列分布
+        for r in conn.execute("""
+            SELECT s.box, COUNT(*) c FROM review_schedule s
+            LEFT JOIN words w ON w.word = s.word
+            WHERE w.healed_at IS NULL OR w.healed_at = ''
+            GROUP BY s.box
+        """).fetchall():
             boxes[r["box"] if r["box"] in boxes else 0] += r["c"]
         answered_total = conn.execute("SELECT COUNT(*) c FROM review_log").fetchone()["c"]
         correct_total = conn.execute(
@@ -914,8 +1016,14 @@ async def review_stats():
             "in_progress": boxes[1] + boxes[2] + boxes[3],
             "mastered": boxes[4],
             "boxes": boxes,
+            "healed": conn.execute(
+                "SELECT COUNT(*) c FROM words WHERE healed_at IS NOT NULL AND healed_at != ''"
+            ).fetchone()["c"],
             "due_now": conn.execute(
-                "SELECT COUNT(*) c FROM review_schedule WHERE next_review_at<=?", (now,)
+                """SELECT COUNT(*) c FROM review_schedule s
+                   LEFT JOIN words w ON w.word = s.word
+                   WHERE s.next_review_at<=? AND (w.healed_at IS NULL OR w.healed_at = '')""",
+                (now,),
             ).fetchone()["c"],
             "answered_total": answered_total,
             "correct_total": correct_total,
@@ -942,12 +1050,14 @@ async def review_quiz(count: int = 10, types: str = "image_recall,match,cloze"):
         due_rows = conn.execute("""
             SELECT s.word, s.generation_id, s.box, COALESCE(w.meaning_zh, '') AS meaning_zh
             FROM review_schedule s LEFT JOIN words w ON w.word = s.word
-            WHERE s.next_review_at <= ? ORDER BY s.next_review_at ASC
+            WHERE s.next_review_at <= ? AND (w.healed_at IS NULL OR w.healed_at = '')
+            ORDER BY s.next_review_at ASC
         """, (now,)).fetchall()
         other_rows = conn.execute("""
             SELECT s.word, s.generation_id, s.box, COALESCE(w.meaning_zh, '') AS meaning_zh
             FROM review_schedule s LEFT JOIN words w ON w.word = s.word
-            WHERE s.next_review_at > ? ORDER BY RANDOM()
+            WHERE s.next_review_at > ? AND (w.healed_at IS NULL OR w.healed_at = '')
+            ORDER BY RANDOM()
         """, (now,)).fetchall()
         pool = (due_rows + other_rows)[:n]
         if not pool:
@@ -1163,6 +1273,9 @@ def _parse_video_body(body: dict) -> dict:
     tts_model   = body.get("tts_model", TTS_MODEL) or TTS_MODEL
     voice       = body.get("voice", "") or default_tts_voice(tts_model)
     art_style   = body.get("art_style", "") or ""
+    track       = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
+    if track not in ("general", "tech"):
+        track = "general"
 
     words = normalize_words(raw_words)
     if not words:
@@ -1176,6 +1289,7 @@ def _parse_video_body(body: dict) -> dict:
     return {
         "words": words, "theme_hint": theme_hint, "video_model": video_model,
         "duration": duration, "tts_model": tts_model, "voice": voice, "art_style": art_style,
+        "track": track,
     }
 
 
@@ -1184,6 +1298,7 @@ async def _run_video_generate(p: dict):
     words, theme_hint = p["words"], p["theme_hint"]
     video_model, duration = p["video_model"], p["duration"]
     tts_model, voice, art_style = p["tts_model"], p["voice"], p["art_style"]
+    track = p["track"]
 
     if not consume_daily_quota("ai"):
         raise HTTPException(429, "今日 AI 生成已达上限")
@@ -1200,7 +1315,7 @@ async def _run_video_generate(p: dict):
 
     yield ("step", {"step": "llm", "model": _llm_route_model("video"), "label": "AI 编写视频脚本", "status": "running"})
     try:
-        script, _ = await call_video_script(words, theme_hint, art_style)
+        script, _ = await call_video_script(words, theme_hint, art_style, track)
     except HTTPException as e:
         # P2-1：脚本失败也回写 videos 状态，避免记录永久停留在 pending（与视频生成失败路径对齐）
         _update_video_status(vid_id, "failed", str(e.detail))
@@ -1266,20 +1381,21 @@ async def _run_video_generate(p: dict):
     conn.execute(
         """INSERT INTO generations (id,words,panel_count,theme_hint,
                                      story_title,story_synopsis,body_en,model,image_model,panels,
-                                     included_words,missing_words,generation_type,style,video_url)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                     included_words,missing_words,generation_type,style,video_url,track)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (vid_id, json.dumps(words), duration, theme_hint,
          script.get("story_title", ""), narration_en[:80], narration_en,
          actual_llm, video_model, "[]",
          json.dumps(script.get("included_words", [])),
          json.dumps(script.get("missing_words", [])),
-         "video", "video", f"/videos/{final_name}"),
+         "video", "video", f"/videos/{final_name}", track),
     )
     conn.commit()
     conn.close()
 
     yield ("result", {
         "id": vid_id, "status": "success", "generation_type": "video",
+        "track": track,
         "story_title": script.get("story_title", ""),
         "narration_en": narration_en, "narration_zh": narration_zh,
         "video_prompt": video_prompt,
@@ -1553,6 +1669,11 @@ async def fetch_phonetic(word_id: int):
 @router.delete("/api/words/{word_id}")
 async def delete_word(word_id: int):
     conn = get_db()
+    # 同步清理复习排期，避免删除后留下孤儿 schedule 虚增复习统计
+    # （撤销恢复时会按 box 0 重新入队，进度不丢入口）
+    row = conn.execute("SELECT word FROM words WHERE id=?", (word_id,)).fetchone()
+    if row:
+        conn.execute("DELETE FROM review_schedule WHERE word=?", (row["word"],))
     conn.execute("DELETE FROM words WHERE id=?", (word_id,))
     conn.commit()
     conn.close()
@@ -1633,6 +1754,12 @@ async def batch_delete_words(req: Request):
     placeholders = ",".join("?" * len(cleaned))
     conn = get_db()
     try:
+        # 同步清理复习排期（与单个删除行为一致，避免孤儿 schedule 虚增统计）
+        conn.execute(
+            f"DELETE FROM review_schedule WHERE word IN "
+            f"(SELECT word FROM words WHERE id IN ({placeholders}))",
+            cleaned,
+        )
         cur = conn.execute(f"DELETE FROM words WHERE id IN ({placeholders})", cleaned)
         deleted = cur.rowcount or 0
         conn.commit()
@@ -1643,25 +1770,39 @@ async def batch_delete_words(req: Request):
 
 @router.post("/api/words/restore")
 async def restore_words(req: Request):
-    """撤销删除：重新插入被删的单词（已存在的自动忽略，恢复时保留原词性/释义）。"""
+    """撤销删除：重新插入被删的单词（已存在的自动忽略，恢复时保留原词性/释义/治愈状态）。
+    治愈词恢复后仍为治愈（树上不缺树）；未治愈词若复习排期已随删除清理，按 box 0 重新入队。"""
     body = await _safe_json(req)
     words = body.get("words", []) or []
     conn = get_db()
     restored = 0
     try:
+        now = _review_now()
+        next_at = (datetime.now() + timedelta(days=1)).isoformat(timespec="seconds")
         for item in words:
             if isinstance(item, dict):
                 w = str(item.get("word", "")).strip().lower()
                 pos = _coerce_str(item.get("pos", ""))
                 meaning_zh = _coerce_str(item.get("meaning_zh", ""))
+                healed_at = _coerce_str(item.get("healed_at", ""))
             else:
                 w = str(item).strip().lower()
-                pos, meaning_zh = "", ""
+                pos, meaning_zh, healed_at = "", "", ""
             if not w or len(w) < 2:
                 continue
             try:
-                conn.execute("INSERT INTO words (word, pos, meaning_zh) VALUES (?,?,?)", (w, pos, meaning_zh))
+                conn.execute(
+                    "INSERT INTO words (word, pos, meaning_zh, healed_at) VALUES (?,?,?,?)",
+                    (w, pos, meaning_zh, healed_at),
+                )
                 restored += 1
+                # 未治愈词重新入队复习（box 0，次日到期）；治愈词不入队（保持治愈语义）
+                if not healed_at:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO review_schedule (word, box, next_review_at, created_at, updated_at) "
+                        "VALUES (?,?,?,?,?)",
+                        (w, 0, next_at, now, now),
+                    )
             except sqlite3.IntegrityError:
                 continue
         conn.commit()
@@ -1827,6 +1968,166 @@ async def import_words_stream(req: Request):
     if not isinstance(word_list, list):
         word_list = []
     return StreamingResponse(_sse_stream(_run_import_stream(word_list)), media_type="text/event-stream")
+
+
+# ========================================================================
+# 内容导入生岛：粘贴文章 → AI 提词 → 预览勾选 → 带释义上岛
+# ========================================================================
+
+@router.get("/api/island/stats")
+async def island_stats():
+    """词屿绿化总览：治愈一个词 = 岛上多一棵树。
+    返回岛面规模（词库）、树木数（已治愈）、绿化阶段、航海日志（streak）、
+    近期治愈词（最新 24 棵树，供前端在岛上按词渲染）。"""
+    conn = get_db()
+    try:
+        total = conn.execute("SELECT COUNT(*) c FROM words").fetchone()["c"]
+        healed_rows = conn.execute("""
+            SELECT word, healed_at FROM words
+            WHERE healed_at IS NOT NULL AND healed_at != ''
+            ORDER BY healed_at DESC
+        """).fetchall()
+        in_review = conn.execute(
+            "SELECT COUNT(*) c FROM review_schedule s LEFT JOIN words w ON w.word = s.word "
+            "WHERE w.healed_at IS NULL OR w.healed_at = ''"
+        ).fetchone()["c"]
+        # streak：与 /api/review/stats 同口径（当日有作答即打卡）
+        now = _review_now()
+        days = {r["d"] for r in conn.execute(
+            "SELECT DISTINCT substr(answered_at,1,10) d FROM review_log"
+        ).fetchall()}
+        streak = 0
+        cur = date.today()
+        if cur.isoformat() not in days:
+            cur = cur - timedelta(days=1)
+        while cur.isoformat() in days:
+            streak += 1
+            cur = cur - timedelta(days=1)
+        # 绿化阶段：治愈数决定岛的形态
+        healed = len(healed_rows)
+        levels = [
+            (0, "荒岛", "一座光秃秃的小岛，等第一批顽固词上岸"),
+            (1, "新绿", "第一棵树生根了——治好的每个词都在岛上留下生命"),
+            (5, "小树林", "树渐渐多起来，顽固词一个个被驯服"),
+            (15, "绿洲", "岛上已成绿洲，你在语境记忆上走得很远"),
+            (30, "茂密森林", "一座属于你的词汇森林——每棵树都是一个被打败的顽固词"),
+        ]
+        level_idx = 0
+        for i, (threshold, _, _) in enumerate(levels):
+            if healed >= threshold:
+                level_idx = i
+        next_threshold = levels[level_idx + 1][0] if level_idx + 1 < len(levels) else None
+        return {
+            "total_words": total,
+            "healed": healed,
+            "heal_ratio": round(healed / total, 4) if total else 0.0,
+            "in_review": in_review,
+            "streak": streak,
+            "level": levels[level_idx][1],
+            "level_desc": levels[level_idx][2],
+            "next_level": levels[level_idx + 1][1] if level_idx + 1 < len(levels) else None,
+            "next_threshold": next_threshold,
+            "trees": [{"word": r["word"], "healed_at": r["healed_at"]} for r in healed_rows[:24]],
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/api/island/extract-stream")
+async def island_extract_stream(req: Request):
+    """文章提词（SSE 流式）：LLM 从粘贴文章中提取值得学习的单词，
+    返回词 + 词性 + 释义 + 原文语境句，供前端预览勾选（不写库）。"""
+    body = await _safe_json(req)
+    text = _coerce_str(body.get("text", ""))
+    max_words = _clamp_int(body.get("max_words", 12), 3, 30, 12)
+    if len(text.strip()) < 100:
+        raise HTTPException(400, "文章太短了，至少粘贴 100 个字符的英文内容")
+
+    async def _run():
+        if not consume_daily_quota("ai"):
+            raise HTTPException(429, "今日 AI 生成已达上限")
+        yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词", "status": "running"})
+        result = await call_word_extraction(text, max_words)
+        if result.get("skipped"):
+            reason = result.get("reason", "")
+            msg = {"no_api_key": "未配置可用的 LLM 模型", "parse_error": "AI 返回结果解析失败，请重试"}.get(reason, "AI 提词失败，请重试")
+            yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词", "status": "failed", "message": msg})
+            raise HTTPException(502, msg)
+        words = result["results"]
+        if not words:
+            yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词", "status": "failed", "message": "这篇文章里没找到值得学习的单词"})
+            yield ("result", {"words": [], "total": 0})
+            return
+        # 标记词库已有词（已在岛上疗养中），供前端标注
+        conn = get_db()
+        try:
+            existing = set(r["word"] for r in conn.execute("SELECT word FROM words").fetchall())
+        finally:
+            conn.close()
+        for w in words:
+            w["existing"] = w["word"] in existing
+        yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词",
+                        "status": "ok", "message": f"提取 {len(words)} 个值得学习的词"})
+        yield ("result", {"words": words, "total": len(words)})
+
+    return StreamingResponse(_sse_stream(_run()), media_type="text/event-stream")
+
+
+@router.post("/api/island/confirm-stream")
+async def island_confirm_stream(req: Request):
+    """提词结果确认上岛（SSE 流式）：带 AI 已生成的词性释义直接入库（跳过重复补全），
+    并为新词预生成 TTS 发音。语境句不入库——真正的语境疗养交给单点深耕/批量编译。"""
+    body = await _safe_json(req)
+    items = body.get("items", [])
+    if not isinstance(items, list):
+        items = []
+    cleaned = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        w = _coerce_str(it.get("word", "")).strip().lower()
+        if w and len(w) >= 2 and w not in [c["word"] for c in cleaned]:
+            cleaned.append({
+                "word": w,
+                "pos": _coerce_str(it.get("pos", ""))[:20],
+                "meaning_zh": _coerce_str(it.get("meaning_zh", ""))[:200],
+            })
+    if not cleaned:
+        raise HTTPException(400, "未选择任何单词")
+
+    async def _run():
+        yield ("step", {"step": "import", "label": f"写入 {len(cleaned)} 个单词", "status": "running"})
+        conn = get_db()
+        imported, duplicated, new_words = 0, 0, []
+        try:
+            for it in cleaned:
+                try:
+                    conn.execute(
+                        "INSERT INTO words (word, pos, meaning_zh) VALUES (?,?,?)",
+                        (it["word"], it["pos"], it["meaning_zh"]),
+                    )
+                    imported += 1
+                    new_words.append(it["word"])
+                except sqlite3.IntegrityError:
+                    duplicated += 1
+            for w in new_words:
+                inherit_link_frequency(conn, w)
+            conn.commit()
+            yield ("step", {"step": "import", "label": f"写入 {len(cleaned)} 个单词", "status": "ok",
+                            "message": f"上岛 {imported} 个，已在岛上 {duplicated} 个"})
+            if new_words:
+                yield ("step", {"step": "tts", "model": TTS_MODEL, "label": f"生成 {len(new_words)} 个单词发音", "status": "running"})
+                audio_ok = 0
+                for w in new_words:
+                    if await _ensure_word_audio(w):
+                        audio_ok += 1
+                yield ("step", {"step": "tts", "model": TTS_MODEL, "label": "生成单词发音", "status": "ok",
+                                "message": f"成功 {audio_ok}/{len(new_words)} 个"})
+        finally:
+            conn.close()
+        yield ("result", {"imported": imported, "duplicated": duplicated, "total": len(cleaned)})
+
+    return StreamingResponse(_sse_stream(_run()), media_type="text/event-stream")
 
 
 # ========================================================================
@@ -3275,7 +3576,8 @@ def delete_scene(scene_id: int):
 
 
 async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, image_model: str, art_style: str,
-                             generate_audio: bool = False, tts_model: str = None, tts_voice: str = ""):
+                             generate_audio: bool = False, tts_model: str = None, tts_voice: str = "",
+                             track: str = "general"):
     """场景编译核心流程（生成器）：LLM → 批量文生图 → 可选 TTS，逐步 yield 状态。"""
     style = "scene"
     conn = get_db()
@@ -3303,7 +3605,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
             raise HTTPException(429, "今日 AI 生成已达上限")
 
         yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成场景连环画", "status": "running"})
-        story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style)
+        story, usage = await call_deepseek(word_list, panel_count, scene_theme, style=style, collocations=collocations, art_style=art_style, track=track)
         actual_llm = story.pop("_llm_model", None) or _llm_route_model("batch")
         degraded = actual_llm != _llm_route_model("batch")
         yield ("step", {"step": "llm", "model": actual_llm, "label": "AI 生成场景连环画", "status": "ok",
@@ -3398,8 +3700,8 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
             INSERT INTO generations (id,words,panel_count,theme_hint,
                                      story_title,theme,story_synopsis,body_en,model,image_model,panels,
                                      polysemy_notes,included_words,missing_words,ending_moral,
-                                     generation_type,style)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                     generation_type,style,track)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             gen_id, json.dumps(word_list, ensure_ascii=False), actual_panel_count, theme_hint,
             story.get("story_title", ""), story.get("theme", ""), story.get("story_synopsis", ""),
@@ -3408,7 +3710,7 @@ async def _run_scene_compile(scene_id: int, panel_count: int, theme_hint: str, i
             json.dumps(story.get("polysemy_notes", {}), ensure_ascii=False),
             json.dumps(story.get("included_words", []), ensure_ascii=False),
             json.dumps(story.get("missing_words", []), ensure_ascii=False),
-            story.get("ending_moral", ""), "scene", style,
+            story.get("ending_moral", ""), "scene", style, track,
         ))
         conn.commit()
 
@@ -3435,8 +3737,11 @@ async def compile_scene(scene_id: int, request: Request):
     generate_audio = _to_bool(body.get("generate_audio_immediately", True))
     tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
     tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
+    if track not in ("general", "tech"):
+        track = "general"
     return await _consume_result(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style,
-                                                    generate_audio, tts_model, tts_voice))
+                                                    generate_audio, tts_model, tts_voice, track))
 
 
 @router.post("/api/scenes/{scene_id}/compile-stream")
@@ -3450,8 +3755,11 @@ async def compile_scene_stream(scene_id: int, request: Request):
     generate_audio = _to_bool(body.get("generate_audio_immediately", True))
     tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
     tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
+    if track not in ("general", "tech"):
+        track = "general"
     return StreamingResponse(
         _sse_stream(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style,
-                                       generate_audio, tts_model, tts_voice)),
+                                       generate_audio, tts_model, tts_voice, track)),
         media_type="text/event-stream",
     )

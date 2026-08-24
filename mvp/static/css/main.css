@@ -1061,7 +1061,7 @@
 
   /* ===== 记忆测试（独立测试页 · Leitner 间隔重复） ===== */
   .review-stats {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px;
     margin-bottom: 28px;
   }
   .review-stat-item {
@@ -1192,9 +1192,76 @@
 
   .review-entry .empty-state { padding: 40px 0; }
 
+  /* ===== 治愈图鉴 ===== */
+  .healed-summary { display: flex; gap: 28px; margin-bottom: 24px; font-size: 14px; color: var(--text-secondary); }
+  .healed-summary b { color: var(--success, #3a7d6a); font-size: 22px; margin: 0 4px; }
+  .healed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+  .healed-card-head { display: flex; align-items: baseline; gap: 8px; }
+  .healed-word { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  .healed-phonetic { color: var(--text-tertiary); font-size: 13px; }
+  .healed-badge { margin-left: auto; font-size: 18px; }
+  .healed-meaning { margin: 8px 0 12px; color: var(--text-primary); font-size: 14px; line-height: 1.6; }
+  .healed-days { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 8px; margin-bottom: 10px; }
+  .healed-days-num { font-size: 26px; font-weight: 700; color: var(--success, #3a7d6a); font-family: 'JetBrains Mono', Menlo, monospace; }
+  .healed-days-label { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; }
+  .healed-meta { font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px; }
+  .healed-therapies { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .healed-actions { text-align: right; }
+
+  /* ===== 文章提词（内容生岛） ===== */
+  .extract-word-list { display: flex; flex-direction: column; gap: 12px; }
+  .extract-word-card {
+    display: flex; align-items: flex-start; gap: 4px;
+    padding: 14px 16px;
+    background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 10px;
+    cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .extract-word-card:hover { border-color: var(--accent, #3a7d6a); }
+  .extract-word-card.is-checked { border-color: var(--accent, #3a7d6a); box-shadow: 0 0 0 1px var(--accent, #3a7d6a); }
+  .extract-word-card.is-existing { opacity: .72; }
+  .extract-word-body { flex: 1; min-width: 0; }
+  .extract-word-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .extract-word-text { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+  .extract-word-meaning { color: var(--text-secondary); font-size: 13px; }
+  .extract-word-context { margin-top: 6px; padding: 8px 12px; background: var(--bg-secondary, rgba(0,0,0,.03)); border-radius: 6px; }
+  .extract-word-context-en { display: block; font-size: 13px; color: var(--text-primary); line-height: 1.6; font-style: italic; }
+  .extract-word-context-zh { display: block; font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+
+  /* ===== 我的词屿（首页岛屿绿化） ===== */
+  .island-panel {
+    background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px;
+    padding: 20px 24px; margin-bottom: 32px; overflow: hidden;
+  }
+  .island-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .island-title { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+  .island-meta { display: flex; gap: 20px; font-size: 13px; color: var(--text-secondary); }
+  .island-svg { display: block; width: 100%; height: auto; margin-top: 4px; }
+  /* 岛体：绿化阶段越高越绿 */
+  .island-land { transition: fill .6s ease; }
+  .island-land.green-0 { fill: rgba(148,128,96,.42); }
+  .island-land.green-1 { fill: rgba(122,148,96,.50); }
+  .island-land.green-2 { fill: rgba(92,148,96,.58); }
+  .island-land.green-3 { fill: rgba(64,140,88,.68); }
+  .island-land.green-4 { fill: rgba(46,128,74,.80); }
+  .island-pit { fill: rgba(120,100,70,.35); }
+  .tree-trunk { fill: #8a6a48; }
+  .tree-canopy.tree-0 { fill: #3a7d6a; }
+  .tree-canopy.tree-1 { fill: #4c9360; }
+  .tree-canopy.tree-2 { fill: #2f6e58; }
+  .tree-canopy.tree-3 { fill: #5ea878; }
+  /* 注意：不能用 CSS transform 动画——会覆盖 SVG transform 属性导致树偏移，只做 opacity */
+  .island-tree { animation: tree-grow .5s ease both; }
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes tree-grow { from { opacity: 0; } to { opacity: 1; } }
+  }
+  .island-caption { text-align: center; margin-top: 2px; }
+  .island-desc { font-size: 13px; color: var(--text-secondary); }
+  .island-next { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+
   /* 窄屏适配 */
   @media (max-width: 768px) {
     .review-stats { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .healed-grid { grid-template-columns: 1fr; }
     .review-modes { grid-template-columns: 1fr; }
     .review-match-word { font-size: 26px; }
     .review-cloze-sentence { font-size: 17px; }
@@ -1371,7 +1438,7 @@
 
   /* 首页数据概览纸带 */
   .home-stats {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
     margin-bottom: 32px;
   }
   .home-stat-item {

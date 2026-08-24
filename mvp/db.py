@@ -92,6 +92,7 @@ def init_db():
             audio_url TEXT DEFAULT '',
             frequency_level TEXT DEFAULT '',
             frequency_source TEXT DEFAULT 'llm',
+            healed_at TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         -- 构词拆解：词根主档（树的节点）
@@ -295,6 +296,7 @@ def init_db():
         ("generation_type", "TEXT DEFAULT 'batch'"),
         ("style", "TEXT DEFAULT ''"),
         ("video_url", "TEXT DEFAULT ''"),
+        ("track", "TEXT DEFAULT 'general'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE generations ADD COLUMN {col} {decl}")
@@ -332,6 +334,16 @@ def init_db():
     # 迁移：为 words 添加 audio_url 列（单词发音缓存）
     try:
         conn.execute("ALTER TABLE words ADD COLUMN audio_url TEXT DEFAULT ''")
+    except Exception:
+        pass
+    # 迁移：为 words 添加 healed_at 列（顽固词治愈自评时间，空 = 疗养中）
+    try:
+        conn.execute("ALTER TABLE words ADD COLUMN healed_at TEXT DEFAULT ''")
+    except Exception:
+        pass
+    # 迁移：清理孤儿复习排期（词已删除但 schedule 残留，会虚增复习统计）
+    try:
+        conn.execute("DELETE FROM review_schedule WHERE word NOT IN (SELECT word FROM words)")
     except Exception:
         pass
     # 迁移：已入库的熟词僻意种子频率一次性并入 words（仅在 words 频率为空时补齐）

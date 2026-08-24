@@ -8,6 +8,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 
 import dashscope
@@ -38,6 +39,7 @@ __all__ = [
     "_get_image_model_config",
     "call_polysemy_detection",
     "call_word_enrichment",
+    "call_word_extraction",
     "call_word_phonetic",
     "call_morpheme_detect",
     "call_morpheme_seed",
@@ -52,6 +54,45 @@ __all__ = [
     "resolve_llm_model",
     "_chat_completion",
 ]
+
+# ========================================================================
+# 语境赛道（track）：同一套记忆钩子策略，不同的语境风味
+#   general —— 通用语境（默认，考试/职场/生活场景）
+#   tech    —— 程序员语境（commit / PR review / 技术文档 / 终端报错 / standup）
+# 注入方式：user prompt 中的 CONTEXT TRACK 指令覆盖 system prompt 的商务语境设定。
+# ========================================================================
+
+TRACKS = {
+    "general": {
+        "value": "general",
+        "label": "通用语境",
+        "desc": "考试 / 职场 / 生活场景（默认）",
+    },
+    "tech": {
+        "value": "tech",
+        "label": "程序员语境",
+        "desc": "commit / PR review / 技术文档 / 终端报错 / standup",
+    },
+}
+DEFAULT_TRACK = "general"
+
+TECH_TRACK_INSTRUCTION = """CONTEXT TRACK: TECH / PROGRAMMER WORLD — this OVERRIDES any business-office context in the system prompt.
+All collocations, sentences, and image prompts MUST live in a software developer's world:
+- Scenes: code editor, terminal, git history, CI pipeline, server room, tech office, hackathon, code review, on-call incident, tech conference, whiteboard architecture talk.
+- Roles: developer, tech lead, SRE, code reviewer, new intern, product manager, QA engineer.
+- Artifacts: commit messages, pull request reviews, stack traces, changelogs, README, API docs, error logs, standup notes, architecture diagrams.
+- Sentences should read like something a developer actually says, writes in a commit/PR/doc, or sees in a terminal/log (e.g. "fix: refactor the deprecated invoice parser", "LGTM, but this will brick the legacy pipeline", "PANIC: deadline exceeded").
+- Keep ALL memory-hook strategies (absurd contrast, exaggeration, visual metaphor, side-by-side comparison) — just set them in programmer contexts, and make tech artifacts (screens, terminals, servers, keyboards, sticky notes on monitors) the visual carriers.
+- Chinese meanings may briefly note the word's tech flavor (e.g. deprecated 在技术语境中常指「已弃用的 API」)."""
+
+
+def _track_instruction(track: str) -> str:
+    """把赛道 value 转为注入 user prompt 的语境指令；general 返回通用指令。"""
+    if track == "tech":
+        return TECH_TRACK_INSTRUCTION
+    return ("CONTEXT TRACK: GENERAL — pick any vivid everyday / exam / workplace scenario that "
+            "makes the target words most memorable.")
+
 
 # ========================================================================
 # DeepSeek Prompt
@@ -95,20 +136,21 @@ JSON STRUCTURE:
 """
 
 
-def build_user_prompt(words: list[str], panel_count: int = 4, theme_hint: str = ""):
-    """构建 DeepSeek 用户提示词（旧版微电影风格，向后兼容）。"""
+def build_user_prompt(words: list[str], panel_count: int = 4, theme_hint: str = "", track: str = DEFAULT_TRACK):
+    """构建 DeepSeek 用户提示词（旧版微电影风格，向后兼容）。track 注入语境赛道指令。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = (
         f"\nTHEME HINT (optional, you may follow or override): {theme_hint}"
         if theme_hint
-        else "\nTHEME: Choose any business/workplace scenario with a clear arc (investment, negotiation, project, procurement, HR, etc.). Be creative."
+        else "\nTHEME: Choose any scenario matching the CONTEXT TRACK below, with a clear arc. Be creative."
     )
-    return f"""Please write a TOEIC business English CINEMATIC STORY split into {panel_count} visual panels.
+    return f"""Please write a business English CINEMATIC STORY split into {panel_count} visual panels.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
 
 PANEL COUNT: {panel_count} (must be exactly {panel_count} panels)
+{_track_instruction(track)}
 {theme_line}
 
 CONSTRAINTS:
@@ -162,19 +204,20 @@ JSON STRUCTURE:
 """
 
 
-def build_batch_absurd_user_prompt(words: list[str], theme_hint: str = "", art_style: str = ""):
-    """构建荒诞三连弹用户提示词。"""
+def build_batch_absurd_user_prompt(words: list[str], theme_hint: str = "", art_style: str = "", track: str = DEFAULT_TRACK):
+    """构建荒诞三连弹用户提示词。track 注入语境赛道指令。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = (
         f"\nTHEME HINT (optional): {theme_hint}"
         if theme_hint
-        else "\nTHEME: Choose any TOEIC business scenario."
+        else "\nTHEME: Choose any scenario fitting the CONTEXT TRACK below."
     )
     style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
-    return f"""Create 3 ABSURD MEMORABLE CARDS for the following TOEIC words.
+    return f"""Create 3 ABSURD MEMORABLE CARDS for the following words.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
+{_track_instruction(track)}
 {theme_line}
 {style_line}
 
@@ -235,19 +278,20 @@ JSON STRUCTURE:
 """
 
 
-def build_batch_conflict_user_prompt(words: list[str], theme_hint: str = "", art_style: str = ""):
-    """构建冲突连环用户提示词。"""
+def build_batch_conflict_user_prompt(words: list[str], theme_hint: str = "", art_style: str = "", track: str = DEFAULT_TRACK):
+    """构建冲突连环用户提示词。track 注入语境赛道指令，tech 时冲突双方为技术角色。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = (
         f"\nCONFLICT TYPE HINT (optional): {theme_hint}"
         if theme_hint
-        else "\nCONFLICT TYPE: Choose one (buyer vs seller / boss vs employee / vendor vs procurement / HQ vs branch)."
+        else "\nCONFLICT TYPE: Choose one fitting the CONTEXT TRACK (e.g. developer vs tech lead / code reviewer vs author / PM vs engineer)."
     )
     style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
-    return f"""Create a 3-ROUND CONFLICT COMIC STRIP for the following TOEIC words.
+    return f"""Create a 3-ROUND CONFLICT COMIC STRIP for the following words.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
+{_track_instruction(track)}
 {theme_line}
 {style_line}
 
@@ -302,10 +346,10 @@ JSON STRUCTURE:
 """
 
 
-def build_scene_user_prompt(words: list[str], theme_hint: str = "", collocations: list = None, art_style: str = ""):
-    """构建场景编译用户提示词，把已生成的场景词伙作为词伙约束喂入。"""
+def build_scene_user_prompt(words: list[str], theme_hint: str = "", collocations: list = None, art_style: str = "", track: str = DEFAULT_TRACK):
+    """构建场景编译用户提示词，把已生成的场景词伙作为词伙约束喂入。track 注入语境赛道指令。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
-    theme_line = f"\nTHEME: {theme_hint}" if theme_hint else "\nTHEME: Choose the scene's business scenario."
+    theme_line = f"\nTHEME: {theme_hint}" if theme_hint else "\nTHEME: Choose the scene's scenario fitting the CONTEXT TRACK below."
     col_line = ""
     if collocations:
         col_list = "\n".join(f"  - {c}" for c in collocations)
@@ -317,6 +361,7 @@ REUSE THESE SCENE COLLOCATIONS verbatim where possible (they are the scene's voc
 
 SCENE WORDS ({len(words)} total):
 {words_list}
+{_track_instruction(track)}
 {theme_line}
 {col_line}
 {style_line}
@@ -333,31 +378,32 @@ Output only the JSON object."""
 # DeepSeek AI 生成
 # ========================================================================
 
-async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = "", style: str = "", collocations: list = None, art_style: str = ""):
+async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str = "", style: str = "", collocations: list = None, art_style: str = "", track: str = DEFAULT_TRACK):
     """调用 LLM（批量编译路由，可切换模型）生成剧情连环画。
     选定模型调用失败（如限流）时自动降级到默认主模型。
     style: '' 或 'legacy' 走旧版微电影；'absurd' 荒诞三连弹；'conflict' 冲突连环；'scene' 场景编译。
     collocations: 场景编译时传入的已有场景词伙（可选）。
     art_style: 可选画风（comic/realistic/3d/watercolor/pixel），空表示不指定。
+    track: 语境赛道（general/tech），tech 时所有语境切换为程序员世界。
     """
 
     # 根据风格分派 prompt
     if style == "scene":
         system_prompt = SCENE_SYSTEM_PROMPT
-        user_prompt = build_scene_user_prompt(words, theme_hint, collocations, art_style)
+        user_prompt = build_scene_user_prompt(words, theme_hint, collocations, art_style, track)
         effective_panel_count = 3
     elif style == "absurd":
         system_prompt = BATCH_ABSURD_SYSTEM_PROMPT
-        user_prompt = build_batch_absurd_user_prompt(words, theme_hint, art_style)
+        user_prompt = build_batch_absurd_user_prompt(words, theme_hint, art_style, track)
         effective_panel_count = 3
     elif style == "conflict":
         system_prompt = BATCH_CONFLICT_SYSTEM_PROMPT
-        user_prompt = build_batch_conflict_user_prompt(words, theme_hint, art_style)
+        user_prompt = build_batch_conflict_user_prompt(words, theme_hint, art_style, track)
         effective_panel_count = 3
     else:
         # 旧版微电影（向后兼容）
         system_prompt = SYSTEM_PROMPT
-        user_prompt = build_user_prompt(words, panel_count, theme_hint)
+        user_prompt = build_user_prompt(words, panel_count, theme_hint, track)
         effective_panel_count = panel_count
 
     payload = {
@@ -494,21 +540,22 @@ def _art_style_instruction(art_style: str) -> str:
     return ART_STYLES.get(art_style, ART_STYLES[DEFAULT_ART_STYLE])
 
 
-def build_single_user_prompt(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE) -> str:
-    """构建单点深耕的用户提示词。"""
+def build_single_user_prompt(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE, track: str = DEFAULT_TRACK) -> str:
+    """构建单点深耕的用户提示词。track 注入语境赛道指令，tech 时覆盖商务语境。"""
     theme_line = (
         f"\nTHEME HINT (optional): {theme_hint}"
         if theme_hint
-        else "\nTHEME: Choose any TOEIC business context that fits the word."
+        else "\nTHEME: Choose any context that fits the word and the CONTEXT TRACK below."
     )
     if art_style == "auto":
         style_instruction = ("AUTO — 根据该单词的语义与记忆策略，从「漫画扁平风 / 写实 / 3D / 水彩 / 像素」"
                              "中自动选择最能强化记忆的画风，并在 image_prompt 的开头明确写出所选画风。")
     else:
         style_instruction = ART_STYLES.get(art_style, ART_STYLES[DEFAULT_ART_STYLE])
-    return f"""Please generate the "one word, one image, one hook" memorization card for the following TOEIC word.
+    return f"""Please generate the "one word, one image, one hook" memorization card for the following word.
 
 TARGET WORD: {word}
+{_track_instruction(track)}
 ART STYLE: {style_instruction}
 {theme_line}
 
@@ -552,10 +599,11 @@ def _extract_json(content: str) -> dict:
         )
 
 
-async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE):
+async def call_deepseek_single(word: str, theme_hint: str = "", art_style: str = DEFAULT_ART_STYLE, track: str = DEFAULT_TRACK):
     """调用 LLM（单点深耕路由，可切换模型）生成单点深耕记忆卡片（词伙 + 场景句 + 图描述 + 派生词）。
-    选定模型调用失败（如限流）时自动降级到默认主模型；LLM 偶发返回残缺/非 JSON 响应时自动重试一次。"""
-    user_prompt = build_single_user_prompt(word, theme_hint, art_style)
+    选定模型调用失败（如限流）时自动降级到默认主模型；LLM 偶发返回残缺/非 JSON 响应时自动重试一次。
+    track: 语境赛道（general/tech），tech 时语境切换为程序员世界。"""
+    user_prompt = build_single_user_prompt(word, theme_hint, art_style, track)
     payload = {
         "messages": [
             {"role": "system", "content": SINGLE_SYSTEM_PROMPT},
@@ -663,15 +711,16 @@ JSON STRUCTURE:
 """
 
 
-def build_video_user_prompt(words: list[str], theme_hint: str = "", art_style: str = ""):
-    """构建视频编译用户提示词。"""
+def build_video_user_prompt(words: list[str], theme_hint: str = "", art_style: str = "", track: str = DEFAULT_TRACK):
+    """构建视频编译用户提示词。track 注入语境赛道指令。"""
     words_list = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
     theme_line = f"\nTHEME HINT (optional): {theme_hint}" if theme_hint else ""
     style_line = f"\nART STYLE: {_art_style_instruction(art_style)}" if art_style else ""
-    return f"""Write a short MEMORY MICROFILM video for the following TOEIC words.
+    return f"""Write a short MEMORY MICROFILM video for the following words.
 
 TARGET WORDS ({len(words)} total):
 {words_list}
+{_track_instruction(track)}
 {theme_line}
 {style_line}
 
@@ -679,19 +728,19 @@ CONSTRAINTS:
 - These words may be totally unrelated (low relatedness). Creatively force-link them into ONE coherent cinematic scene.
 - STRICTLY follow the ART STYLE above when describing the visual look in video_prompt (scene, characters, textures, lighting). If ART STYLE is AUTO, you choose the most memorization-effective style and state it explicitly at the start of video_prompt.
 - narration_en: 1-3 short English sentences naturally containing as many target words as possible.
-- video_prompt: English, 1-3 sentences; describe the scene, camera motion, and how the words' business meanings are visually encoded. Lowercase for any in-video text.
+- video_prompt: English, 1-3 sentences; describe the scene, camera motion, and how the words' meanings are visually encoded. Lowercase for any in-video text.
 - Cover as many words as possible; list any not covered in missing_words.
 
 Output only the JSON object."""
 
 
-async def call_video_script(words: list[str], theme_hint: str = "", art_style: str = ""):
+async def call_video_script(words: list[str], theme_hint: str = "", art_style: str = "", track: str = DEFAULT_TRACK):
     """调用 LLM（视频脚本路由，可切换模型）生成视频脚本（旁白 + 视频提示词）。
-    选定模型调用失败（如限流）时自动降级到默认主模型。"""
+    选定模型调用失败（如限流）时自动降级到默认主模型。track: 语境赛道（general/tech）。"""
     payload = {
         "messages": [
             {"role": "system", "content": VIDEO_SYSTEM_PROMPT},
-            {"role": "user", "content": build_video_user_prompt(words, theme_hint, art_style)},
+            {"role": "user", "content": build_video_user_prompt(words, theme_hint, art_style, track)},
         ],
         "temperature": 0.8,
         "max_tokens": 2048,
@@ -1794,6 +1843,93 @@ async def call_word_enrichment(words: list[str]) -> dict:
             "pos": str(r.get("pos", ""))[:20],
             "meaning_zh": str(r.get("meaning_zh", ""))[:200],
             "frequency_level": str(r.get("frequency_level", ""))[:16],
+        })
+    return {"results": cleaned, "skipped": False}
+
+
+# ========================================================================
+# 文章提词（内容导入生岛：粘贴文章 → 提取值得学习的单词）
+# ========================================================================
+
+WORD_EXTRACT_SYSTEM = """You are a vocabulary curator for an English-learning app. Given an English article (tech blog / README / changelog / docs / news / any prose), extract the words MOST WORTH LEARNING for a Chinese learner.
+
+SELECTION CRITERIA (strict):
+1. Exclude: CET-4 level common words, function words, proper nouns, brand/product names, code identifiers (variable/function names), numbers.
+2. Include: CET-6 / TOEFL / IELTS / GRE level words, technical jargon with general value (e.g. deprecated, idempotent, latency, throughput, bottleneck), precise verbs/adjectives used well in context, and words whose meaning a learner likely cannot guess.
+3. Prefer words that actually APPEAR in the article; each word must come with its original sentence from the article as context.
+4. Rank by learning value; return at most the requested count.
+
+OUTPUT ONLY a valid JSON object, no markdown:
+{
+  "results": [
+    {
+      "word": "deprecated",
+      "pos": "adj.",
+      "meaning_zh": "已弃用的；不赞成的",
+      "context_en": "The original sentence from the article containing the word.",
+      "context_zh": "该句中文翻译"
+    }
+  ]
+}"""
+
+
+async def call_word_extraction(text: str, max_words: int = 12) -> dict:
+    """从粘贴的文章中提取值得学习的单词（走 extract 调用点，失败降级默认模型）。
+    返回 {results: [{word, pos, meaning_zh, context_en, context_zh}], skipped, reason}。"""
+    text = (text or "").strip()
+    if not text:
+        return {"results": [], "skipped": True, "reason": "empty_text"}
+    # 截断超长文章：保留开头 12000 字符足以覆盖提取需求，也控制 token 成本
+    if len(text) > 12000:
+        text = text[:12000]
+    if not get_route_llm("extract").get("api_key"):
+        return {"results": [], "skipped": True, "reason": "no_api_key"}
+
+    user_prompt = f"""ARTICLE:
+{text}
+
+MAX WORDS: {max_words}
+
+Extract up to {max_words} words most worth learning, with each word's original article sentence as context. Output ONLY the JSON object."""
+
+    messages = [
+        {"role": "system", "content": WORD_EXTRACT_SYSTEM},
+        {"role": "user", "content": user_prompt},
+    ]
+    data = await _call_llm_with_fallback(
+        messages=messages,
+        route_key="extract",
+        temperature=0.3,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+        timeout=60.0,
+        detail="文章提词",
+    )
+    if data is None:
+        return {"results": [], "skipped": True, "reason": "llm_error"}
+
+    content = data["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return {"results": [], "skipped": True, "reason": "parse_error"}
+
+    cleaned, seen = [], set()
+    for r in parsed.get("results", []):
+        w = str(r.get("word", "")).strip().lower()
+        # 提词场景只收纯英文单词（允许连字符/撇号），短语/搭配剔除
+        if not w or not re.fullmatch(r"[a-z]+(?:-[a-z]+)*", w) or w in seen:
+            continue
+        seen.add(w)
+        cleaned.append({
+            "word": w,
+            "pos": str(r.get("pos", ""))[:20],
+            "meaning_zh": str(r.get("meaning_zh", ""))[:200],
+            "context_en": str(r.get("context_en", ""))[:400],
+            "context_zh": str(r.get("context_zh", ""))[:200],
         })
     return {"results": cleaned, "skipped": False}
 
