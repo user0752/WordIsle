@@ -157,6 +157,24 @@
     font-family: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
   }
 
+  /* ===== 顶部用户身份区 ===== */
+  .app-header .header-user {
+    display: flex; align-items: center; gap: 10px;
+    margin-left: auto; padding-left: 16px;
+  }
+  .app-header .role-badge {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .app-header .role-badge.role-dev    { background: var(--accent); color: #fff; }
+  .app-header .role-badge.role-admin  { background: #b8953a; color: #fff; }
+  .app-header .role-badge.role-guest  { background: var(--accent-soft); color: var(--accent-dark); border: 1px solid var(--accent-border); }
+  .app-header .user-name {
+    font-size: 13px; color: var(--text-secondary); max-width: 140px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .app-header .guest-warn { color: #b8953a; cursor: help; }
+
   /* ===== 主体 ===== */
   .app-body { flex: 1; display: flex; overflow: hidden; }
 
@@ -1570,5 +1588,43 @@
     .page-header .el-button:not(.is-circle):not(.is-link):not(.is-text) { width: 100%; margin-left: 0 !important; }
     /* iPhone 底部安全区：音频播放器贴底时留白 */
     .audio-player { padding-bottom: env(safe-area-inset-bottom); }
+  }
+
+  /* ===== 移动端表格卡片化（≤640px 由 isMobile 切换，v-else 卡片列表） ===== */
+  .resp-card-list { display: flex; flex-direction: column; gap: 10px; }
+  .resp-card {
+    border: 1px solid var(--border-default); border-radius: var(--radius-md);
+    background: var(--bg-card); padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .resp-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .resp-card-word {
+    font-weight: 600; font-size: 15px; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .resp-card-line {
+    display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--text-secondary);
+    min-width: 0;
+  }
+  .resp-card-line .resp-card-label {
+    flex-shrink: 0; color: var(--text-muted); font-size: 12px; padding-top: 2px;
+  }
+  .resp-card-line > span:not(.resp-card-label) { min-width: 0; overflow-wrap: anywhere; }
+  .resp-card-line-stacked { flex-direction: column; gap: 2px; }
+  .resp-card-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding-top: 4px; border-top: 1px dashed var(--border-subtle); }
+  .resp-card-actions .el-button { margin-left: 0; }
+  .resp-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .resp-card-note { color: var(--text-tertiary); line-height: 1.6; }
+  @media (max-width: 480px) {
+    .resp-card-head .resp-card-word { font-size: 14px; }
+    .resp-card { padding: 10px; }
+  }
+
+  /* ===== 移动端 header：安全区 + 身份区收缩 ===== */
+  @media (max-width: 640px) {
+    .app-header { height: 52px; padding: env(safe-area-inset-top) 12px 0; }
+    .app-header .logo-text { font-size: 14px; }
+    .app-header .header-user { gap: 6px; padding-left: 8px; }
+    .app-header .user-name { max-width: 80px; font-size: 12px; }
+    .app-header .role-badge { font-size: 10px; padding: 1px 6px; }
   }
 

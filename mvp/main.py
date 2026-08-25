@@ -7,7 +7,10 @@ TOEIC 顽固词深度加工系统 - MVP 个人版
 访问: http://localhost:8000
 """
 
+import os
 import re
+import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -18,6 +21,8 @@ from config import *
 from middleware import setup_middleware
 from services import *
 from db import *
+from auth import router as auth_router
+from auth import init_system_db
 from routes import router
 
 AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,9 +61,30 @@ def _load_index_html() -> str:
 
 from contextlib import asynccontextmanager
 
+# 旧全局库（迁移源）在模块导入时固化，避免被测试覆盖 DB_PATH 后指向错误源文件
+_LEGACY_DB_PATH = DB_PATH
+
+
+def _migrate_legacy_dev_db():
+    """首次启动：把旧全局 words.db 复制为开发者库 data/user/dev-wordisle.db（原样迁移）。
+    幂等：目标库已存在则跳过。可用环境变量 MIGRATE_LEGACY_DB=0 关闭（回归测试用）。"""
+    target = USER_DATA_DIR / "dev-wordisle.db"
+    if not _LEGACY_DB_PATH.exists() or target.exists():
+        return
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copy2(_LEGACY_DB_PATH, target)
+        print(f"[migrate] 旧全局库 {_LEGACY_DB_PATH.name} → 开发者库 {target.name}")
+    except Exception as e:
+        print(f"[migrate] 迁移失败（请手动复制 {_LEGACY_DB_PATH} → {target}）：{e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    if os.getenv("MIGRATE_LEGACY_DB", "1") == "1":
+        _migrate_legacy_dev_db()
+    init_system_db()        # 全局库：users / quotas + 开发者/管理员种子
+    init_db(DEV_USERNAME)   # 开发者库（含旧数据迁移后的种子/表结构）
     yield
 
 app = FastAPI(title="TOEIC MVP", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -70,7 +96,9 @@ app.mount("/audios", StaticFiles(directory=str(AUDIOS_DIR)), name="audios")
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 app.mount("/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
 
-# 注册路由
+# 认证路由（/login、/api/login*、/api/me）——不强制登录
+app.include_router(auth_router)
+# 业务路由——router 级依赖强制登录（get_current_user）
 app.include_router(router)
 
 # ========================================================================

@@ -9,6 +9,7 @@
 """
 import json
 import asyncio
+import os
 import sqlite3
 import sys
 import tempfile
@@ -21,6 +22,7 @@ from unittest import mock
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+import auth as auth_module
 import db as db_module
 import main
 import routes as routes_module
@@ -85,16 +87,26 @@ def _mock_image_success():
     )
 
 
+def _patch_test_paths(cls):
+    """把业务库/系统库/媒体目录全部指向临时目录，并关闭认证与旧库迁移。
+    业务库对齐 get_db("dev") 的实际路径（USER_DATA_DIR/dev-wordisle.db）。"""
+    os.environ["MIGRATE_LEGACY_DB"] = "0"
+    auth_module.AUTH_DISABLED = True
+    main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "dev-wordisle.db"
+    auth_module.SYSTEM_DB_PATH = routes_module.SYSTEM_DB_PATH = db_module.SYSTEM_DB_PATH = cls._tmp_path / "system.db"
+    db_module.USER_DATA_DIR = cls._tmp_path
+    main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
+    db_module.AUDIOS_DIR.mkdir(exist_ok=True)
+    main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"
+    routes_module.VIDEOS_DIR.mkdir(exist_ok=True)
+
+
 class MainAppTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls._tmp_path = Path(cls._tmp.name)
-        main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "words.db"
-        main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
-        db_module.AUDIOS_DIR.mkdir(exist_ok=True)
-        main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"
-        routes_module.VIDEOS_DIR.mkdir(exist_ok=True)
+        _patch_test_paths(cls)
 
     @classmethod
     def tearDownClass(cls):
@@ -835,12 +847,75 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_polysemy_hot_orders_by_star_count(self):
         """P2-2 回归：热词排序应按实星(★)数量降序，★★★★★ 排在 ★★★★☆ 之前。"""
+        # 种子数据已移除（产品定位：一切源自词库），测试自造数据
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            for w, f in [("alpha", "★★★☆☆"), ("beta", "★★★★★"), ("gamma", "★★★★☆"), ("delta", "★☆☆☆☆")]:
+                conn.execute("INSERT OR IGNORE INTO polysemy (word, frequency_level) VALUES (?,?)", (w, f))
+            conn.commit()
+        finally:
+            conn.close()
         r = self.client.get("/api/polysemy/hot?page=1")
         self.assertEqual(r.status_code, 200)
         items = r.json()["items"]
         self.assertTrue(items)
         stars = [it["frequency_level"].count("★") for it in items]
         self.assertEqual(stars, sorted(stars, reverse=True))
+
+    # ================= Phase B: 数据治理（LLM 输出 → 入库防线 + 一键清理） =================
+
+    def test_is_clean_ai_word_heuristics(self):
+        """入库防线：黑名单词、非法字符、乱码词应拒绝；正常词放行。"""
+        self.assertFalse(db_module.is_clean_ai_word("inplicate"))      # 黑名单测试残留
+        self.assertFalse(db_module.is_clean_ai_word("deprecated"))     # 黑名单技术词
+        self.assertFalse(db_module.is_clean_ai_word("abc!!xyz"))       # 含非法字符
+        self.assertFalse(db_module.is_clean_ai_word("lllllll"))        # 连续重复字母乱码
+        self.assertFalse(db_module.is_clean_ai_word("a"))              # 太短
+        self.assertTrue(db_module.is_clean_ai_word("accommodate"))
+        self.assertTrue(db_module.is_clean_ai_word("delegate"))
+
+    def test_clean_meaning_residue_strips_meta(self):
+        """释义残留清理：剥离"（技术语境…）"会话注释，保留真实释义；正常释义不动。"""
+        self.assertEqual(
+            db_module.clean_meaning_residue("耗尽；使枯竭（技术语境中常指资源/内存/配额被耗尽）"),
+            "耗尽；使枯竭",
+        )
+        # administer 的"（政策、测试等）"是合法商务释义，不应误清
+        self.assertEqual(
+            db_module.clean_meaning_residue("管理，经营；执行，实施（政策、测试等）；给予，施用"),
+            "管理，经营；执行，实施（政策、测试等）；给予，施用",
+        )
+        self.assertEqual(db_module.clean_meaning_residue("正常释义，无需清理"), "正常释义，无需清理")
+
+    def test_clean_suspicious_endpoint(self):
+        """一键清理：开发者调用应删除黑名单测试词并剥离释义残留。"""
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            conn.execute("DELETE FROM words WHERE word IN ('inplicate','meeting','deplete','administer')")
+            conn.execute("INSERT INTO words (word, meaning_zh) VALUES ('inplicate', '（数学）内摆线；（几何）内旋轮线')")
+            conn.execute("INSERT INTO words (word, meaning_zh) VALUES ('meeting', '')")
+            conn.execute("INSERT INTO words (word, meaning_zh) VALUES ('deplete', '耗尽；使枯竭（技术语境中常指资源/内存/配额被耗尽）')")
+            conn.execute("INSERT INTO words (word, meaning_zh) VALUES ('administer', '管理，经营；执行，实施（政策、测试等）')")
+            conn.commit()
+        finally:
+            conn.close()
+        r = self.client.post("/api/polysemy/clean-suspicious")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["deleted_count"], 2)          # inplicate + meeting
+        self.assertIn("inplicate", body["deleted"])
+        self.assertEqual(body["fixed_count"], 1)            # deplete
+        self.assertIn("deplete", body["fixed"])
+        conn = sqlite3.connect(str(main.DB_PATH))
+        try:
+            gone = conn.execute("SELECT COUNT(*) c FROM words WHERE word IN ('inplicate','meeting')").fetchone()[0]
+            self.assertEqual(gone, 0)
+            deplete = conn.execute("SELECT meaning_zh FROM words WHERE word='deplete'").fetchone()
+            self.assertEqual(deplete[0], "耗尽；使枯竭")
+            admin = conn.execute("SELECT meaning_zh FROM words WHERE word='administer'").fetchone()
+            self.assertEqual(admin[0], "管理，经营；执行，实施（政策、测试等）")   # 合法释义不动
+        finally:
+            conn.close()
 
 
 def _seed_review_single_gen(gen_id, word, image_url="/images/a.png", scene_en="He showed a clear preference for the design."):
@@ -873,11 +948,7 @@ class ReviewApiTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls._tmp_path = Path(cls._tmp.name)
-        main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "words.db"
-        main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
-        db_module.AUDIOS_DIR.mkdir(exist_ok=True)
-        main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"
-        routes_module.VIDEOS_DIR.mkdir(exist_ok=True)
+        _patch_test_paths(cls)
 
     @classmethod
     def tearDownClass(cls):

@@ -70,6 +70,13 @@ function _isRetryable(errObj) {
   return s == null                // 原生网络错误（TypeError 等）不带 status 属性
 }
 
+/** 401 会话失效：统一跳登录页（登录页本身不跳转）。 */
+function _handle401(resp) {
+  if (resp.status === 401 && window.location.pathname !== '/login') {
+    window.location.href = '/login'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 通用请求
 //   签名与原 index.html 里的 api() 兼容，另支持可选配置：
@@ -95,6 +102,7 @@ export async function api(url, opts = {}, cfg = {}) {
           signal: controller ? controller.signal : undefined,
         })
         if (!resp.ok) {
+          _handle401(resp)
           const errObj = await _toError(resp)
           if (attempt < retries && _isRetryable(errObj)) {
             attempt++
@@ -147,6 +155,7 @@ export async function apiStream(url, opts = {}, { onStep, onResult } = {}, cfg =
       signal: controller.signal,
     })
     if (!resp.ok) {
+      _handle401(resp)
       const errObj = await _toError(resp)
       throw new Error(errObj.msg)
     }
