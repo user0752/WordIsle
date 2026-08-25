@@ -6,9 +6,11 @@ DeepSeek AI 生成、百炼 TTS 语音合成、百炼文生图。
 
 import asyncio
 import base64
+import functools
 import json
 import logging
 import re
+import sys
 import time
 
 import dashscope
@@ -800,36 +802,76 @@ def _wrap_text(text: str, max_chars: int = 28) -> str:
 
 
 def _pick_font() -> str:
-    """挑选一个可用的 Windows 中文字体路径供 drawtext 使用。"""
+    """挑选一个可用的系统字体路径供 drawtext 使用（跨平台）。
+
+    Linux 下载体中文字体在前（当前字幕为英文，置前是为中文扩展预留），
+    英文字体兜底；全部缺失时返回空串（不阻断，仅无字体渲染）。
+    """
     import os as _os
-    candidates = [
-        r"C:\Windows\Fonts\arial.ttf",
-        r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\arialbd.ttf",
-    ]
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arialbd.ttf",
+        ]
+    else:
+        candidates = [
+            # 中文字体在前（当前字幕为英文，置前是为中文扩展预留）
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            # 英文字体兜底
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
     for f in candidates:
         if _os.path.exists(f):
             return f.replace("\\", "/")
     return ""
 
 
+@functools.lru_cache(maxsize=None)
+def _ffmpeg_has_drawtext(exe: str) -> bool:
+    """探测 ffmpeg 是否编译了 drawtext 滤镜（依赖 libfreetype），结果进程内缓存。"""
+    import subprocess as _sp
+    try:
+        r = _sp.run([exe, "-hide_banner", "-filters"],
+                    capture_output=True, text=True, timeout=10)
+        return r.returncode == 0 and "drawtext" in r.stdout
+    except Exception:
+        return False
+
+
+def _pick_ffmpeg_exe() -> str:
+    """优先返回支持 drawtext 的系统 ffmpeg；否则回退 imageio-ffmpeg 自带二进制。"""
+    import shutil as _shutil
+    sys_ff = _shutil.which("ffmpeg")
+    if sys_ff and _ffmpeg_has_drawtext(sys_ff):
+        logger.info("ffmpeg 使用系统版本: %s", sys_ff)
+        return sys_ff
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        logger.info("ffmpeg 回退 imageio-ffmpeg: %s", exe)
+        return exe
+    except Exception:
+        logger.warning("未找到可用 ffmpeg（系统缺失且 imageio-ffmpeg 不可用）")
+        return sys_ff or "ffmpeg"
+
+
 def mux_video_with_audio(video_path: str, audio_bytes: bytes, subtitle_text: str, output_path: str) -> None:
     """用 ffmpeg 把 TTS 旁白合成进无声视频，并烧录英文字幕。
 
     必须使用完整版 ffmpeg（含 drawtext/libfreetype 与 aac 编码器）。
-    系统 PATH 里的 ffmpeg 可能是精简版（--disable-everything），因此优先采用
-    imageio-ffmpeg 自带的完整二进制。
+    ffmpeg 选择策略：优先系统 ffmpeg 且带 drawtext（_pick_ffmpeg_exe），
+    imageio-ffmpeg 自带二进制仅作回退。
     """
     import subprocess
     import tempfile
     import os as _os
     import shutil as _shutil
 
-    try:
-        import imageio_ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        ffmpeg_exe = "ffmpeg"
+    ffmpeg_exe = _pick_ffmpeg_exe()
 
     workdir = tempfile.mkdtemp(prefix="toeic_video_")
     audio_name = "audio.mp3"

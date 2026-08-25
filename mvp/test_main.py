@@ -10,6 +10,7 @@
 import json
 import asyncio
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
@@ -320,7 +321,7 @@ class MainAppTestCase(unittest.TestCase):
     # ================= #18: /api/generate 返回剧情连环画结构 =================
 
     def test_generate_returns_panels(self):
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style="", track=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
@@ -340,7 +341,7 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_generate_image_fail_fast(self):
         """fail-fast：任一文生图失败，整体返回失败并提示更换模型，不落库。"""
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style="", track=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
@@ -361,7 +362,7 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_generate_rejects_missing_image_model(self):
         """去掉兜底：未选文生图模型必须明确报错。"""
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style="", track=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
@@ -372,7 +373,7 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_generate_stream_emits_steps_and_result(self):
         """SSE 流式：应产出 step 事件（含模型名）与 result 事件（含最终结果）。"""
-        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style=""):
+        async def fake_deepseek(words, panel_count=4, theme_hint="", style="", art_style="", track=""):
             return dict(FAKE_RESULT), {"total_tokens": 5}
 
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
@@ -774,7 +775,7 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_video_script_failure_marks_video_failed(self):
         """P2-1 回归：视频脚本 LLM 失败时，videos 记录应更新为 failed 而非永久停留 pending。"""
-        async def fake_script(words, theme_hint="", art_style=""):
+        async def fake_script(words, theme_hint="", art_style="", track=""):
             raise HTTPException(502, "脚本生成失败(mock)")
 
         with mock.patch.object(routes_module, "call_video_script", fake_script):
@@ -794,7 +795,7 @@ class MainAppTestCase(unittest.TestCase):
 
     def test_video_generate_completes_with_mux(self):
         """P1-1 回归：mux 移入线程池后，视频编译全流程（脚本→视频→TTS→mux）参数透传与完成状态不变。"""
-        async def fake_script(words, theme_hint="", art_style=""):
+        async def fake_script(words, theme_hint="", art_style="", track=""):
             return {
                 "story_title": "Test Video", "narration_en": "Hello world.",
                 "narration_zh": "你好", "video_prompt": "a video prompt",
@@ -1165,6 +1166,56 @@ class ReviewApiTestCase(unittest.TestCase):
             conn.close()
         questions = self.client.get("/api/review/quiz?count=5").json()["questions"]
         self.assertEqual([q for q in questions if q["word"] == "bare"], [])
+
+
+class FontAndFFmpegPickTest(unittest.TestCase):
+    """Linux 部署适配：跨平台字体挑选与 ffmpeg 选择策略（设计文档 3.2.1 / 3.2.3）。"""
+
+    def test_pick_font_win32_hits_arial(self):
+        def exists(p):
+            return p == r"C:\Windows\Fonts\arial.ttf"
+        with mock.patch("services.sys.platform", "win32"), \
+             mock.patch("os.path.exists", side_effect=exists):
+            self.assertEqual(services_module._pick_font(), "C:/Windows/Fonts/arial.ttf")
+
+    def test_pick_font_linux_hit_and_missing_all(self):
+        def exists(p):
+            return p == "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        with mock.patch("services.sys.platform", "linux"), \
+             mock.patch("os.path.exists", side_effect=exists):
+            self.assertEqual(services_module._pick_font(),
+                             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+        with mock.patch("services.sys.platform", "linux"), \
+             mock.patch("os.path.exists", return_value=False):
+            self.assertEqual(services_module._pick_font(), "")
+
+    def test_pick_ffmpeg_prefers_system_with_drawtext(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("services._ffmpeg_has_drawtext", return_value=True):
+            self.assertEqual(services_module._pick_ffmpeg_exe(), "/usr/bin/ffmpeg")
+
+    def test_pick_ffmpeg_falls_back_to_imageio(self):
+        fake = mock.Mock(get_ffmpeg_exe=lambda: "/opt/imageio/ffmpeg")
+        with mock.patch("shutil.which", return_value=None), \
+             mock.patch.dict(sys.modules, {"imageio_ffmpeg": fake}):
+            self.assertEqual(services_module._pick_ffmpeg_exe(), "/opt/imageio/ffmpeg")
+
+    def test_pick_ffmpeg_falls_back_when_system_has_no_drawtext(self):
+        fake = mock.Mock(get_ffmpeg_exe=lambda: "/opt/imageio/ffmpeg")
+        with mock.patch("shutil.which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch("services._ffmpeg_has_drawtext", return_value=False), \
+             mock.patch.dict(sys.modules, {"imageio_ffmpeg": fake}):
+            self.assertEqual(services_module._pick_ffmpeg_exe(), "/opt/imageio/ffmpeg")
+
+    def test_pick_ffmpeg_none_available_returns_bare_command(self):
+        real_import = __import__
+        def guarded_import(name, *args, **kwargs):
+            if name == "imageio_ffmpeg":
+                raise ImportError("blocked")
+            return real_import(name, *args, **kwargs)
+        with mock.patch("shutil.which", return_value=None), \
+             mock.patch("builtins.__import__", side_effect=guarded_import):
+            self.assertEqual(services_module._pick_ffmpeg_exe(), "ffmpeg")
 
 
 if __name__ == "__main__":
