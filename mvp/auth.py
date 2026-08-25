@@ -24,13 +24,24 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
 from config import *
-from db import current_uid, ensure_db_initialized
+from db import current_uid, current_user, ensure_db_initialized, setup_stream_logger
 
 ROLE_DEV = "dev"
 ROLE_ADMIN = "admin"
 ROLE_GUEST = "guest"
 
 router = APIRouter()
+
+# 认证审计日志：登录 / 退出 / 游客进入 均记录 谁 + 何时 + 从哪个 IP，进后台日志留痕
+logger = setup_stream_logger("toeic.auth")
+
+
+def _client_ip(request: Request) -> str:
+    """取客户端 IP：优先 x-forwarded-for（nginx 反代场景），否则直连地址。"""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "-"
 
 # ========================================================================
 # 全局库（users / quotas）
@@ -184,16 +195,20 @@ def _default_dev_user() -> dict:
 
 async def get_current_user(request: Request) -> dict:
     """认证依赖：强制登录（除放行名单外）。
-    解析会话 Cookie → 校验 → 写入 current_uid contextvar → 返回用户信息。
+    解析会话 Cookie → 校验 → 写入 current_uid / current_user contextvar → 返回用户信息。
     业务路由经 router 级 dependencies 注入本依赖。"""
     if AUTH_DISABLED:
         # 本地开发 / 回归测试：放行并返回默认开发者身份
-        current_uid.set(DEV_USERNAME)
-        return _default_dev_user()
+        _user = _default_dev_user()
+        current_uid.set(_user["uid"])
+        current_user.set(_user)
+        return _user
     if request.url.path in ("/api/health",):
         # 健康检查（监控自检）放行，身份归开发者库
-        current_uid.set(DEV_USERNAME)
-        return _default_dev_user()
+        _user = _default_dev_user()
+        current_uid.set(_user["uid"])
+        current_user.set(_user)
+        return _user
     token = request.cookies.get(AUTH_COOKIE)
     uid = verify_session_token(token) if token else None
     if not uid:
@@ -202,6 +217,7 @@ async def get_current_user(request: Request) -> dict:
     if not user:
         raise HTTPException(401, "用户不存在")
     current_uid.set(uid)
+    current_user.set(user)
     ensure_db_initialized(uid)
     return user
 
@@ -319,30 +335,44 @@ async def login(req: Request, resp: Response):
     body = await _read_json(req)
     username = str(body.get("username", "")).strip()
     password = str(body.get("password", ""))
+    ip = _client_ip(req)
     if not username or not password:
         raise HTTPException(400, "请输入账号和密码")
     user = get_user_by_username(username)
     if not user or not user["password_hash"] or not _verify_password(password, user["password_hash"]):
+        logger.warning("登录失败 user=%s ip=%s 原因=账号或密码错误", username, ip)
         raise HTTPException(401, "账号或密码错误")
     _set_session_cookie(resp, user["uid"])
     current_uid.set(user["uid"])
+    current_user.set(user)
     ensure_db_initialized(user["uid"])
+    logger.info("登录成功 user=%s uid=%s role=%s ip=%s", user["username"], user["uid"], user["role"], ip)
     return {"uid": user["uid"], "username": user["username"], "role": user["role"]}
 
 
 @router.post("/api/login-guest")
-async def login_guest(resp: Response):
+async def login_guest(req: Request, resp: Response):
     """游客直接进入：分配随机 uid，写会话 Cookie（数据随浏览器保存）。"""
     user = create_guest_user()
     _set_session_cookie(resp, user["uid"])
     current_uid.set(user["uid"])
+    current_user.set(user)
     ensure_db_initialized(user["uid"])
+    logger.info("游客登录 uid=%s username=%s role=%s ip=%s", user["uid"], user["username"], user["role"], _client_ip(req))
     return {"uid": user["uid"], "username": user["username"], "role": user["role"]}
 
 
 @router.post("/api/logout")
-async def logout(resp: Response):
+async def logout(req: Request, resp: Response):
+    token = req.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if user:
+        current_uid.set(user["uid"])
+        current_user.set(user)
     resp.delete_cookie(AUTH_COOKIE, path="/")
+    logger.info("退出登录 uid=%s username=%s role=%s ip=%s",
+                uid or "-", (user or {}).get("username", "-"), (user or {}).get("role", "-"), _client_ip(req))
     return {"ok": True}
 
 
@@ -358,6 +388,8 @@ async def me(request: Request):
             raise HTTPException(401, "未登录或登录已过期")
         user = get_user(uid) or _default_dev_user()
         ensure_db_initialized(user["uid"])
+    current_uid.set(user["uid"])
+    current_user.set(user)
     return {
         "uid": user["uid"],
         "username": user["username"],

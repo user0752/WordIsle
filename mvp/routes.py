@@ -6,7 +6,6 @@ TOEIC MVP API 路由
 
 import asyncio
 import json
-import logging
 import random
 import re
 import sqlite3
@@ -22,12 +21,7 @@ from db import *
 from services import *
 from auth import get_current_user, require_quota
 
-logger = logging.getLogger("toeic.routes")
-if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
-    logger.addHandler(_h)
-    logger.setLevel(logging.INFO)
+logger = setup_stream_logger("toeic.routes")
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 

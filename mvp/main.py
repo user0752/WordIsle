@@ -111,15 +111,16 @@ async def index():
     return HTMLResponse(_load_index_html(), headers={"Cache-Control": "no-store"})
 
 # ========================================================================
-# 日志落盘：toeic.* 业务日志 JSON 单行，按天轮转
+# 日志落盘：toeic.* 业务日志 JSON 单行，按天轮转（含用户身份 uid/username/role）
 # ========================================================================
 
 def _setup_logging():
     """给 toeic.* logger 追加按天轮转的 JSON 文件 handler。
 
     不做完整控制台/多格式堆叠，保持轻量：
-      - 保留 services/routes 自己的 StreamHandler（走 stdout，供启动管理器 tail）
+      - 保留 services/routes/auth 自己的 StreamHandler（走 stdout，供启动管理器 tail）
       - 这里只补一层落盘，关掉 GUI/管理器后日志不丢、可按天回查
+      - 落盘与访问日志都带 user 身份（谁调用了什么模型/接口）
     """
     import json as _json
     import logging
@@ -139,6 +140,9 @@ def _setup_logging():
                 "ts": _dt.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds"),
                 "level": record.levelname,
                 "svc": record.name,
+                "uid": getattr(record, "uid", "-"),
+                "username": getattr(record, "username", "-"),
+                "role": getattr(record, "role", "-"),
                 "msg": record.getMessage(),
             }
             if record.exc_info:
@@ -152,7 +156,42 @@ def _setup_logging():
     )
     fh.suffix = "%Y-%m-%d"
     fh.setFormatter(_JsonFormatter())
+    fh.addFilter(UserLogFilter())  # 每条落盘记录都注入 uid/username/role
     logger.addHandler(fh)
+
+
+def _uvicorn_log_config() -> dict:
+    """自定义 uvicorn 日志配置：access 行末尾追加当前用户（uid/username/role），
+    让后台能看出每个 API 请求是谁发起的（谁做了什么）。
+    user 字段由 db.UserLogFilter 从 current_user contextvar 注入。"""
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "filters": {
+            "user": {"()": "db.UserLogFilter"},
+        },
+        "formatters": {
+            "default": {
+                "()": "uvicorn.logging.DefaultFormatter",
+                "fmt": "%(levelprefix)s %(message)s",
+                "use_colors": None,
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": ('%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s '
+                        'user=%(username)s(uid=%(uid)s role=%(role)s)'),
+            },
+        },
+        "handlers": {
+            "default": {"formatter": "default", "class": "logging.StreamHandler", "stream": "ext://sys.stderr"},
+            "access": {"formatter": "access", "class": "logging.StreamHandler", "stream": "ext://sys.stderr"},
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False, "filters": ["user"]},
+        },
+    }
 
 # ========================================================================
 # 启动
@@ -161,5 +200,6 @@ def _setup_logging():
 if __name__ == "__main__":
     import uvicorn
     _setup_logging()
-    # access_log=True：保留请求日志供 manager 落盘 access.*.log 留痕；终端由 manager 里旁路处理
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", access_log=True)
+    # access 日志带用户身份（谁调用了什么接口）；终端由 manager 里旁路处理
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", access_log=True,
+                log_config=_uvicorn_log_config())

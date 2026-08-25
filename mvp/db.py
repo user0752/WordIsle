@@ -5,6 +5,7 @@ SQLite 连接管理、表初始化、单词清洗、每日配额、参数校验�
 """
 
 import json
+import logging
 import re
 import sqlite3
 from contextvars import ContextVar
@@ -30,6 +31,9 @@ __all__ = [
     "get_model_usage_stats",
     "inherit_link_frequency",
     "current_uid",
+    "current_user",
+    "UserLogFilter",
+    "setup_stream_logger",
     "_user_db_path",
     "ensure_db_initialized",
     "AI_WORD_BLACKLIST",
@@ -43,6 +47,48 @@ __all__ = [
 
 # 当前请求所属用户 uid（由认证依赖写入；每请求一个上下文，天然线程/协程安全）
 current_uid: ContextVar = ContextVar("current_uid", default=None)
+
+# 当前请求所属用户完整信息（uid/username/role，由认证依赖写入；供日志过滤器注入用户身份）
+current_user: ContextVar = ContextVar("current_user", default=None)
+
+
+class UserLogFilter(logging.Filter):
+    """把当前请求用户（uid/username/role）注入每条 toeic.* / uvicorn.access 日志记录。
+
+    让后台日志能回答「谁调用了什么模型、做了什么」；无用户上下文（启动 / 健康检查等）
+    时回退为 '-'，保证任何记录都带 user 字段、格式化不报错。
+    """
+
+    def filter(self, record):
+        user = current_user.get(None)
+        if user:
+            record.uid = user.get("uid") or "-"
+            record.username = user.get("username") or record.uid
+            record.role = user.get("role") or "-"
+        else:
+            uid = current_uid.get(None)
+            record.uid = uid or "-"
+            record.username = record.uid
+            record.role = "-"
+        return True
+
+
+def setup_stream_logger(name: str) -> logging.Logger:
+    """创建带用户身份注入的控制台 logger（stdout / systemd journal 可见 user=...）。
+
+    services / routes / auth 共用同一套格式，保证后台日志每一行都带上
+    user=用户名(uid=xx role=xx)，便于追查「谁调用了什么模型、做了什么」。
+    """
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(logging.Formatter(
+            "%(levelname)s [%(name)s] user=%(username)s(uid=%(uid)s role=%(role)s) %(message)s"
+        ))
+        _h.addFilter(UserLogFilter())
+        logger.addHandler(_h)
+        logger.setLevel(logging.INFO)
+    return logger
 
 # 已初始化过的用户库（进程内缓存，避免每请求重跑 init_db）
 _initialized_dbs: set[str] = set()

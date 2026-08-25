@@ -8,7 +8,6 @@ import asyncio
 import base64
 import functools
 import json
-import logging
 import re
 import sys
 import time
@@ -19,15 +18,11 @@ from dashscope.audio.http_tts import HttpSpeechSynthesizer
 from fastapi import HTTPException
 
 from config import *
-from db import record_model_usage
+from db import record_model_usage, setup_stream_logger
 
-# 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）
-logger = logging.getLogger("toeic.services")
-if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
-    logger.addHandler(_h)
-    logger.setLevel(logging.INFO)
+# 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）。
+# 每条日志自动带 user=uid/username/role，回答「谁调用了什么模型、做了什么」。
+logger = setup_stream_logger("toeic.services")
 
 __all__ = [
     "build_user_prompt",
