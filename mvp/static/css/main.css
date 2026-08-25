@@ -1628,3 +1628,142 @@
     .app-header .role-badge { font-size: 10px; padding: 1px 6px; }
   }
 
+  /* ================================================
+     移动端最终适配（≤768px 主战场，覆盖内联固定宽度）
+     原则：桌面端零影响；窄屏用 !important 压平内联 style
+     ================================================ */
+  @media (max-width: 768px) {
+    /* ---- 1. 输入 / 选择 / 数字输入：内联固定宽度 → 100% ---- */
+    .page-container .el-input,
+    .page-container .el-select,
+    .page-container .el-input-number,
+    .page-container .el-autocomplete,
+    .el-dialog .el-input,
+    .el-dialog .el-select,
+    .el-dialog .el-input-number,
+    .el-dialog .el-autocomplete {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    /* el-select 因内容过长触发的竖直弹层是 Element Plus 自管，无需处理 */
+
+    /* ---- 2. 表单行：横向控件组允许换行（目标单词/模型选择等行） ---- */
+    .el-form-item__content {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 4px;
+    }
+    .el-form-item__content > .el-button { min-height: 44px; }
+
+    /* ---- 3. el-col 栅格单列堆叠（span=6/8/10/12/14 全部纵向） ---- */
+    .el-row > .el-col {
+      flex: 0 0 100% !important;
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+
+    /* ---- 4. 历史记录卡片：标题行换行，操作区不再被截断 ---- */
+    .story-card-header { flex-wrap: wrap; gap: 8px; }
+    .story-card-actions {
+      flex: 1 1 100%;
+      width: 100%;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .story-card-actions .story-card-tags {
+      flex: 1 1 auto;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    /* ---- 5. 历史工具条：纵向堆叠，输入/筛选全宽 ---- */
+    .history-toolbar {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .history-toolbar .el-input,
+    .history-toolbar .el-select { width: 100% !important; }
+
+    /* ---- 6. 分页：居中 + 允许换行，避免 375px 溢出 ---- */
+    .pagination-wrapper { justify-content: center; }
+    .el-pagination {
+      flex-wrap: wrap;
+      gap: 8px 4px;
+      justify-content: center;
+      row-gap: 10px;
+    }
+    .el-pagination .el-pagination__total { white-space: nowrap; }
+
+    /* ---- 7. 首页顶栏与岛屿区 ---- */
+    .island-header,
+    .island-meta { width: 100%; }
+    .island-meta { flex-wrap: wrap; gap: 8px 16px; }
+
+    /* ---- 8. 各页 flex-between 页头操作组：允许换行，避免挤压 ---- */
+    .page-header .flex,
+    .page-header > .flex { flex-wrap: wrap; }
+
+    /* ---- 9. 音频控制区：语速滑块弹性化 ---- */
+    .audio-player { flex-wrap: wrap; }
+    .audio-player .el-slider { flex: 1 1 120px; width: auto !important; }
+    .audio-player .control-group { flex-wrap: wrap; }
+
+    /* ---- 10. 结果页 / 生成控制区：散落的行内 flex 组换行 ---- */
+    .panel-collocations,
+    .feedback-stats,
+    .story-overview-header { flex-wrap: wrap; }
+    .action-buttons .el-button { margin-bottom: 0; }
+    /* ---- 12. 通用 flex-between 工具条（单词库搜索行/卡片标题行）：允许换行 ---- */
+    .page-container .flex-between { flex-wrap: wrap; gap: 8px; }
+
+    /* ---- 11. 汉堡按钮安全区（刘海屏） ---- */
+    .mobile-menu-btn { top: calc(8px + env(safe-area-inset-top)); }
+  }
+
+  @media (max-width: 640px) {
+    /* 更窄时：页头按钮全宽（含 text/plain 态清理） */
+    .page-header .el-button:not(.is-circle) { width: 100%; margin-left: 0 !important; }
+    .page-header { width: 100%; }
+    /* 单词卡片：头部余量标签可用 */
+    .resp-card-head .el-checkbox { flex-shrink: 0; }
+    /* 首页统计标签字号 */
+    .home-stat-num { font-size: 26px; }
+    /* 生成进度条：每步标签可换行 */
+    .gen-step { flex-wrap: wrap; gap: 4px 8px; }
+    /* 记忆测试：答题选项合理占满 */
+    .review-options { display: grid; grid-template-columns: 1fr; }
+    .review-options .review-option { width: 100%; }
+    /* 弹窗内底部按钮组全宽竖排，触控友好 */
+    .el-dialog__footer { display: flex; flex-wrap: wrap; gap: 8px; }
+    .el-dialog__footer .el-button { flex: 1 1 auto; min-height: 44px; }
+    /* 单词卡片：输入框与操作按钮触控目标加高 */
+    .resp-card .el-input__wrapper { min-height: 40px; }
+    .resp-card-actions .el-button,
+    .resp-card-head .el-button { min-height: 36px; }
+  }
+
+  @media (max-width: 480px) {
+    /* 极窄屏细节收紧 */
+    .page-container { padding: 14px 12px; }
+    .app-header { padding-left: 8px; padding-right: 8px; }
+    .app-header .logo .logo-text { max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .story-card { flex-direction: row; gap: 10px; padding: 12px; }
+    .story-card-cover { width: 72px; min-height: 54px; }
+    .story-cover-placeholder { width: 72px; height: 54px; }
+    .recent-item-cover { width: 64px; height: 48px; }
+    .recent-cover-placeholder { width: 64px; height: 48px; }
+    .panel-card { padding: 14px; gap: 12px; }
+    .island-panel { padding: 16px 14px; }
+    /* 遮词自测操作条内容换行 */
+    .single-selftest { align-items: flex-start; }
+    .single-selftest > * { flex: 1 1 100%; }
+    /* 极窄屏：多列 grid 兜底单列，杜绝 minmax 溢出 */
+    .scene-grid,
+    .scene-suggestion-grid,
+    .collocations-grid,
+    .healed-grid { grid-template-columns: 1fr; }
+    .panel-index-role { font-size: 10px; }
+  }
+
