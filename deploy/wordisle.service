@@ -1,0 +1,15 @@
+[Unit]
+Description=TOEIC WordIsle Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/wordisle/mvp
+ExecStart=/opt/wordisle/mvp/venv/bin/python /opt/wordisle/mvp/main.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
