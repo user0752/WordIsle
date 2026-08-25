@@ -14,6 +14,11 @@
 </head>
 <body>
 <div id="app">
+  <!-- 移动端汉堡按钮：位于 app-layout 之外，fixed 独立层级（在 header/遮罩之上），不受 header 层叠上下文影响 -->
+  <button class="mobile-menu-btn" @click="toggleMobileMenu" aria-label="切换菜单" aria-expanded="false">
+    <svg class="icon-burger" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    <svg class="icon-close" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
   <div class="app-layout">
     <!-- 顶部栏 — 极简毛玻璃 -->
     <header class="app-header">
@@ -4474,8 +4479,29 @@ const app = createApp({
     }
 
     // ====== 菜单 ======
+    // 移动端抽屉开关：点击弹出 / 再次点击隐藏（开关）
+    function toggleMobileMenu() {
+      const open = document.body.classList.toggle('mobile-menu-open')
+      const btn = document.querySelector('.mobile-menu-btn')
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false')
+    }
+    // 辅助关闭：点遮罩 / 选菜单项 / 路由切换
+    function closeMobileMenu() {
+      document.body.classList.remove('mobile-menu-open')
+      const btn = document.querySelector('.mobile-menu-btn')
+      if (btn) btn.setAttribute('aria-expanded', 'false')
+    }
+    // 遮罩是 body::after 伪元素，无法直接绑定 click——用事件委托：
+    // 抽屉开着时，点击落在侧边栏与汉堡按钮之外（即遮罩上）就关闭
+    document.addEventListener('click', (e) => {
+      if (!document.body.classList.contains('mobile-menu-open')) return
+      if (e.target.closest('.app-sidebar') || e.target.closest('.mobile-menu-btn')) return
+      closeMobileMenu()
+    })
+
     function handleMenuSelect(idx) {
       currentPage.value = idx
+      closeMobileMenu()  // 移动端：选择菜单项后自动收起抽屉
       if (idx==='home') { loadRecentItems(); loadHomeStats(); loadIslandStats() }
       if (idx==='words') loadWords()
       if (idx==='review') loadReviewStats()
@@ -4609,7 +4635,7 @@ const app = createApp({
       toggleSelectPolysemy, toggleSelectAllPolysemy, clearPolysemySelection, batchDeletePolysemy,
       loadMorphemeCandidates, loadMorphemeRoots, searchMorphemeRoots, openMorphemeRoot,
       runMorphemeDetect, expandMorphemeRoot, loadMorphemeWords, deleteMorphemeWord,
-      toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect,
+      toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect, toggleMobileMenu, closeMobileMenu,
       loadScenes, openSceneDetail, runSceneDetect, adoptScene,
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,
       llmModels, llmRouteList, llmRouteForm, llmSaving, loadLlmSettings, saveLlmSettings,

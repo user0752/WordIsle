@@ -871,14 +871,46 @@
     .page-title { font-size: 20px; }
   }
   @media (max-width: 640px) {
-    .app-sidebar { width: 56px; }
-    .app-sidebar .menu-divider { display: none; }
-    .app-sidebar .el-menu-item span { display: none; }
-    .app-sidebar .el-menu-item { justify-content: center; padding: 0; }
-    .app-sidebar .el-menu-item .el-icon { margin: 0; font-size: 18px; }
-    .app-sidebar .el-menu-item::before { display: none; }
     .page-container { padding: 16px 12px; }
     .page-header { flex-direction: column; gap: 12px; }
+  }
+
+  /* ===== 移动端：汉堡按钮 + 侧边栏抽屉（≤768px，替换旧 640px 图标压缩行为） ===== */
+  .mobile-menu-btn {
+    display: none; padding: 0;
+    align-items: center; justify-content: center;
+    width: 40px; height: 40px; flex-shrink: 0;
+    border: none; border-radius: var(--radius-md);
+    background: var(--bg-surface); color: var(--text-primary);
+    cursor: pointer; transition: all var(--transition-fast);
+  }
+  .mobile-menu-btn .icon-burger { display: inline-flex; }
+  .mobile-menu-btn .icon-close { display: none; }
+  @media (max-width: 768px) {
+    .mobile-menu-btn {
+      display: inline-flex; position: fixed; z-index: 1001;
+      top: 8px; left: 28px; margin-right: 0;
+    }
+    .app-header .logo { padding-left: 48px; }  /* 给汉堡按钮让位 */
+    body.mobile-menu-open .mobile-menu-btn { background: var(--accent); color: #fff; }
+    body.mobile-menu-open .mobile-menu-btn .icon-burger { display: none; }
+    body.mobile-menu-open .mobile-menu-btn .icon-close { display: inline-flex; }
+
+    .app-sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+      transform: translateX(-100%);
+      transition: transform 0.25s ease;
+      z-index: 1000;
+      background: var(--bg-card);
+    }
+    body.mobile-menu-open .app-sidebar {
+      transform: translateX(0);
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
+    }
+    body.mobile-menu-open::after {
+      content: ''; position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.35); z-index: 999;
+    }
   }
 
   /* ===== 历史记录卡片列表 ===== */
@@ -1514,5 +1546,29 @@
     .home-card-title { font-size: 18px; }
     .single-image-wrap { min-height: 200px; }
     .skeleton-result-image { min-height: 200px; }
+  }
+
+  /* ===== 移动端补强（步骤 7/8）：表格滚动保底 / 页头按钮全宽 / 触控目标 / 安全区 / 输入字号 ===== */
+  @media (max-width: 768px) {
+    /* 宽表格：容器限宽 + 触屏惯性滚动，避免整页横向溢出 */
+    .el-table { max-width: 100%; }
+    .el-table__body-wrapper { -webkit-overflow-scrolling: touch; }
+
+    /* 触控目标：菜单项与主按钮最小高度 44px */
+    .app-sidebar .el-menu-item { min-height: 44px; height: auto; line-height: 1.4; }
+    .page-container .el-button:not(.is-circle):not(.is-link):not(.is-text) { min-height: 44px; }
+
+    /* 防 iOS 聚焦自动放大：表单控件字号 ≥16px */
+    .el-input__inner, .el-textarea__inner { font-size: 16px !important; }
+
+    /* 主区滚动不产生回弹干扰；触屏惯性滚动 */
+    .app-main { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
+  }
+
+  /* 极窄屏：页头操作按钮全宽 */
+  @media (max-width: 480px) {
+    .page-header .el-button:not(.is-circle):not(.is-link):not(.is-text) { width: 100%; margin-left: 0 !important; }
+    /* iPhone 底部安全区：音频播放器贴底时留白 */
+    .audio-player { padding-bottom: env(safe-area-inset-bottom); }
   }
 
