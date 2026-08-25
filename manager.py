@@ -11,6 +11,8 @@ TOEIC 启动管理器
   GUI 模式        : python manager.py          （或运行 manager.bat gui）
 """
 
+from __future__ import annotations  # 注解延迟求值：无 tkinter 环境下 tk.Tk/tk.Frame 类型注解不再于导入期求值
+
 import json
 import os
 import queue
@@ -19,12 +21,16 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, scrolledtext, ttk
+    TK_AVAILABLE = True
+except ImportError:  # 无 python3-tk / 无 GUI 的服务器
+    TK_AVAILABLE = False
 import httpx
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 # ========================================================================
 # 路径 & 配置
@@ -1433,6 +1439,9 @@ def main():
     if "--cli" in sys.argv:
         run_cli()
         return
+    if not TK_AVAILABLE:
+        print("当前环境缺少 tkinter，无法使用 GUI 模式，请使用 --cli 模式启动", file=sys.stderr)
+        sys.exit(1)
     try:
         app = ManagerApp(tk.Tk())
         app.root.mainloop()
