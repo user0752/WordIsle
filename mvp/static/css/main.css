@@ -123,11 +123,30 @@
   /* ===== 头部 — 极简毛玻璃 ===== */
   .app-header {
     height: 56px; position: relative; z-index: 100;
-    display: flex; align-items: center; justify-content: space-between; padding: 0 28px;
+    display: flex; align-items: center; justify-content: flex-start; padding: 0 28px;
     background: rgba(255, 255, 255, 0.82);
     backdrop-filter: blur(16px) saturate(180%);
     -webkit-backdrop-filter: blur(16px) saturate(180%);
     border-bottom: 1px solid var(--border-default);
+  }
+  /* 桌面端侧边栏折叠开关（移动端隐藏，用汉堡按钮） */
+  .sidebar-toggle {
+    display: none; flex-shrink: 0;
+    align-items: center; justify-content: center;
+    width: 34px; height: 34px; border: none; border-radius: 10px;
+    background: transparent; color: var(--text-tertiary); cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .sidebar-toggle:hover { background: var(--accent-bg); color: var(--accent); }
+  .sidebar-toggle svg { width: 19px; height: 19px; }
+  .sidebar-toggle .icon-close-panel { display: none; }
+  .app-layout.sidebar-collapsed .sidebar-toggle .icon-open-panel  { display: none; }
+  .app-layout.sidebar-collapsed .sidebar-toggle .icon-close-panel { display: inline-flex; }
+  @media (min-width: 769px) {
+    .sidebar-toggle { display: inline-flex; margin-right: 6px; }
+  }
+  @media (max-width: 768px) {
+    .sidebar-toggle { display: none !important; }  /* 移动端走汉堡抽屉 */
   }
   .app-header::after {
     content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
@@ -158,9 +177,23 @@
   }
 
   /* ===== 顶部用户身份区 ===== */
+  /* GitHub 图标：推送到行尾（在用户区左侧）；header-user 取消自身的 auto 外边距 */
+  .app-header .gh-link {
+    margin-left: auto;
+    width: 32px; height: 32px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 9px;
+    color: var(--text-tertiary);
+    transition: all var(--transition-fast);
+  }
+  .app-header .gh-link:hover { background: var(--accent-bg); color: var(--accent); }
+  .app-header .gh-link svg { width: 17px; height: 17px; }
+  @media (max-width: 768px) {
+    .app-header .gh-link { display: none; }  /* 小屏让位给汉堡按钮 */
+  }
   .app-header .header-user {
     display: flex; align-items: center; gap: 10px;
-    margin-left: auto; padding-left: 16px;
+    padding-left: 16px;
   }
   .app-header .role-badge {
     font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
@@ -254,6 +287,25 @@
   }
   .app-sidebar .menu-item-with-busy .rotating {
     color: var(--accent);
+  }
+
+  /* ===== 桌面端：侧边栏折叠为图标栏 ===== */
+  @media (min-width: 769px) {
+    .app-sidebar { transition: width .22s var(--transition-base); }
+    .app-layout.sidebar-collapsed .app-sidebar { width: 64px; }
+    .app-layout.sidebar-collapsed .app-sidebar .el-menu-item {
+      margin: 2px 8px; padding: 0 !important; justify-content: center;
+    }
+    .app-layout.sidebar-collapsed .app-sidebar .el-menu-item > span { display: none; }
+    .app-layout.sidebar-collapsed .app-sidebar .el-menu-item .el-icon { margin-right: 0; }
+    .app-layout.sidebar-collapsed .app-sidebar .menu-divider {
+      margin: 12px 0 6px; justify-content: center;
+    }
+    .app-layout.sidebar-collapsed .app-sidebar .menu-divider span { display: none; }
+    .app-layout.sidebar-collapsed .app-sidebar .menu-divider::after {
+      width: 26px; height: 2px; flex: none; border-radius: 2px;
+      background: var(--border-light);
+    }
   }
 
   /* ===== 主内容区 ===== */

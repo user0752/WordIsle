@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1e4a3c">
+<meta name="description" content="词屿 WordIsle · 顽固词疗养岛 —— 背了八遍还记不住的顽固词，AI 把它们种进故事、画面与声音里生根。">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a7d6a'/%3E%3Ccircle cx='22.5' cy='8.5' r='3' fill='%23f0d58c'/%3E%3Cpath d='M9 21.5c0-4.2 3.2-7.5 7-7.5s7 3.3 7 7.5z' fill='%23f5f5f7'/%3E%3Cpath d='M3 26c2.5 0 3.5-2 6-2s3.5 2 6 2 3.5-2 6-2 3.5 2 6 2' stroke='%23f5f5f7' stroke-width='1.6' fill='none' stroke-linecap='round' opacity='0.9'/%3E%3C/svg%3E">
+<title>词屿 WordIsle · 顽固词疗养岛</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Source+Serif+4:ital,wght@0,400;0,500;1,400&family=Noto+Serif+SC:wght@500;600;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ==========================================================
+     词屿 WordIsle · 落地页设计系统
+     手绘岛屿图鉴 —— 水彩纸 x 木刻版画 x 暖金印章
+     ========================================================== */
+  :root {
+    --paper: #f5efe2;
+    --paper-deep: #ece2cf;
+    --card: #fdfaf3;
+    --ink: #23402f;
+    --ink-deep: #182e23;
+    --ink-soft: #4c6355;
+    --accent: #3a7d6a;
+    --accent-deep: #1e4a3c;
+    --gold: #b8953a;
+    --gold-light: #d4aa4a;
+    --gold-soft: rgba(184, 149, 58, 0.14);
+    --line: rgba(35, 64, 47, 0.14);
+    --line-strong: rgba(35, 64, 47, 0.24);
+    --sea: #7fa8a0;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --serif: "Noto Serif SC", "Playfair Display", Georgia, "Songti SC", serif;
+    --english: "Playfair Display", Georgia, serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  /* 水彩纸颗粒肌理 */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    opacity: .7;
+  }
+
+  ::selection { background: var(--gold-light); color: var(--ink-deep); }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
+  section[data-reveal] { scroll-margin-top: 84px; }
+
+  .en { font-family: var(--english); }
+
+  /* 印章徽章（岛屿图鉴的"盖章"气质） */
+  .stamp {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--serif); font-weight: 700; font-size: 13px; letter-spacing: 2px;
+    color: var(--accent-deep);
+    border: 2px solid currentColor;
+    padding: 6px 14px 5px;
+    border-radius: 10px 14px 10px 12px;
+    transform: rotate(-2deg);
+    background: rgba(255,255,255,0.5);
+    box-shadow: 0 2px 0 rgba(30,74,60,0.12);
+  }
+  .stamp.gold { color: #a17c28; }
+
+  /* ============================ 顶部导航 ============================ */
+  .site-nav {
+    position: fixed; inset: 0 0 auto; z-index: 50;
+    transition: background .3s var(--ease), box-shadow .3s var(--ease), border-color .3s var(--ease);
+    background: rgba(245,239,226,0.72);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid transparent;
+  }
+  .site-nav.scrolled {
+    background: rgba(249,245,236,0.92);
+    border-bottom-color: var(--line);
+    box-shadow: 0 6px 24px rgba(30,74,60,0.06);
+  }
+  .nav-inner {
+    max-width: 1160px; margin: 0 auto; padding: 0 28px;
+    height: 68px; display: flex; align-items: center; gap: 26px;
+  }
+  .nav-brand { display: flex; align-items: center; gap: 11px; margin-right: auto; text-decoration: none; }
+  .nav-brand .nav-icon {
+    width: 38px; height: 38px; flex: none; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center; font-size: 19px;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+    box-shadow: 0 6px 16px rgba(30,74,60,0.28), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  .nav-brand .nav-name { font-family: var(--serif); font-weight: 700; font-size: 18px; letter-spacing: .5px; color: var(--ink-deep); }
+  .nav-brand .nav-name small { display: block; font-size: 10.5px; letter-spacing: 3px; color: var(--ink-soft); font-weight: 600; }
+  .nav-links { display: flex; gap: 30px; align-items: center; }
+  .nav-links a {
+    font-size: 14.5px; color: var(--ink-soft); text-decoration: none; font-weight: 500;
+    transition: color .2s var(--ease);
+    position: relative;
+  }
+  .nav-links a::after {
+    content: ""; position: absolute; left: 0; bottom: -5px; width: 0; height: 2px;
+    background: var(--gold); border-radius: 2px; transition: width .25s var(--ease);
+  }
+  .nav-links a:hover { color: var(--ink-deep); }
+  .nav-links a:hover::after { width: 100%; }
+
+  .nav-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--serif); font-weight: 700; font-size: 14.5px; letter-spacing: 1px;
+    color: #f6f1e7; text-decoration: none;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+    padding: 9px 22px; border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(30,74,60,0.3);
+    transition: transform .2s var(--ease), box-shadow .2s var(--ease);
+  }
+  .nav-cta:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(30,74,60,0.36); }
+  .nav-cta:active { transform: translateY(0); }
+
+  /* ============================ Hero ============================ */
+  .hero {
+    position: relative; z-index: 1;
+    padding: 150px 0 110px;
+    background:
+      radial-gradient(900px 460px at 88% -12%, rgba(184,149,58,0.16), transparent 62%),
+      radial-gradient(760px 420px at -8% 108%, rgba(58,125,106,0.16), transparent 62%),
+      linear-gradient(180deg, #f2ead9 0%, var(--paper) 70%);
+  }
+  .hero .wrap { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
+
+  .hero-copy .eyebrow {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 13px; font-weight: 600; letter-spacing: 2px; color: var(--accent-deep);
+    background: rgba(255,255,255,0.6); border: 1px solid var(--line);
+    padding: 6px 14px; border-radius: 999px; margin-bottom: 22px;
+  }
+  .hero-copy .eyebrow svg { width: 15px; height: 15px; }
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: clamp(40px, 5.4vw, 66px);
+    font-weight: 900; line-height: 1.22; letter-spacing: 1px;
+    color: var(--ink-deep);
+  }
+  .hero h1 .hl { position: relative; white-space: nowrap; }
+  .hero h1 .hl::after {
+    content: ""; position: absolute; left: 2px; right: 2px; bottom: 6px; height: 12px;
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 12' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'%3E%3Cpath d='M2 9 C 30 3, 70 2, 118 7' fill='none' stroke='%23b8953a' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E") center/100% 100% no-repeat;
+    z-index: -1;
+  }
+  .hero-sub { margin: 24px 0 10px; font-size: 17px; color: var(--ink-soft); max-width: 30em; }
+  .hero-sub strong { color: var(--ink-deep); font-weight: 700; }
+  .hero-points { list-style: none; display: flex; flex-wrap: wrap; gap: 12px 22px; margin: 18px 0 30px; }
+  .hero-points li { font-size: 13.5px; color: var(--ink-soft); display: flex; align-items: center; gap: 7px; }
+  .hero-points li::before { content: "✦"; color: var(--gold); font-size: 12px; }
+
+  .btn-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--serif); font-weight: 700; font-size: 16px; letter-spacing: 1px;
+    text-decoration: none; border-radius: 14px; cursor: pointer;
+    padding: 14px 30px; transition: transform .2s var(--ease), box-shadow .2s var(--ease), background .2s;
+    border: none;
+  }
+  .btn svg { width: 17px; height: 17px; transition: transform .25s var(--ease); }
+  .btn-primary {
+    color: #f7f2e6;
+    background: linear-gradient(140deg, #17402f, var(--accent));
+    box-shadow: 0 12px 28px rgba(23,64,47,0.35), inset 0 1px 0 rgba(255,255,255,0.16);
+  }
+  .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 16px 34px rgba(23,64,47,0.42); }
+  .btn-primary:hover svg { transform: translateX(3px); }
+  .btn-ghost {
+    color: var(--accent-deep);
+    background: rgba(255,255,255,0.5);
+    border: 1.5px solid var(--line-strong);
+  }
+  .btn-ghost:hover { background: #fff; transform: translateY(-3px); box-shadow: 0 10px 24px rgba(30,74,60,0.1); }
+
+  /* Hero 右侧 —— 岛屿插画卡 */
+  .hero-art { position: relative; }
+  .hero-art .frame {
+    position: relative; border-radius: 26px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.7);
+    box-shadow: 0 34px 70px rgba(23,57,41,0.28), 0 8px 20px rgba(23,57,41,0.12);
+    transform: rotate(1.2deg);
+    background: #dde7df;
+  }
+  .hero-art .frame::after { /* 画框内纸张颗粒光晕 */
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(420px 260px at 70% 12%, rgba(255,255,255,0.35), transparent 60%);
+    pointer-events: none;
+  }
+  .hero-art .frame img { width: 100%; aspect-ratio: 16/10; object-fit: cover; }
+  .hero-art .caption {
+    position: absolute; left: 18px; bottom: 18px; z-index: 2;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(24,46,35,0.82); color: #f2ead9;
+    padding: 9px 16px; border-radius: 12px; font-size: 12.5px; letter-spacing: 1px;
+    backdrop-filter: blur(6px);
+  }
+  .hero-art .caption .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold-light); }
+
+  .art-stamp { /* 盖在画框上的章 */
+    position: absolute; top: 22px; right: -10px; z-index: 3;
+    transform: rotate(8deg);
+    font-family: var(--serif); font-weight: 700; font-size: 13px; letter-spacing: 2px;
+    color: #8f6f2a;
+    border: 2px dashed currentColor; border-radius: 12px;
+    padding: 7px 13px;
+    background: rgba(253,250,243,0.92);
+    box-shadow: 0 6px 16px rgba(30,74,60,0.14);
+  }
+
+  /* 漂浮单词纸条 */
+  .word-chip {
+    position: absolute; z-index: 3;
+    display: inline-block;
+    font-family: var(--english); font-style: italic; font-weight: 600;
+    color: var(--accent-deep);
+    background: rgba(253,250,243,0.94);
+    border: 1px solid var(--line);
+    border-radius: 9px; padding: 7px 14px;
+    font-size: 14.5px; letter-spacing: .5px;
+    box-shadow: 0 8px 18px rgba(30,74,60,0.16);
+    animation: drift 6.5s ease-in-out infinite;
+  }
+  .word-chip small { display: block; text-align: center; font-family: var(--serif); font-size: 10px; font-style: normal; color: var(--gold); letter-spacing: 2px; }
+  .chip-1 { top: -26px; left: 6%; animation-delay: -1.2s; }
+  .chip-2 { bottom: 60px; left: -52px; animation-delay: -3.8s; }
+  .chip-3 { top: 30%; right: -40px; animation-delay: -2.4s; }
+  @keyframes drift {
+    0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+    50%      { transform: translateY(-9px) rotate(1.5deg); }
+  }
+
+  /* 底部海浪剪影 */
+  .hero .sea {
+    position: absolute; left: 0; right: 0; bottom: -1px; z-index: 1;
+    height: 96px; pointer-events: none; opacity: .9;
+  }
+  .hero .sea .wave { fill: rgba(23,57,41,0.05); animation: waveDrift 12s ease-in-out infinite alternate; }
+  @keyframes waveDrift { from { transform: translateX(-16px); } to { transform: translateX(16px); } }
+
+  /* ============================ 分区标题 ============================ */
+  .sec-head { text-align: center; max-width: 620px; margin: 0 auto 52px; }
+  .sec-eyebrow {
+    font-family: var(--english); font-size: 13px; letter-spacing: 4px; text-transform: uppercase;
+    color: var(--gold); font-style: italic; display: block; margin-bottom: 12px;
+  }
+  .sec-head h2 { font-family: var(--serif); font-size: clamp(28px, 3.6vw, 40px); font-weight: 900; letter-spacing: 1px; color: var(--ink-deep); }
+  .sec-head p { margin-top: 12px; color: var(--ink-soft); font-size: 15px; }
+  .sec-head .rule {
+    width: 64px; height: 3px; margin: 18px auto 0; border-radius: 3px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  }
+
+  /* ============================ 痛点带 ============================ */
+  .pain { position: relative; z-index: 1; background: var(--paper); padding: 92px 0 0; }
+  .pain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .pain-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 20px; padding: 26px 26px 24px;
+    box-shadow: 0 10px 26px rgba(30,74,60,0.05);
+    position: relative; overflow: hidden;
+  }
+  .pain-card::before {
+    content: attr(data-no); position: absolute; right: -6px; top: -18px;
+    font-family: var(--english); font-style: italic; font-size: 86px; font-weight: 600;
+    color: rgba(30,74,60,0.05); line-height: 1;
+  }
+  .pain-card .pain-icon { font-size: 26px; margin-bottom: 14px; display: block; }
+  .pain-card h3 { font-family: var(--serif); font-size: 18px; font-weight: 700; color: var(--ink-deep); margin-bottom: 8px; }
+  .pain-card p { font-size: 13.5px; color: var(--ink-soft); }
+  .pain-turn {
+    margin-top: 40px; text-align: center; font-family: var(--serif);
+    font-size: 20px; font-weight: 700; color: var(--accent-deep); letter-spacing: 1px;
+  }
+  .pain-turn small { display: block; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; font-size: 13px; font-weight: 500; color: var(--ink-soft); margin-top: 8px; letter-spacing: 0; }
+
+  /* ============================ 疗法（核心特色） ============================ */
+  .therapy { position: relative; z-index: 1; padding: 96px 0 0; }
+  .therapy-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px 22px; }
+  .tx-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 22px; padding: 30px 28px 26px;
+    position: relative;
+    box-shadow: 0 12px 30px rgba(30,74,60,0.06);
+    transition: transform .3s var(--ease), box-shadow .3s var(--ease), border-color .3s;
+  }
+  .tx-card:hover { transform: translateY(-6px); box-shadow: 0 22px 44px rgba(30,74,60,0.12); border-color: rgba(184,149,58,0.4); }
+  .tx-icon {
+    width: 52px; height: 52px; border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(145deg, rgba(58,125,106,0.14), rgba(184,149,58,0.12));
+    border: 1px solid var(--line);
+    color: var(--accent-deep); margin-bottom: 18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+  }
+  .tx-icon svg { width: 25px; height: 25px; }
+  .tx-card h3 { font-family: var(--serif); font-size: 19px; font-weight: 700; color: var(--ink-deep); }
+  .tx-card .tx-en { font-family: var(--english); font-style: italic; font-size: 13px; color: var(--gold); letter-spacing: .5px; display: block; margin-top: 2px; }
+  .tx-card p { margin-top: 12px; font-size: 14px; color: var(--ink-soft); }
+  .tx-tags { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .tx-tags span {
+    font-size: 11.5px; color: var(--accent-deep);
+    background: rgba(58,125,106,0.09); border: 1px solid rgba(58,125,106,0.16);
+    border-radius: 999px; padding: 3px 10px; letter-spacing: .5px;
+  }
+
+  /* ============================ 工作原理 ============================ */
+  .process { position: relative; z-index: 1; padding: 96px 0 0; }
+  .proc-track { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .proc-track::before { /* 连接线 */
+    content: ""; position: absolute; top: 30px; left: 8%; right: 8%;
+    height: 2px; background: repeating-linear-gradient(90deg, var(--line-strong) 0 8px, transparent 8px 15px);
+  }
+  .proc-step { position: relative; text-align: center; padding: 0 8px; }
+  .proc-num {
+    width: 60px; height: 60px; margin: 0 auto 16px; position: relative; z-index: 1;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--english); font-style: italic; font-weight: 700; font-size: 22px;
+    color: #f6f1e7;
+    background: linear-gradient(145deg, var(--accent-deep), var(--accent));
+    box-shadow: 0 10px 22px rgba(30,74,60,0.3), 0 0 0 6px var(--paper);
+  }
+  .proc-step:nth-child(2) .proc-num { background: linear-gradient(145deg, #7c5f1d, var(--gold)); box-shadow: 0 10px 22px rgba(140,105,30,0.3), 0 0 0 6px var(--paper); }
+  .proc-step h3 { font-family: var(--serif); font-size: 17px; font-weight: 700; color: var(--ink-deep); }
+  .proc-step h3 span { color: var(--gold); margin-right: 5px; }
+  .proc-step p { margin-top: 8px; font-size: 13px; color: var(--ink-soft); }
+
+  /* ============================ 疗养纪实 ============================ */
+  .gallery { position: relative; z-index: 1; padding: 96px 0 0; }
+  .gallery-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 26px; }
+  .gal-card { position: relative; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 44px rgba(23,57,41,0.16); }
+  .gal-card.big { grid-row: span 2; }
+  .gal-card img { width: 100%; height: 100%; object-fit: cover; transition: transform .6s var(--ease); }
+  .gal-card:hover img { transform: scale(1.04); }
+  .gal-card .gal-tag {
+    position: absolute; top: 16px; left: 16px; z-index: 2;
+    font-family: var(--serif); font-size: 12.5px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--ink-deep); background: rgba(253,250,243,0.92);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px;
+  }
+  .gal-card .gal-cap {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+    padding: 30px 20px 16px;
+    background: linear-gradient(180deg, transparent, rgba(20,40,31,0.82));
+    color: #f6f1e7;
+  }
+  .gal-card .gal-cap strong { display: block; font-family: var(--serif); font-size: 16px; letter-spacing: 1px; }
+  .gal-card .gal-cap span { font-size: 12.5px; opacity: .82; }
+  .gallery .gal-note { text-align: center; margin-top: 26px; font-size: 13px; color: var(--ink-soft); }
+  .gallery .gal-note em { font-family: var(--english); color: var(--gold); font-style: italic; }
+
+  /* ============================ 真实记忆卡 ============================ */
+  .cards { position: relative; z-index: 1; padding: 96px 0 0; }
+  .cards-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px 26px; }
+  .mc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    padding: 14px 14px 20px;
+    box-shadow: 0 16px 38px rgba(30, 74, 60, 0.10);
+    transition: transform .35s var(--ease), box-shadow .35s var(--ease);
+  }
+  .mc:nth-child(odd)  { transform: rotate(-1deg); }
+  .mc:nth-child(even) { transform: rotate(1deg); }
+  .mc:hover { transform: rotate(0) translateY(-6px); box-shadow: 0 26px 52px rgba(30, 74, 60, 0.16); }
+  .mc-frame { position: relative; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); }
+  .mc-frame img { width: 100%; aspect-ratio: 4/3; object-fit: cover; }
+  .mc-tag {
+    position: absolute; top: 12px; left: 12px;
+    font-family: var(--serif); font-size: 12px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--ink-deep); background: rgba(253, 250, 243, 0.92);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+  }
+  .mc-body { padding: 16px 10px 4px; }
+  .mc-word { font-family: var(--english); font-style: italic; font-weight: 700; font-size: 24px; color: var(--ink-deep); }
+  .mc-word small { font-family: var(--serif); font-style: normal; font-size: 12.5px; color: var(--gold); letter-spacing: 2px; margin-left: 9px; }
+  .mc-en {
+    margin-top: 8px;
+    font-family: "Source Serif 4", var(--serif); font-style: italic; font-size: 14px;
+    color: var(--ink); line-height: 1.75;
+  }
+  .mc-zh { margin-top: 7px; font-size: 13.5px; color: var(--ink-soft); }
+  .mc-colloc {
+    margin-top: 13px; display: inline-flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    font-size: 12.5px; color: var(--accent-deep);
+    background: rgba(58, 125, 106, 0.08); border: 1px solid rgba(58, 125, 106, 0.16);
+    border-radius: 10px; padding: 6px 12px;
+  }
+  .mc-colloc i { font-style: normal; color: var(--ink-soft); }
+  .cards-note { text-align: center; margin-top: 30px; font-size: 13.5px; color: var(--ink-soft); }
+  .cards-note a { color: var(--accent-deep); font-weight: 600; }
+  @media (max-width: 760px) {
+    .cards-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ============================ 最终 CTA ============================ */
+  .cta-final { position: relative; z-index: 1; padding: 96px 0 84px; }
+  .cta-panel {
+    position: relative; border-radius: 30px; overflow: hidden;
+    padding: 92px 30px;
+    text-align: center; color: #f6f1e7;
+  }
+  .cta-panel .bg { position: absolute; inset: 0; }
+  .cta-panel .bg img { width: 100%; height: 100%; object-fit: cover; }
+  .cta-panel .veil {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(700px 340px at 50% 0%, rgba(30,74,60,0.55), transparent 70%),
+      linear-gradient(180deg, rgba(18,40,30,0.78), rgba(13,32,24,0.88));
+  }
+  .cta-inner { position: relative; z-index: 2; max-width: 640px; margin: 0 auto; }
+  .cta-inner h2 { font-family: var(--serif); font-size: clamp(30px, 4vw, 44px); font-weight: 900; letter-spacing: 2px; }
+  .cta-inner h2 .hl { position: relative; white-space: nowrap; }
+  .cta-inner h2 .hl::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 4px; height: 10px;
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 12' xmlns='http://www.w3.org/2000/svg' preserveAspectRatio='none'%3E%3Cpath d='M2 9 C 30 3, 70 2, 118 7' fill='none' stroke='%23d4aa4a' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E") center/100% 100% no-repeat;
+    z-index: -1; opacity: .9;
+  }
+  .cta-inner > p { margin: 18px auto 34px; font-size: 15.5px; color: rgba(246,241,231,0.85); max-width: 34em; }
+  .btn-gold {
+    display: inline-flex; align-items: center; gap: 12px;
+    font-family: var(--serif); font-weight: 900; font-size: 19px; letter-spacing: 3px;
+    color: var(--ink-deep); text-decoration: none;
+    background: linear-gradient(140deg, #e6c46a, var(--gold-light));
+    padding: 18px 46px; border-radius: 999px;
+    box-shadow: 0 16px 36px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.5);
+    transition: transform .2s var(--ease), box-shadow .2s var(--ease);
+  }
+  .btn-gold:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 22px 44px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.5); }
+  .btn-gold svg { width: 20px; height: 20px; transition: transform .25s var(--ease); }
+  .btn-gold:hover svg { transform: translateX(4px); }
+  .cta-note { margin-top: 22px; font-size: 13px; color: rgba(246,241,231,0.72); }
+  .cta-note b { color: #f0d58c; font-weight: 600; }
+
+  /* ============================ 页脚 ============================ */
+  .site-footer {
+    position: relative; z-index: 1;
+    border-top: 1px solid var(--line);
+    background: var(--paper-deep);
+    padding: 34px 0 calc(30px + env(safe-area-inset-bottom));
+  }
+  .footer-inner {
+    max-width: 1160px; margin: 0 auto; padding: 0 28px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+  .footer-brand { display: flex; align-items: center; gap: 10px; font-family: var(--serif); font-weight: 700; color: var(--ink-deep); font-size: 15px; }
+  .footer-brand .nav-icon {
+    width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 15px;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+  }
+  .footer-meta { text-align: right; }
+  .footer-meta p { font-size: 12px; color: var(--ink-soft); }
+  .footer-meta p:first-child { letter-spacing: 2px; }
+  .footer-gh {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; color: var(--ink-soft); text-decoration: none;
+    padding: 8px 16px; border: 1px solid var(--line); border-radius: 999px;
+    background: rgba(255, 255, 255, 0.5);
+    transition: color .2s var(--ease), border-color .2s var(--ease), transform .2s var(--ease);
+  }
+  .footer-gh svg { width: 16px; height: 16px; }
+  .footer-gh:hover { color: var(--ink-deep); border-color: var(--accent); transform: translateY(-2px); }
+
+  /* ============================ 进场动画 ============================ */
+  [data-reveal] { opacity: 0; transform: translateY(26px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+  [data-reveal].in { opacity: 1; transform: none; }
+  [data-reveal="left"] { transform: translateX(-30px); }
+  [data-reveal="right"] { transform: translateX(30px); }
+  [data-reveal].in { transform: none; }
+
+  /* ============================ 响应式 ============================ */
+  @media (max-width: 1024px) {
+    .hero .wrap { grid-template-columns: 1fr; gap: 44px; }
+    .hero-art { max-width: 620px; margin: 0 auto; }
+    .hero-art .frame { transform: none; }
+    .chip-2 { left: -10px; }
+    .chip-3 { right: -10px; }
+    .therapy-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 880px) {
+    .nav-links { display: none; }
+    .pain-grid { grid-template-columns: 1fr; }
+    .proc-track { grid-template-columns: 1fr 1fr; row-gap: 36px; }
+    .proc-track::before { display: none; }
+    .gallery-grid { grid-template-columns: 1fr; }
+    .gal-card.big { grid-row: auto; }
+    .gal-card img { height: 260px; }
+    .cta-panel { padding: 70px 22px; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 0 20px; }
+    .nav-inner { padding: 0 20px; height: 62px; }
+    .hero { padding: 118px 0 80px; }
+    .hero h1 { font-size: 38px; }
+    .hero-points { gap: 10px 14px; }
+    .btn { width: 100%; justify-content: center; }
+    .therapy-grid { grid-template-columns: 1fr; }
+    .proc-track { grid-template-columns: 1fr; }
+    .footer-inner { justify-content: center; text-align: center; }
+    .footer-meta { text-align: center; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    [data-reveal] { opacity: 1 !important; transform: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================ 导航 ============================ -->
+<header class="site-nav" id="site-nav">
+  <div class="nav-inner">
+    <a class="nav-brand" href="#top" aria-label="词屿 WordIsle 首页">
+      <div class="nav-icon">🏝️</div>
+      <div>
+        <span class="nav-name">词屿 WordIsle</span>
+        <small>顽固词疗养岛</small>
+      </div>
+    </a>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#pain">为什么记不住</a>
+      <a href="#therapy">六大疗法</a>
+      <a href="#how">上岛流程</a>
+      <a href="#showcase">真实记忆卡</a>
+      <a href="#gallery">疗养纪实</a>
+    </nav>
+    <a class="nav-cta" href="/login">开始体验</a>
+  </div>
+</header>
+
+<main id="top">
+  <!-- ============================ Hero ============================ -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-copy">
+        <span class="eyebrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>
+          通识 & 程序员 · 顽固词疗养基地
+        </span>
+        <h1>把背不动的词，<br><span class="hl">送来这座岛上</span></h1>
+        <p class="hero-sub">背了八遍还记不住？别硬背了。AI 把每个顽固词<strong>种进故事、画面与声音</strong>里，让它们自己在场景里生根。</p>
+        <ul class="hero-points">
+          <li>一句一图一梗</li>
+          <li>场景连环画</li>
+          <li>AI 微电影</li>
+          <li>TTS 朗读音频</li>
+          <li>Leitner 间隔复习</li>
+        </ul>
+        <div class="btn-row">
+          <a class="btn btn-primary" href="/login">开始体验
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="#therapy">了解疗法</a>
+        </div>
+      </div>
+
+      <div class="hero-art">
+        <span class="word-chip chip-1">perseverance<small>顽固词 · 住院中</small></span>
+        <span class="word-chip chip-2">ambiguous<small>邻居都猜错</small></span>
+        <span class="word-chip chip-3">harbor<small>在港静养</small></span>
+        <div class="frame">
+          <img src="/static/images/landing-hero.jpg" alt="晨光雾海中的词屿疗养小岛插画" fetchpriority="high">
+        </div>
+        <span class="art-stamp">词屿 · 疗养中</span>
+        <div class="caption"><span class="dot"></span>岛上的词，正一棵棵长成树</div>
+      </div>
+    </div>
+    <svg class="sea" viewBox="0 0 1440 96" preserveAspectRatio="none" aria-hidden="true">
+      <path class="wave" d="M0 60 C 180 34, 360 76, 560 56 S 960 30, 1160 54 S 1360 80, 1440 58 L 1440 96 L 0 96 Z"/>
+    </svg>
+  </section>
+
+  <!-- ============================ 痛点 ============================ -->
+  <section class="pain" id="pain" aria-label="为什么记不住单词">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <span class="sec-eyebrow">still can't recall</span>
+        <h2>背了八遍，还是忘？</h2>
+        <p>不是你记忆力差 —— 是单词从来没真正住进过你的脑子。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="pain-grid">
+        <div class="pain-card" data-reveal data-no="01">
+          <span class="pain-icon">💭</span>
+          <h3>单词没有画面</h3>
+          <p>一个词 = 一行释义 + 一句例句。闭眼就是一片空白，回忆全靠死记硬背，声音和画面都缺席。</p>
+        </div>
+        <div class="pain-card" data-reveal data-no="02">
+          <span class="pain-icon">📖</span>
+          <h3>例句像天书</h3>
+          <p>生造的翻译腔例句脱离生活，既看不懂、也用不上。少了语境这层"土壤"，词自然扎不了根。</p>
+        </div>
+        <div class="pain-card" data-reveal data-no="03">
+          <span class="pain-icon">🌀</span>
+          <h3>复习没有章法</h3>
+          <p>背完就扔进书里吃灰，直到考试前才想起来：哦，根本忘光了。复习全凭一时兴起。</p>
+        </div>
+      </div>
+      <p class="pain-turn" data-reveal>别硬背了 —— 换个环境，让单词自己发想生长
+        <small>词屿把「死记硬背」换成「多感官疗养」：语境、画面、声音、节奏，四路并进。</small>
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================ 核心疗法 ============================ -->
+  <section class="therapy" id="therapy" aria-label="核心特色">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <span class="sec-eyebrow">the treatment</span>
+        <h2>六大疗法，一次根治</h2>
+        <p>每个顽固词进岛后，都会经历一套完整的「记忆疗养」流程。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="therapy-grid">
+        <article class="tx-card" data-reveal>
+          <div class="tx-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.5-3.5L9 20"/></svg>
+          </div>
+          <h3>一句一图一梗</h3>
+          <span class="tx-en">one line · one picture · one hook</span>
+          <p>为单词生成语境金句 + 场景插画 + 谐音梗，图像与语义双编码，一次记住、两次加固。</p>
+          <div class="tx-tags"><span>形象思维</span><span>趣味联想</span></div>
+        </article>
+
+        <article class="tx-card" data-reveal>
+          <div class="tx-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+          </div>
+          <h3>场景连环画</h3>
+          <span class="tx-en">scene comics</span>
+          <p>一词一剧场：AI 把单词编进多格剧情连环画，让情节推着剧情走，记忆在笑点里生根。</p>
+          <div class="tx-tags"><span>叙事记忆</span><span>剧情联想</span></div>
+        </article>
+
+        <article class="tx-card" data-reveal>
+          <div class="tx-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5"/><path d="M9 4v14"/><path d="m9 9 7-4v9l-7-4"/></svg>
+          </div>
+          <h3>AI 微电影</h3>
+          <span class="tx-en">micro films</span>
+          <p>动态画面 + AI 配音 + 双语字幕，几十秒一支小剧场。睡前看一遍，第二天想忘都难。</p>
+          <div class="tx-tags"><span>多感官</span><span>沉浸</span></div>
+        </article>
+
+        <article class="tx-card" data-reveal>
+          <div class="tx-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+          </div>
+          <h3>TTS 朗读音频</h3>
+          <span class="tx-en">ear training</span>
+          <p>地道发音把单词读成"声音锚点"，通勤、跑步时戴上耳机就能磨耳朵、跟读、开口说。</p>
+          <div class="tx-tags"><span>听觉记忆</span><span>跟读练习</span></div>
+        </article>
+
+        <article class="tx-card" data-reveal>
+          <div class="tx-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 10-2 2 2 2M18 10l2 2-2 2"/></svg>
+          </div>
+          <h3>遮词自测</h3>
+          <span class="tx-en">active recall</span>
+          <p>盖住释义、凭画面回想单词，主动回忆比重复读过十遍更牢；答错的词自动送回「住院区」。</p>
+          <div class="tx-tags"><span>主动回忆</span><span>及时纠偏</span></div>
+        </article>
+
+        <article class="tx-card" data-reveal>
+          <div class="tx-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m1 4 6 6-6 6"/><path d="M11 4a10 10 0 1 1 0 20h-1"/></svg>
+          </div>
+          <h3>Leitner 间隔复习</h3>
+          <span class="tx-en">spaced repetition</span>
+          <p>科学排期：刚熟的勤见面、熟透的慢慢淡出。复习不靠感觉，靠遗忘曲线的算法。</p>
+          <div class="tx-tags"><span>抗遗忘</span><span>智能排期</span></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 上岛流程 ============================ -->
+  <section class="process" id="how" aria-label="上岛流程">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <span class="sec-eyebrow">how it works</span>
+        <h2>四个疗程，词到病除</h2>
+        <p>从顽固词上岛，到长成治愈图鉴里的一棵树。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="proc-track">
+        <div class="proc-step" data-reveal>
+          <div class="proc-num">01</div>
+          <h3><span>上岛 ·</span>导入顽固词</h3>
+          <p>把背不动的词送进词库，AI 自动补全释义、词性、例句与词根拆解。</p>
+        </div>
+        <div class="proc-step" data-reveal>
+          <div class="proc-num">02</div>
+          <h3><span>诊疗 ·</span>深度加工</h3>
+          <p>为每个词生成语境故事、场景插画、微电影脚本与朗读音频。</p>
+        </div>
+        <div class="proc-step" data-reveal>
+          <div class="proc-num">03</div>
+          <h3><span>疗养 ·</span>遮词自测</h3>
+          <p>凭画面主动回想，答错的词自动送回住院区接受下一轮治疗。</p>
+        </div>
+        <div class="proc-step" data-reveal>
+          <div class="proc-num">04</div>
+          <h3><span>治愈 ·</span>康复追踪</h3>
+          <p>单词彻底被驯服后长成词树、登上治愈图鉴，Leitner 仍会定时复查。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 疗养纪实 ============================ -->
+  <section class="gallery" id="gallery" aria-label="疗养纪实">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <span class="sec-eyebrow">the gallery</span>
+        <h2>疗养纪实</h2>
+        <p>岛上每天都在发生的事：词被画出来、演出来、念出来，然后长成树。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="gallery-grid">
+        <div class="gal-card big" data-reveal="left">
+          <span class="gal-tag">场景连环画</span>
+          <img src="/static/images/landing-comic.jpg" alt="单词场景连环画插画：纸页海浪上的小帆船" loading="lazy">
+          <div class="gal-cap">
+            <strong>一词一剧场</strong>
+            <span>AI 把单词编成剧情连环画，画面缓存记忆</span>
+          </div>
+        </div>
+        <div class="gal-card" data-reveal="right">
+          <span class="gal-tag">AI 微电影</span>
+          <img src="/static/images/landing-video.jpg" alt="黄昏海岛码头的微电影画面" loading="lazy">
+          <div class="gal-cap">
+            <strong>画面 + 配音 + 字幕</strong>
+            <span>几十秒一支小剧场，多感官同时上岛</span>
+          </div>
+        </div>
+        <div class="gal-card" data-reveal="right">
+          <span class="gal-tag">治愈图鉴</span>
+          <img src="/static/images/tree-sakura.jpg" alt="被治愈的单词长成一棵樱花树" loading="lazy">
+          <div class="gal-cap">
+            <strong>单词长成词树</strong>
+            <span>治愈的顽固词，变成岛上的一棵树</span>
+          </div>
+        </div>
+      </div>
+      <p class="gal-note" data-reveal>以上皆为 <em>AI 实时生成</em> 的疗养素材示例。</p>
+    </div>
+  </section>
+
+  <!-- ============================ 真实记忆卡 ============================ -->
+  <section class="cards" id="showcase" aria-label="看看他们都生成了什么">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <span class="sec-eyebrow">memory cards</span>
+        <h2>看看他们都生成了什么</h2>
+        <p>词屿用户用「单点深耕」为顽固词打造的 AI 记忆卡——一句、一图、一梗，全部真实生成。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="cards-grid">
+        <article class="mc" data-reveal>
+          <div class="mc-frame">
+            <img src="/static/images/landing-cards/card-supervise.jpg" alt="supervise 记忆卡插画：长出一百只眼睛紧盯项目的经理" loading="lazy">
+            <span class="mc-tag">夸张场景</span>
+          </div>
+          <div class="mc-body">
+            <h3 class="mc-word">supervise <small>监督 · 管理</small></h3>
+            <p class="mc-en">“The manager grew a hundred giant eyes to closely supervise every single detail of the new project.”</p>
+            <p class="mc-zh">经理长出一百只巨大的眼睛，目光如织地监督着新项目的每一个细节。</p>
+            <div class="mc-colloc">supervise a project <i>监督一个项目</i></div>
+          </div>
+        </article>
+
+        <article class="mc" data-reveal>
+          <div class="mc-frame">
+            <img src="/static/images/landing-cards/card-diversity.jpg" alt="diversity 记忆卡插画：公文包里种出花木各异的花园" loading="lazy">
+            <span class="mc-tag">具象比喻</span>
+          </div>
+          <div class="mc-body">
+            <h3 class="mc-word">diversity <small>多样性</small></h3>
+            <p class="mc-en">“The CEO promoted workplace diversity by growing a vibrant garden of completely different plants inside his briefcase.”</p>
+            <p class="mc-zh">CEO 在公文包里种出一座花木各异、生机盎然的花园，来践行职场多元化。</p>
+            <div class="mc-colloc">promote workplace diversity <i>促进职场多元化</i></div>
+          </div>
+        </article>
+
+        <article class="mc" data-reveal>
+          <div class="mc-frame">
+            <img src="/static/images/landing-cards/card-defy.jpg" alt="defy 记忆卡插画：CEO 把合规手册踢进碎纸机" loading="lazy">
+            <span class="mc-tag">夸张场景</span>
+          </div>
+          <div class="mc-body">
+            <h3 class="mc-word">defy <small>违抗 · 蔑视</small></h3>
+            <p class="mc-en">“The CEO kicked the compliance binder into the shredder, openly defying the new industry regulations.”</p>
+            <p class="mc-zh">CEO 一脚把合规手册踢进碎纸机，公然违抗新的行业规定。</p>
+            <div class="mc-colloc">defy the regulations <i>公然违抗规定</i></div>
+          </div>
+        </article>
+
+        <article class="mc" data-reveal>
+          <div class="mc-frame">
+            <img src="/static/images/landing-cards/card-designate.jpg" alt="designate 记忆卡插画：CEO 指定发抖的实习生当官方保镖" loading="lazy">
+            <span class="mc-tag">夸张场景</span>
+          </div>
+          <div class="mc-body">
+            <h3 class="mc-word">designate <small>指派 · 委任</small></h3>
+            <p class="mc-en">“The CEO had to designate the trembling intern as his official bodyguard.”</p>
+            <p class="mc-zh">CEO 不得不指定那位瑟瑟发抖的实习生，来做他的官方保镖。</p>
+            <div class="mc-colloc">designate a representative <i>指派一名代表</i></div>
+          </div>
+        </article>
+      </div>
+      <p class="cards-note" data-reveal>每一张都是 AI 现场生成的「一句一图」记忆卡 —— <a href="/login">上岛</a>亲手做一张试试。</p>
+    </div>
+  </section>
+
+  <!-- ============================ 最终 CTA ============================ -->
+  <section class="cta-final" aria-label="开始体验">
+    <div class="wrap">
+      <div class="cta-panel" data-reveal>
+        <div class="bg"><img src="/static/images/login-bg.jpg" alt="" loading="lazy" aria-hidden="true"></div>
+        <div class="veil"></div>
+        <div class="cta-inner">
+          <span class="stamp">顽固词 · 出院台</span>
+          <h2 style="margin-top:20px">让每个顽固词，<br><span class="hl">都有处可去</span></h2>
+          <p>免费上岛，游客 1 秒进入；开发者 / 管理员账号可解锁全部深度功能。今天送来的词，明天就开始发芽。</p>
+          <a class="btn-gold" href="/login">开始体验
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
+          <p class="cta-note">无需注册 · 游客直接进入 &nbsp;·&nbsp; 数据保留在 <b>当前浏览器</b></p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============================ 页脚 ============================ -->
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <div class="nav-icon">🏝️</div>
+      <span>词屿 WordIsle · 顽固词疗养岛</span>
+    </div>
+    <a class="footer-gh" href="https://github.com/user0752/WordIsle" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub 开源地址
+    </a>
+    <div class="footer-meta">
+      <p>顽固词深度加工系统</p>
+      <p>© 2026 WordIsle · 让每个顽固词都有处可去</p>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  // 已登录用户访问落地页 → 直接进入主应用
+  try {
+    fetch('/api/me', { credentials: 'same-origin' })
+      .then(function (r) { if (r.ok) location.replace('/app'); })
+      .catch(function () {});
+  } catch (e) {}
+
+  // 导航滚动样式
+  var nav = document.getElementById('site-nav');
+  var onScroll = function () {
+    nav.classList.toggle('scrolled', window.scrollY > 12);
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // 进场动画（尊重系统减弱动效偏好）
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return;
+  var targets = document.querySelectorAll('[data-reveal]');
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(function (el) { el.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('in');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  targets.forEach(function (el) { io.observe(el); });
+})();
+</script>
+</body>
+</html>

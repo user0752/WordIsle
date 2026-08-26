@@ -4,161 +4,150 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#1e4a3c">
-<title>登录 · WordIsle 词屿 · 顽固词疗养岛</title>
+<title>登录 · 词屿 WordIsle · 顽固词疗养岛</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Noto+Serif+SC:wght@500;600;700;900&display=swap" rel="stylesheet">
 <style>
+  /* ==========================================================
+     登录页 · 词屿 WordIsle
+     与落地页同一套「手绘岛屿图鉴」设计语言：
+     暖纸底 + 岛屿背景透出 + 居中纸质卡片
+     ========================================================== */
   :root {
-    /* 品牌设计系统 token（与主站 main.css 对齐） */
+    --paper: #f5efe2;
+    --card: #fdfaf3;
+    --ink: #23402f;
+    --ink-deep: #182e23;
+    --ink-soft: #4c6355;
     --accent: #3a7d6a;
-    --accent-dark: #2a6654;
     --accent-deep: #1e4a3c;
-    --accent-soft: #e8f3ee;
-    --accent-border: rgba(58, 125, 106, 0.16);
     --gold: #b8953a;
-    --gold-soft: rgba(184, 149, 58, 0.10);
-    --text-primary: #1d1d1f;
-    --text-secondary: #5b5b6b;
-    --text-tertiary: #8e8e9e;
+    --gold-light: #d4aa4a;
+    --gold-soft: rgba(184, 149, 58, 0.14);
+    --accent-soft: rgba(58, 125, 106, 0.09);
+    --line: rgba(35, 64, 47, 0.14);
+    --line-strong: rgba(35, 64, 47, 0.24);
     --danger: #c24a3a;
+    --danger-soft: rgba(194, 74, 58, 0.07);
+    --danger-line: rgba(194, 74, 58, 0.16);
     --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --serif: "Noto Serif SC", "Playfair Display", Georgia, "Songti SC", serif;
+    --english: "Playfair Display", Georgia, serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { min-height: 100%; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
-    min-height: 100vh;
-  }
-
-  .login-shell {
-    min-height: 100vh;
-    display: flex;
-  }
-
-  /* ============ 左侧品牌面板（≥880px 显示） ============ */
-  .brand-panel {
+    -moz-osx-font-smoothing: grayscale;
+    color: var(--ink);
+    /* 岛屿背景透出 → 暖纸渐隐，与落地页一脉相承 */
+    background:
+      linear-gradient(180deg,
+        rgba(246, 241, 230, 0.46) 0%,
+        rgba(246, 241, 230, 0.88) 34%,
+        var(--paper) 62%,
+        var(--paper) 100%),
+      url('/static/images/login-bg.jpg') center 0% / cover no-repeat,
+      var(--paper);
+    background-attachment: local;
     position: relative;
-    flex: 1 1 52%;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: 56px 64px 0;
-    color: #f2f6f2;
-    overflow: hidden;
-    background:
-      radial-gradient(900px 500px at 85% -10%, rgba(184, 149, 58, 0.14), transparent 60%),
-      radial-gradient(700px 460px at -10% 110%, rgba(10, 38, 28, 0.55), transparent 65%),
-      linear-gradient(155deg, #1e4a3c 0%, #265c49 46%, #3a7d6a 100%);
   }
-  .brand-panel::before { /* 细腻纸张噪声 */
-    content: ''; position: absolute; inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-    pointer-events: none;
-    mix-blend-mode: overlay;
+  /* 水彩纸颗粒肌理 */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
   }
-  .brand-panel::after { /* 顶部光带 */
-    content: ''; position: absolute; top: -140px; right: -80px;
-    width: 420px; height: 420px; border-radius: 50%;
-    background: radial-gradient(circle, rgba(255,255,255,0.10), transparent 65%);
-    pointer-events: none;
+  ::selection { background: var(--gold-light); color: var(--ink-deep); }
+  a { color: inherit; }
+
+  .login-page {
+    position: relative; z-index: 1;
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    padding: 0 20px calc(24px + env(safe-area-inset-bottom));
   }
 
-  .brand-inner { position: relative; z-index: 1; max-width: 480px; }
-  .brand-badge {
-    width: 58px; height: 58px; border-radius: 18px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 30px;
-    background: rgba(255, 255, 255, 0.10);
-    border: 1px solid rgba(255,255,255,0.16);
-    box-shadow: 0 10px 30px rgba(12, 44, 32, 0.35), inset 0 1px 0 rgba(255,255,255,0.22);
-    margin-bottom: 26px;
-    animation: floatBadge 7s var(--ease) infinite;
+  /* ============ 顶栏 · 与落地页导航同款 ============ */
+  .topbar {
+    max-width: 1080px; width: 100%; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 22px 4px 18px;
   }
-  @keyframes floatBadge {
-    0%, 100% { transform: translateY(0) rotate(-2deg); }
-    50%      { transform: translateY(-6px) rotate(2deg); }
+  .brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
+  .brand .brand-icon {
+    width: 38px; height: 38px; flex: none; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center; font-size: 19px;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+    box-shadow: 0 6px 16px rgba(30, 74, 60, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   }
-  .brand-panel h1 {
-    font-family: Georgia, "Songti SC", serif;
-    font-size: 44px; font-weight: 700; letter-spacing: 0.5px;
-    line-height: 1.1;
+  .brand .brand-text { font-family: var(--serif); font-weight: 700; font-size: 17px; letter-spacing: .5px; color: var(--ink-deep); line-height: 1.2; }
+  .brand .brand-text small { display: block; font-size: 10.5px; letter-spacing: 3px; color: var(--ink-soft); font-weight: 600; }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13.5px; font-weight: 500; color: var(--ink-soft);
+    text-decoration: none; padding: 8px 14px; border-radius: 999px;
+    border: 1px solid transparent;
+    transition: color .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
   }
-  .brand-sub {
-    margin-top: 10px; font-size: 15px; letter-spacing: 2px;
-    color: rgba(242, 246, 242, 0.75);
+  .back-link:hover { color: var(--accent-deep); background: rgba(253, 250, 243, 0.9); border-color: var(--line); }
+  .back-link svg { width: 14px; height: 14px; }
+  .top-actions { display: flex; align-items: center; gap: 4px; }
+  .gh-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 999px;
+    color: var(--ink-soft);
+    transition: color .2s var(--ease), background .2s var(--ease);
   }
-  .brand-sub em { font-style: normal; color: #f0d58cb3; }
-  .brand-desc {
-    margin-top: 26px; font-size: 14px; line-height: 2;
-    color: rgba(242, 246, 242, 0.88);
-  }
-  .brand-points {
-    margin-top: 30px; list-style: none;
-    display: grid; gap: 13px;
-  }
-  .brand-points li {
-    display: flex; align-items: center; gap: 11px;
-    font-size: 13.5px; color: rgba(242, 246, 242, 0.92);
-  }
-  .brand-points li::before {
-    content: '🌴'; font-size: 13px;
-    width: 24px; height: 24px; flex: none;
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(255,255,255,0.09);
-    border-radius: 8px;
-  }
+  .gh-icon svg { width: 17px; height: 17px; }
+  .gh-icon:hover { color: #24292f; background: rgba(253, 250, 243, 0.9); }
 
-  /* 岛屿剪影插画（面板底部） */
-  .island-art { position: relative; z-index: 1; width: 100%; height: 240px; display: block; }
-  .island-art .wave {
-    fill: rgba(14, 44, 33, 0.35);
-    animation: waveDrift 11s ease-in-out infinite alternate;
-  }
-  .island-art .sand { fill: rgba(240, 213, 140, 0.16); }
-  .island-art .hill { fill: rgba(11, 38, 27, 0.5); }
-  .island-art .palm { stroke: rgba(240, 213, 140, 0.30); stroke-linecap: round; }
-  .island-art .palm-dot { fill: rgba(240, 213, 140, 0.45); }
-  @keyframes waveDrift {
-    from { transform: translateX(-14px); }
-    to   { transform: translateX(14px); }
-  }
-
-  /* ============ 右侧表单面板 ============ */
-  .form-panel {
-    flex: 1 1 48%;
+  /* ============ 主舞台 · 居中卡片 ============ */
+  .stage {
+    flex: 1;
     display: flex; align-items: center; justify-content: center;
-    background:
-      radial-gradient(900px 520px at 0% 0%, var(--accent-soft), transparent 62%),
-      #f7f8f6;
-    padding: 40px 24px calc(40px + env(safe-area-inset-bottom));
+    padding: 12px 0 30px;
   }
-  .form-card {
+  .card {
     width: 100%; max-width: 404px;
-    background: #fff;
-    border: 1px solid var(--accent-border);
-    border-radius: 22px;
+    background: var(--card);
+    border: 1px solid rgba(35, 64, 47, 0.10);
+    border-radius: 24px;
     padding: 34px 32px 28px;
-    box-shadow: 0 24px 60px rgba(30, 74, 60, 0.10);
-    animation: cardIn 0.5s var(--ease) both;
+    box-shadow: 0 28px 64px rgba(30, 74, 60, 0.14), 0 4px 14px rgba(30, 74, 60, 0.06);
+    animation: cardIn .55s var(--ease) both;
   }
   @keyframes cardIn {
-    from { opacity: 0; transform: translateY(16px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(18px) scale(.985); }
+    to   { opacity: 1; transform: none; }
   }
 
-  .mobile-brand { display: none; }
+  .card-stamp {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--serif); font-weight: 700; font-size: 12px; letter-spacing: 2px;
+    color: var(--accent-deep);
+    border: 2px dashed rgba(58, 125, 106, 0.5);
+    padding: 4px 12px 3px; border-radius: 9px;
+    transform: rotate(-2deg);
+    margin-bottom: 18px;
+    background: rgba(255, 255, 255, 0.6);
+  }
+  .card h1 {
+    font-family: var(--serif); font-size: 23px; font-weight: 900; letter-spacing: .5px;
+    color: var(--ink-deep);
+  }
+  .card-subtitle { font-size: 13px; color: var(--ink-soft); margin: 6px 0 22px; }
 
-  .form-card h2 { font-size: 22px; color: var(--text-primary); font-weight: 700; letter-spacing: 0.3px; }
-  .form-subtitle { font-size: 13px; color: var(--text-tertiary); margin: 6px 0 22px; }
-
-  label { display: block; font-size: 13px; color: var(--text-secondary); margin: 16px 0 7px; font-weight: 500; }
+  label { display: block; font-size: 13px; color: var(--ink-soft); margin: 16px 0 7px; font-weight: 600; }
   .field { position: relative; }
   input[type=text], input[type=password] {
     width: 100%; padding: 12px 14px; font-size: 15px;
-    border-radius: 12px; border: 1px solid rgba(0,0,0,0.10);
-    outline: none; background: #fff; color: var(--text-primary);
+    border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.10);
+    outline: none; background: #fff; color: var(--ink-deep);
     transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
   }
-  input::placeholder { color: #b9b9c4; }
+  input::placeholder { color: #b9b3a4; }
   input:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(58, 125, 106, 0.13);
@@ -168,93 +157,67 @@
     border: none; background: transparent; cursor: pointer;
     width: 38px; height: 38px; border-radius: 10px;
     display: flex; align-items: center; justify-content: center;
-    color: var(--text-tertiary); transition: color .15s, background .15s;
+    color: #a29b8b; transition: color .15s, background .15s;
   }
   .field .eye:hover { color: var(--accent); background: var(--accent-soft); }
   .field .eye svg { width: 18px; height: 18px; }
 
   .btn-primary {
-    width: 100%; margin-top: 22px; padding: 13px; font-size: 15px; font-weight: 600;
-    border: none; border-radius: 12px; cursor: pointer; color: #fff;
-    background: linear-gradient(120deg, var(--accent-dark), var(--accent));
-    box-shadow: 0 8px 20px rgba(58, 125, 106, 0.28);
+    width: 100%; margin-top: 22px; padding: 13px; font-size: 15.5px; font-weight: 700;
+    font-family: var(--serif); letter-spacing: 2px;
+    border: none; border-radius: 12px; cursor: pointer; color: #f7f2e6;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+    box-shadow: 0 10px 24px rgba(30, 74, 60, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.16);
     transition: transform .15s var(--ease), box-shadow .15s var(--ease), opacity .15s;
   }
-  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(58, 125, 106, 0.34); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 14px 30px rgba(30, 74, 60, 0.36); }
   .btn-primary:active { transform: translateY(0); }
 
+  .divider { display: flex; align-items: center; gap: 12px; color: #a29b8b; font-size: 12px; margin: 20px 0 4px; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: rgba(35, 64, 47, 0.08); }
+
   .btn-guest {
-    width: 100%; margin-top: 12px; padding: 12px; font-size: 14.5px; font-weight: 600;
+    width: 100%; margin-top: 12px; padding: 12px; font-size: 14.5px; font-weight: 700;
+    font-family: var(--serif); letter-spacing: 1px;
     border-radius: 12px; cursor: pointer;
-    color: var(--accent-dark); background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
+    color: var(--accent-deep); background: var(--gold-soft);
+    border: 1px solid rgba(184, 149, 58, 0.35);
     transition: transform .15s var(--ease), background .15s, box-shadow .15s;
   }
-  .btn-guest:hover { background: #d9ece2; transform: translateY(-1px); box-shadow: 0 6px 16px rgba(58,125,106,0.14); }
+  .btn-guest:hover { background: rgba(212, 170, 74, 0.22); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(140, 105, 30, 0.14); }
   .btn-guest:active { transform: translateY(0); }
 
   .btn-primary:disabled, .btn-guest:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
-  .divider { display: flex; align-items: center; gap: 12px; color: var(--text-tertiary); font-size: 12px; margin: 22px 0 4px; }
-  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: rgba(0,0,0,0.06); }
-
   .err {
     display: none; margin-top: 12px; padding: 10px 13px;
     font-size: 13px; color: var(--danger);
-    background: rgba(194, 74, 58, 0.07);
-    border: 1px solid rgba(194, 74, 58, 0.14);
+    background: var(--danger-soft);
+    border: 1px solid var(--danger-line);
     border-radius: 10px; line-height: 1.6;
   }
 
   .guest-tip {
     margin-top: 18px; padding: 11px 13px;
-    font-size: 12px; line-height: 1.7; color: var(--text-tertiary);
-    background: var(--gold-soft);
+    font-size: 12px; line-height: 1.7; color: var(--ink-soft);
     border-left: 3px solid var(--gold);
+    background: rgba(246, 241, 230, 0.8);
     border-radius: 8px;
   }
 
-  .foot-note {
-    margin-top: 22px; text-align: center;
-    font-size: 12px; color: var(--text-tertiary);
+  /* ============ 响应式 ============ */
+  @media (max-width: 480px) {
+    .login-page { padding: 0 14px calc(20px + env(safe-area-inset-bottom)); }
+    .topbar { padding: 16px 2px 10px; }
+    .card { padding: 28px 22px 24px; border-radius: 20px; }
+    .stage { padding: 6px 0 20px; }
   }
-  .foot-note a { color: var(--accent); text-decoration: none; font-weight: 500; }
-
-  /* ============ 响应式：≤880px 单面板 ============ */
-  @media (max-width: 880px) {
-    .brand-panel { display: none; }
-    .form-panel {
-      background:
-        radial-gradient(620px 300px at 50% -6%, rgba(232, 243, 238, 0.9), transparent 70%),
-        linear-gradient(180deg, #f2f7f3 0%, #f7f8f6 40%, #f2f4ef 100%);
-      min-height: 100vh;
-    }
-    .form-card {
-      max-width: 420px;
-      box-shadow: 0 18px 44px rgba(30, 74, 60, 0.10);
-      border-radius: 20px;
-    }
-    .mobile-brand {
-      display: flex; align-items: center; gap: 10px;
-      margin-bottom: 22px; padding-bottom: 20px;
-      border-bottom: 1px solid rgba(0,0,0,0.05);
-    }
-    .mobile-brand .mb-icon {
-      width: 42px; height: 42px; flex: none;
-      border-radius: 13px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 22px;
-      background: var(--accent-soft); border: 1px solid var(--accent-border);
-    }
-    .mobile-brand .mb-name { font-size: 17px; font-weight: 700; color: var(--text-primary); font-family: Georgia, "Songti SC", serif; letter-spacing: 0.3px; }
-    .mobile-brand .mb-sub { font-size: 12px; color: var(--text-tertiary); }
+  @media (max-height: 640px) and (orientation: landscape) {
+    .topbar { padding: 12px 4px 8px; }
+    .brand .brand-text small { display: none; }
+    .card { padding: 24px 28px 20px; }
+    .stage { padding: 4px 0 14px; }
   }
-
-  @media (max-width: 420px) {
-    .form-panel { padding: 24px 16px calc(24px + env(safe-area-inset-bottom)); }
-    .form-card { padding: 26px 22px 22px; }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
@@ -265,59 +228,30 @@
 </style>
 </head>
 <body>
-<div class="login-shell">
-  <!-- 品牌面板（桌面端） -->
-  <aside class="brand-panel">
-    <div class="brand-inner">
-      <div class="brand-badge">🏝️</div>
-      <h1>WordIsle</h1>
-      <p class="brand-sub">词屿 <em>·</em> 顽固词疗养岛</p>
-      <p class="brand-desc">背了八遍还记不住的顽固词，<br>别硬背了 —— 送来岛上，AI 把它们种进故事与画面里生根。</p>
-      <ul class="brand-points">
-        <li>一句一图一梗 · 双编码记忆钩子</li>
-        <li>场景连环画 / 微电影 / TTS 朗读音频</li>
-        <li>遮词自测 + Leitner 间隔重复复习</li>
-      </ul>
+<div class="login-page">
+  <!-- 顶栏：品牌 + 返回 -->
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="词屿 WordIsle 首页">
+      <div class="brand-icon">🏝️</div>
+      <div class="brand-text">词屿 WordIsle<small>顽固词疗养岛</small></div>
+    </a>
+    <div class="top-actions">
+      <a class="gh-icon" href="https://github.com/user0752/WordIsle" target="_blank" rel="noopener noreferrer" aria-label="GitHub 开源仓库" title="GitHub 开源仓库">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      </a>
+      <a class="back-link" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        返回介绍页
+      </a>
     </div>
-    <svg class="island-art" viewBox="0 0 720 240" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
-      <g class="wave"><path d="M0 208 C 90 186, 160 222, 260 202 S 450 180, 540 206 S 660 232, 720 210 L 720 240 L 0 240 Z"/></g>
-      <g class="wave" style="animation-delay:-4s"><path d="M0 222 C 100 204, 210 236, 330 218 S 560 206, 720 226 L 720 240 L 0 240 Z"/></g>
-      <g class="hill"><path d="M150 240 C 150 168, 236 140, 316 148 C 388 155, 478 128, 560 240 Z"/></g>
-      <g class="hill" style="opacity:.7"><path d="M-20 240 C 20 190, 92 176, 150 202 C 118 222, 96 232, 90 240 Z"/></g>
-      <g class="sand"><ellipse cx="392" cy="238" rx="150" ry="16"/></g>
-      <g stroke-width="6">
-        <path class="palm" d="M392 240 C 396 208, 386 186, 372 160"/>
-        <path class="palm" d="M390 220 C 412 204, 428 196, 448 190"/>
-        <path class="palm" d="M388 200 C 408 182, 420 174, 436 166"/>
-      </g>
-      <g>
-        <circle class="palm-dot" cx="360" cy="150" r="6"/>
-        <circle class="palm-dot" cx="384" cy="146" r="7"/>
-        <circle class="palm-dot" cx="408" cy="150" r="6"/>
-        <circle class="palm-dot" cx="376" cy="132" r="5"/>
-        <circle class="palm-dot" cx="352" cy="166" r="5"/>
-        <circle class="palm-dot" cx="404" cy="168" r="5"/>
-        <path class="palm" d="M372 160 C 348 152, 336 146, 326 136" stroke-width="5"/>
-        <path class="palm" d="M372 160 C 356 150, 344 150, 332 150" stroke-width="5"/>
-        <path class="palm" d="M436 166 C 456 158, 466 152, 476 142" stroke-width="5"/>
-        <path class="palm" d="M436 166 C 452 158, 462 154, 474 150" stroke-width="5"/>
-      </g>
-    </svg>
-  </aside>
+  </header>
 
-  <!-- 表单面板 -->
-  <main class="form-panel">
-    <div class="form-card">
-      <div class="mobile-brand">
-        <div class="mb-icon">🏝️</div>
-        <div>
-          <div class="mb-name">WordIsle 词屿</div>
-          <div class="mb-sub">顽固词疗养岛</div>
-        </div>
-      </div>
-
-      <h2>欢迎回来</h2>
-      <p class="form-subtitle">开发者 / 管理员请使用账号密码登录</p>
+  <!-- 主舞台 -->
+  <main class="stage">
+    <section class="card" aria-label="登录">
+      <span class="card-stamp">顽固词 · 上岛处</span>
+      <h1>欢迎回来</h1>
+      <p class="card-subtitle">开发者 / 管理员请使用账号密码登录</p>
 
       <form id="form-account" onsubmit="return doLogin(event)">
         <label for="username">账号</label>
@@ -338,8 +272,8 @@
       <div class="divider">或</div>
       <button class="btn-guest" id="btn-guest" type="button" onclick="guestLogin()">🌴 游客直接进入</button>
       <div class="err" id="err-guest"></div>
-      <div class="guest-tip">⚠ 游客数据保存在当前浏览器（Cookie 30 天有效），清除缓存或更换设备后将无法找回，重要数据请使用开发者 / 管理员账号。</div>
-    </div>
+      <p class="guest-tip">⚠ 游客数据保存在当前浏览器（Cookie 30 天有效），清除缓存或更换设备后将无法找回，重要数据请使用开发者 / 管理员账号。</p>
+    </section>
   </main>
 </div>
 
@@ -350,7 +284,7 @@ function togglePassword() {
   const btn = document.getElementById('btn-eye')
   const hidden = input.type === 'password'
   input.type = hidden ? 'text' : 'password'
-  btn.style.color = hidden ? 'var(--accent)' : 'var(--text-tertiary)'
+  btn.style.color = hidden ? 'var(--accent)' : '#a29b8b'
   btn.setAttribute('aria-label', hidden ? '隐藏密码' : '显示密码')
 }
 
@@ -378,7 +312,7 @@ async function doLogin(e) {
         password: document.getElementById('password').value,
       }),
     });
-    if (resp.ok) { location.href = '/'; return; }
+    if (resp.ok) { location.href = '/app'; return; }
     const data = await resp.json().catch(() => ({}));
     showErr('err-account', data.detail || '登录失败，请稍后重试');
   } catch (err) {
@@ -392,7 +326,7 @@ async function guestLogin() {
   setLoading('btn-guest', true);
   try {
     const resp = await fetch('/api/login-guest', { method: 'POST' });
-    if (resp.ok) { location.href = '/'; return; }
+    if (resp.ok) { location.href = '/app'; return; }
     const data = await resp.json().catch(() => ({}));
     showErr('err-guest', data.detail || '进入失败，请稍后重试');
   } catch (err) {

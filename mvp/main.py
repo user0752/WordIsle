@@ -33,13 +33,13 @@ VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 # 前端模板
 # ========================================================================
 
-def _load_index_html() -> str:
-    """从 templates/index.html 读取前端页面。
+def _load_template_html(name: str) -> str:
+    """从 templates/ 读取前端页面。
 
     给 /static 下的 js/css 引用自动追加版本号（基于文件修改时间），
     避免浏览器缓存旧文件导致 ES Module 加载失败（如 import 不存在的导出）。
     """
-    path = TEMPLATES_DIR / "index.html"
+    path = TEMPLATES_DIR / name
     if not path.exists():
         return "<h1>前端文件未找到</h1>"
     html = path.read_text(encoding="utf-8")
@@ -54,6 +54,16 @@ def _load_index_html() -> str:
         return f"{quote}{url}?v={ver}{quote}"
 
     return re.sub(r'(["\'])(/static/(?:js|css)/[^"\']+)\1', _versioned, html)
+
+
+def _load_index_html() -> str:
+    """主应用页（/app）：templates/index.html。"""
+    return _load_template_html("index.html")
+
+
+def _load_landing_html() -> str:
+    """产品落地页（/）：templates/landing.html。"""
+    return _load_template_html("landing.html")
 
 # ========================================================================
 # FastAPI 应用
@@ -106,7 +116,14 @@ app.include_router(router)
 # ========================================================================
 
 @app.get("/", response_class=HTMLResponse)
+async def home():
+    """产品落地页：介绍产品特色，底部「开始体验」跳转登录页。"""
+    return HTMLResponse(_load_landing_html(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/app", response_class=HTMLResponse)
 async def index():
+    """主应用页：登录后进入（原 / 迁移至 /app）。"""
     # no-store：HTML 永不缓存，保证每次都能拿到带最新版本号的静态资源引用
     return HTMLResponse(_load_index_html(), headers={"Cache-Control": "no-store"})
 

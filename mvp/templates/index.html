@@ -19,15 +19,26 @@
     <svg class="icon-burger" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     <svg class="icon-close" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
   </button>
-  <div class="app-layout">
+  <div class="app-layout" :class="{'sidebar-collapsed': sidebarCollapsed}">
     <!-- 顶部栏 — 极简毛玻璃 -->
     <header class="app-header">
+      <!-- 桌面端：侧边栏折叠开关（移动端用汉堡按钮） -->
+      <button class="sidebar-toggle" v-if="!isMobile" @click="toggleSidebar"
+              :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'" :aria-expanded="!sidebarCollapsed">
+        <svg class="icon-open-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.2 4v16"/></svg>
+        <svg class="icon-close-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.2 4v16"/><path d="m6.5 10.5 2.6 2.6-2.6 2.6"/></svg>
+      </button>
       <div class="logo" @click="currentPage='words'">
         <div class="logo-icon">
           <el-icon :size="16"><Reading /></el-icon>
         </div>
         <span class="logo-text">词屿 WordIsle</span>
       </div>
+
+      <!-- GitHub 开源仓库 -->
+      <a class="gh-link" href="https://github.com/user0752/WordIsle" target="_blank" rel="noopener noreferrer" title="GitHub 开源仓库" aria-label="GitHub 开源仓库">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      </a>
 
       <!-- 用户身份区 -->
       <div class="header-user" v-if="user">
@@ -4685,6 +4696,20 @@ const app = createApp({
     }
 
     // ====== 菜单 ======
+    // 桌面端：侧边栏折叠为图标栏（记忆到 localStorage，刷新后保持）
+    const sidebarCollapsed = ref(localStorage.getItem('wi.sidebar') === '1')
+    function syncSidebarTitles() {
+      document.querySelectorAll('.app-sidebar .el-menu-item').forEach((item) => {
+        if (!sidebarCollapsed.value) { item.removeAttribute('title'); return }
+        const t = (item.querySelector('span')?.textContent || '').trim()
+        if (t) item.setAttribute('title', t)
+      })
+    }
+    function toggleSidebar() {
+      sidebarCollapsed.value = !sidebarCollapsed.value
+      localStorage.setItem('wi.sidebar', sidebarCollapsed.value ? '1' : '0')
+      syncSidebarTitles()
+    }
     // 移动端抽屉开关：点击弹出 / 再次点击隐藏（开关）
     function toggleMobileMenu() {
       const open = document.body.classList.toggle('mobile-menu-open')
@@ -4722,6 +4747,7 @@ const app = createApp({
 
     // ====== 初始化 ======
     onMounted(() => {
+      syncSidebarTitles()  // 恢复折叠态时为图标栏补 title 提示
       loadMe()
       loadWords()
       loadPolysemyHot()
@@ -4818,6 +4844,7 @@ const app = createApp({
       user, limits, roleLabel, isGuest, loadMe, logout, quotaLeft, quotaExhausted, quotaHint,
       cleaningData, cleanSuspicious,
       isMobile, isRowSelected, toggleCardSelect,
+      sidebarCollapsed, toggleSidebar,
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
       openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
