@@ -686,7 +686,7 @@
           <el-card v-if="singleResult" shadow="never">
             <template #header>
               <div class="flex-between">
-                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？？？' : singleResult.word }}</span>
+                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked, 'card-word-title': true }">{{ selfTestMasked ? '？？？' : singleResult.word }}</span>
                   <span v-if="singleResult.meaning_zh && !selfTestMasked" class="word-meaning">{{ singleResult.meaning_zh }}</span>
                   <el-tag v-if="singleResult.hook_type && !selfTestMasked" size="small" class="ml-sm" type="warning">{{ singleResult.hook_type }}</el-tag>
                 </span>
@@ -708,7 +708,7 @@
                 <!-- 窄屏字幕条：场景句压图，图句同框（桌面端隐藏） -->
                 <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en"
                      class="single-caption" :class="{ 'is-masked': selfTestMasked }">
-                  <div class="single-caption-en">{{ singleResult.scene_sentence.en }}</div>
+                  <div class="single-caption-en" v-html="highlightWord(singleResult.scene_sentence.en, singleResult.word)"></div>
                   <div class="single-caption-zh">{{ singleResult.scene_sentence.zh }}</div>
                 </div>
               </div>
@@ -732,7 +732,7 @@
                 <!-- ② 场景句中英（窄屏由图上字幕条替代，此处隐藏） -->
                 <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en" class="single-section single-scene-section">
                   <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句</div>
-                  <div class="single-sentence-en">{{ singleResult.scene_sentence.en }}</div>
+                  <div class="single-sentence-en" v-html="highlightWord(singleResult.scene_sentence.en, singleResult.word)"></div>
                   <div class="single-sentence-zh">{{ singleResult.scene_sentence.zh }}</div>
                 </div>
 
@@ -1666,8 +1666,8 @@
           <el-card v-if="feedbackStats" shadow="never" class="mb-md">
             <div class="feedback-stats">
               <span class="feedback-stats-label">反馈满意度</span>
-              <el-tag type="success" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><ThumbsUp /></el-icon>{{ feedbackStats.up }} 有帮助</el-tag>
-              <el-tag type="danger" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><ThumbsDown /></el-icon>{{ feedbackStats.down }} 需改进</el-tag>
+              <el-tag type="success" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><component :is="ThumbsUp" /></el-icon>{{ feedbackStats.up }} 有帮助</el-tag>
+              <el-tag type="danger" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><component :is="ThumbsDown" /></el-icon>{{ feedbackStats.down }} 需改进</el-tag>
               <span class="feedback-satisfaction">满意度 {{ Math.round(feedbackStats.satisfaction * 100) }}%</span>
               <span class="text-secondary feedback-stats-meta">（{{ feedbackStats.rated }} 条已反馈）</span>
             </div>
@@ -2129,7 +2129,7 @@
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？？？' : resultSingleCard.word }}</span>
+                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked, 'card-word-title': true }">{{ selfTestMasked ? '？？？' : resultSingleCard.word }}</span>
                       <span v-if="resultSingleCard.meaning_zh && !selfTestMasked" class="word-meaning">{{ resultSingleCard.meaning_zh }}</span>
                       <el-tag v-if="resultSingleCard.hook_type && !selfTestMasked" size="small" class="ml-sm" type="warning">{{ resultSingleCard.hook_type }}</el-tag>
                     </span>
@@ -2149,7 +2149,7 @@
                          class="mood-sticker" :class="moodClassOf(resultSingleCard.hook_type)">{{ moodTextOf(resultSingleCard.hook_type, resultSingleCard.scene_sentence?.mood) }}</div>
                     <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en"
                          class="single-caption" :class="{ 'is-masked': selfTestMasked }">
-                      <div class="single-caption-en">{{ resultSingleCard.scene_sentence.en }}</div>
+                      <div class="single-caption-en" v-html="highlightWord(resultSingleCard.scene_sentence.en, resultSingleCard.word)"></div>
                       <div class="single-caption-zh">{{ resultSingleCard.scene_sentence.zh }}</div>
                     </div>
                   </div>
@@ -2173,7 +2173,7 @@
                     <!-- ② 场景句中英（窄屏由图上字幕条替代，此处隐藏） -->
                     <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en" class="single-section single-scene-section">
                       <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句</div>
-                      <div class="single-sentence-en">{{ resultSingleCard.scene_sentence.en }}</div>
+                      <div class="single-sentence-en" v-html="highlightWord(resultSingleCard.scene_sentence.en, resultSingleCard.word)"></div>
                       <div class="single-sentence-zh">{{ resultSingleCard.scene_sentence.zh }}</div>
                     </div>
 
@@ -2776,6 +2776,9 @@ const app = createApp({
     for (const [k,v] of Object.entries(ElIcons)) {
       app.component(k, v)
     }
+    // CDN 版 @element-plus/icons-vue 缺 ThumbsUp/ThumbsDown，用内联 SVG 组件补全局注册
+    app.component('ThumbsUp', ThumbsUp)
+    app.component('ThumbsDown', ThumbsDown)
 
     const currentPage = ref('home')
 
@@ -3542,6 +3545,17 @@ const app = createApp({
       if (t.includes('具象')) return '具象比喻'
       if (t.includes('对比')) return '对比记忆'
       return ''
+    }
+
+    // 荒诞场景句中高亮目标单词：先 HTML 转义再按词（忽略大小写）包 <span class="word-hl">
+    function highlightWord(text, word) {
+      if (!text) return ''
+      const esc = String(text).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ))
+      if (!word) return esc
+      const w = String(word).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return esc.replace(new RegExp('(' + w + ')', 'gi'), '<span class="word-hl">$1</span>')
     }
 
     // 历史
@@ -4832,7 +4846,7 @@ const app = createApp({
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
-      selfTest, selfTestRecord, selfTestMasked, moodClassOf, moodTextOf,
+      selfTest, selfTestRecord, selfTestMasked, moodClassOf, moodTextOf, highlightWord,
       // 记忆测试（独立测试页）
       reviewStats, reviewSession, reviewAnswerInput, reviewQuestion, reviewAccuracyPct, loadReviewStats,
       questionTypeLabel, questionTypeHint, reviewOptionState,

@@ -631,7 +631,7 @@
 
   /* ===== 工具类 ===== */
   .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 20px; }
-  .card-title { font-weight: 500; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+  .card-title { font-weight: 500; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-primary); }
   .word-tags { display: flex; flex-wrap: wrap; gap: 8px; }
   .word-tag-item { border-radius: 6px; font-size: 13px; }
   .flex { display: flex; }
@@ -1142,6 +1142,28 @@
   .single-caption.is-masked { filter: blur(7px); user-select: none; pointer-events: none; }
   .word-masked { color: var(--gold); letter-spacing: 2px; }
   .word-meaning { font-size: 13px; color: var(--text-tertiary); margin-left: 8px; font-weight: 400; }
+
+  /* 记忆钩子卡片：单词标题放大个性化（衬线斜体 + 金色马克笔底） */
+  .card-word-title {
+    font-family: 'Playfair Display', 'Noto Serif SC', Georgia, serif;
+    font-style: italic; font-size: 26px; font-weight: 700; line-height: 1.15;
+    color: var(--accent-dark); letter-spacing: 0.4px;
+    padding: 0 3px 2px; border-radius: 3px;
+    background: linear-gradient(180deg, transparent 60%, var(--gold-bg) 60%);
+    white-space: nowrap;
+  }
+
+  /* 荒诞场景句：句中目标单词高亮（马克笔描线，忽略大小写） */
+  .word-hl {
+    color: var(--accent-dark); font-weight: 700;
+    background: linear-gradient(180deg, transparent 58%, rgba(212, 170, 74, 0.42) 58%);
+    padding: 0 2px; border-radius: 2px;
+  }
+  /* 窄屏字幕条（压图深底）上的高亮微调 */
+  .single-caption-en .word-hl {
+    color: #ffd98e;
+    background: linear-gradient(180deg, transparent 58%, rgba(212, 170, 74, 0.36) 58%);
+  }
 
   /* 遮词自测操作条 */
   .single-selftest {
