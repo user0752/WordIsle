@@ -202,6 +202,16 @@
   .app-header .role-badge.role-dev    { background: var(--accent); color: #fff; }
   .app-header .role-badge.role-admin  { background: #b8953a; color: #fff; }
   .app-header .role-badge.role-guest  { background: var(--accent-soft); color: var(--accent-dark); border: 1px solid var(--accent-border); }
+
+  /* 看板等页面内复用同款角色徽章（.role-badge 全局可用） */
+  .role-badge {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    display: inline-block; line-height: 1.5;
+  }
+  .role-badge.role-dev    { background: var(--accent); color: #fff; }
+  .role-badge.role-admin  { background: #b8953a; color: #fff; }
+  .role-badge.role-guest  { background: var(--accent-soft); color: var(--accent-dark); border: 1px solid var(--accent-border); }
   .app-header .user-name {
     font-size: 13px; color: var(--text-secondary); max-width: 140px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1493,6 +1503,127 @@
     white-space: nowrap;
     text-align: right;
     min-width: 70px;
+  }
+
+  /* ===== 反馈看板（运维视图） ===== */
+  /* 核心统计卡 */
+  .dash-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .dash-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: all var(--transition-base);
+  }
+  .dash-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+  .dash-card-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .dash-card-num {
+    font-size: 30px; font-weight: 700; line-height: 1.1;
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    color: var(--text-primary);
+  }
+  .dash-card-num.is-accent { color: var(--accent); }
+  .dash-card-num.is-gold { color: var(--gold); }
+  .dash-card-num.is-dim { color: var(--text-secondary); }
+  .dash-card-sub { font-size: 12px; color: var(--text-tertiary); }
+
+  /* 活跃度趋势 SVG 图表 */
+  .dash-chart-wrap { width: 100%; }
+  .dash-chart-wrap svg { width: 100%; height: auto; display: block; }
+  .dash-grad-from { stop-color: var(--accent); stop-opacity: 0.32; }
+  .dash-grad-to { stop-color: var(--accent); stop-opacity: 0.02; }
+  .dash-area-gen { fill: url(#dashGradGen); }
+  .dash-line-gen {
+    fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
+    stroke-linejoin: round; opacity: 0.9;
+  }
+  .dash-line-fb {
+    fill: none; stroke: var(--gold); stroke-width: 2; stroke-linecap: round;
+    stroke-linejoin: round; opacity: 0.9;
+  }
+  .dash-line-act {
+    fill: none; stroke: #5b8def; stroke-width: 1.6; stroke-linecap: round;
+    stroke-linejoin: round; stroke-dasharray: 4 3; opacity: 0.8;
+  }
+  .dash-pt { stroke: #fff; stroke-width: 1.4; }
+  .dash-pt.is-gen { fill: var(--accent); }
+  .dash-pt.is-fb { fill: var(--gold); }
+  .dash-pt.is-act { fill: #5b8def; }
+  .dash-val-label {
+    font-size: 10px; fill: var(--text-secondary);
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    pointer-events: none;
+  }
+  .dash-val-label.is-fb { fill: var(--gold); }
+  .dash-baseline { stroke: var(--border-default); stroke-width: 1; }
+  .dash-xlabel { font-size: 10px; fill: var(--text-tertiary); font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+  .dash-maxlabel { font-size: 11px; fill: var(--text-tertiary); }
+  .dash-legend { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+  .dash-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .dash-dot.is-gen { background: var(--accent); }
+  .dash-dot.is-fb { background: var(--gold); }
+  .dash-dot.is-act { background: #5b8def; border-radius: 50%; }
+
+  /* 生成类型分布 */
+  .dash-type-row { margin-bottom: 12px; }
+  .dash-type-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
+  .dash-type-card .usage-bar-track { height: 8px; }
+
+  /* 用户概况 */
+  .dash-user-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .dash-up { color: var(--success); font-weight: 600; }
+  .dash-down { color: var(--danger); font-weight: 600; }
+  .dash-sat { color: var(--accent); font-weight: 700; font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+  .dash-sat.is-low { color: var(--danger); }
+
+  /* 最近反馈明细 */
+  .dash-fb-list { display: flex; flex-direction: column; }
+  .dash-fb-item {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 11px 4px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .dash-fb-item:last-child { border-bottom: none; }
+  .dash-fb-icon {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-size: 15px;
+  }
+  .dash-fb-icon.is-up { background: var(--success-bg); color: var(--success); }
+  .dash-fb-icon.is-down { background: var(--danger-bg); color: var(--danger); }
+  .dash-fb-body { flex: 1; min-width: 0; }
+  .dash-fb-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+  .dash-fb-user { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-primary); }
+  .dash-fb-text { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dash-fb-meta { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+
+  /* 全站历史 */
+  .dash-hist-title { display: flex; flex-direction: column; gap: 4px; }
+  .dash-hist-name { font-weight: 600; color: var(--text-primary); }
+  .dash-hist-type { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+  /* 用户用量排行榜 · 移动端序号块 */
+  .rank-num {
+    width: 22px; height: 22px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    background: var(--bg-surface); color: var(--text-secondary);
+  }
+  .rank-num.is-top { background: var(--gold-bg); color: var(--gold); }
+
+  @media (max-width: 640px) {
+    .dash-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .dash-card-num { font-size: 24px; }
+    .dash-card-sub { font-size: 11px; }
   }
 
   /* ===== 骨架屏（加载占位，替代白屏/纯 spinner） ===== */

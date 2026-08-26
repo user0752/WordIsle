@@ -661,6 +661,36 @@ async def get_feedback():
     return get_feedback_stats()
 
 
+# ========================================================================
+# 平台看板（运维视图）：仅开发者/管理员可访问，聚合所有用户库的数据
+# ========================================================================
+
+def _require_staff():
+    """反馈看板 / 全站历史等运维数据仅开发者与管理员可见；游客返回 403。"""
+    user = current_user.get(None)
+    if not user or user.get("role") not in ("dev", "admin"):
+        raise HTTPException(403, "仅开发者/管理员可访问运维看板")
+
+
+@router.get("/api/admin/dashboard")
+async def admin_dashboard(days: int = 30):
+    """反馈看板：跨库聚合活跃度 / 反馈 / 生成统计（dev/admin）。"""
+    _require_staff()
+    return collect_platform_dashboard(_clamp_int(days, 7, 90, 30))
+
+
+@router.get("/api/admin/history")
+async def admin_history(page: int = 1, page_size: int = 20, q: str = "",
+                        rating: str = "", role: str = ""):
+    """全站历史：所有用户的生成记录（分页 + 关键词 / 反馈 / 角色过滤，dev/admin）。"""
+    _require_staff()
+    return list_platform_history(
+        page=_clamp_int(page, 1, 100000, 1),
+        page_size=_clamp_int(page_size, 1, 100, 20),
+        q=q, rating=rating, role=role,
+    )
+
+
 @router.delete("/api/generations/{gen_id}")
 async def delete_generation(gen_id: str):
     return _delete_generation(gen_id, "记录不存在")
@@ -1144,7 +1174,11 @@ async def health():
 @router.get("/api/usage")
 async def usage_stats(days: int = 0):
     """返回模型调用统计（按日汇总、按模型汇总、最近明细），供用量情况页面展示。
-    days=0（缺省）返回全部历史；days>0 仅返回近 days 天。"""
+    days=0（缺省）返回全部历史；days>0 仅返回近 days 天。
+    开发者/管理员返回全站聚合（recent 带用户身份 + 用户用量排行榜），游客返回自己库的数据。"""
+    user = current_user.get(None)
+    if user and user.get("role") in ("dev", "admin"):
+        return collect_platform_usage(days)
     return get_model_usage_stats(days)
 
 
