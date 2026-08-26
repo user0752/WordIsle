@@ -369,7 +369,7 @@
                 </template>
               </el-table-column>
               <el-table-column label="导入时间" width="160">
-                <template #default="{row}"><span class="text-secondary">{{ formatDate(row.created_at) }}</span></template>
+                <template #default="{row}"><span class="text-secondary">{{ formatDateOnly(row.created_at) }}</span></template>
               </el-table-column>
               <el-table-column label="操作" width="170" fixed="right">
                 <template #default="{row}">
@@ -399,7 +399,7 @@
                   <span class="resp-card-label">释义</span>
                   <el-input v-model="row.meaning_zh" size="small" placeholder="中文释义" @change="()=>updateWord(row,'meaning_zh',row.meaning_zh)"></el-input>
                 </div>
-                <div class="resp-card-line"><span class="resp-card-label">导入</span><span class="text-secondary">{{ formatDate(row.created_at) }}</span></div>
+                <div class="resp-card-line"><span class="resp-card-label">导入</span><span class="text-secondary">{{ formatDateOnly(row.created_at) }}</span></div>
                 <div class="resp-card-actions">
                   <el-button v-if="!row.phonetic" link type="primary" size="small" :loading="row._loadingPhonetic" @click="fetchPhonetic(row)">补音标</el-button>
                   <el-button v-if="!row.healed_at" link type="success" size="small" @click="toggleWordHealed(row)">治愈</el-button>
@@ -2755,7 +2755,7 @@
 import { api, apiStream } from '/static/js/api.js'
 // 纯数据常量 + 纯函数工具（不依赖页面状态，可复用）
 import { TTS_MODELS } from '/static/js/constants.js'
-import { formatDate, sceneRoleText, getModelDefaultVoice, highlightPanelWords, humanizeError } from '/static/js/utils.js'
+import { formatDate, formatDateOnly, sceneRoleText, getModelDefaultVoice, highlightPanelWords, humanizeError } from '/static/js/utils.js'
 
 const {createApp, ref, reactive, computed, watch, nextTick, onMounted, h} = Vue
 const ElIcons = ElementPlusIconsVue
@@ -4875,7 +4875,7 @@ const app = createApp({
       sceneView, scenes, scenesLoading, sceneDetail, sceneDetailLoading,
       sceneDetectLoading, sceneDetectResult, sceneSuggestions, sceneAdoptingIdx,
       sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,
-      formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
+      formatDate, formatDateOnly, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
       fetchPhonetic, playWordAudio, toggleWordHealed,
       handleParse, doImport, triggerFileInput, handleFileChange,
