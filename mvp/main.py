@@ -24,6 +24,7 @@ from db import *
 from auth import router as auth_router
 from auth import init_system_db
 from routes import router
+from assistant import router as assistant_router
 
 AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -110,6 +111,8 @@ app.mount("/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
 app.include_router(auth_router)
 # 业务路由——router 级依赖强制登录（get_current_user）
 app.include_router(router)
+# 智能助手词小屿——独立路由，同样强制登录
+app.include_router(assistant_router)
 
 # ========================================================================
 # 前端页面

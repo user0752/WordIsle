@@ -350,6 +350,16 @@ def init_db(uid=None):
             question_type TEXT DEFAULT '',
             answered_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 智能助手词小屿：会话消息（按用户隔离，保留最近 N 轮）
+        CREATE TABLE IF NOT EXISTS assistant_conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,             -- user / assistant
+            content TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_assistant_conv_user
+            ON assistant_conversations(user_id, id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique
             ON audios (generation_id, voice, speed, tts_model);
     """)

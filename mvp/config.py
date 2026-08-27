@@ -380,6 +380,7 @@ LLM_ROUTES = [
     {"key": "morpheme", "label": "构词拆解",     "desc": "单词构词拆解判定 / 词根推荐词生成", "default": "bailian-qwen3.7-flash"},
     {"key": "morpheme_seed", "label": "构词拆解·词根推荐", "desc": "为词根树推荐同构词（懒填充/添加成员）", "default": "bailian-qwen3.7-flash"},
     {"key": "extract", "label": "文章提词", "desc": "从粘贴的文章/文档中提取值得学习的单词", "default": "bailian-qwen3.7-flash"},
+    {"key": "assistant", "label": "智能助手词小屿", "desc": "词小屿意图识别与回复生成（设置页可切换模型）", "default": "bailian-qwen3.7-flash"},
 ]
 
 LLM_ROUTE_DEFAULT = {r["key"]: r["default"] for r in LLM_ROUTES}
@@ -438,12 +439,17 @@ for _pair in os.getenv("ADMIN_USERS", "").split(","):
 GUEST_LIMITS = {
     "video": 2, "batch": 5, "single": 5, "scene": 5,
     "polysemy": 5, "morpheme": 5, "extract": 5, "enrich": 5,
+    "assistant": 50,  # 词小屿每日对话上限（FAQ 命中与 LLM 回复均计入；dev/admin 不限）
 }
 # bucket → 中文名（用于前端提示 / 后端 429 文案）
 QUOTA_BUCKET_LABELS = {
     "video": "视频编译", "batch": "批量编译", "single": "单点深耕", "scene": "场景检测/编译",
     "polysemy": "熟词僻意检测", "morpheme": "构词拆解", "extract": "文章提词", "enrich": "单词补充",
+    "assistant": "智能助手对话",
 }
+
+# 每日复习量上限（防堆积，Anki 式，routes 与词小屿共用）
+REVIEW_DAILY_LIMIT = 20
 
 # 会话 Cookie
 AUTH_COOKIE = "wordisle_session"

@@ -3145,6 +3145,139 @@
     </template>
   </el-dialog>
 
+  <!-- ======================== 词小屿 · 全局智能助手 ======================== -->
+  <div class="cxy-root" v-if="user">
+    <!-- 对话面板 -->
+    <transition name="cxy-panel">
+      <section v-if="assistant.state.open" class="cxy-panel" :class="{'cxy-panel-mobile': isMobile}" aria-label="词小屿对话面板">
+        <!-- 面板头部 -->
+        <header class="cxy-head">
+          <div class="cxy-head-avatar"><img src="/static/images/logo.png" alt="词小屿"></div>
+          <div class="cxy-head-info">
+            <div class="cxy-head-name">词小屿 <span class="cxy-head-tag">智能助手</span></div>
+            <div class="cxy-head-sub">{{ assistant.state.configured ? '向导 · 查词 · 复习 · 加词' : 'LLM 未配置，仅可用常见问答' }}</div>
+          </div>
+          <div class="cxy-head-actions">
+            <button class="cxy-clear" title="清空会话" @click="assistant.clearConversation()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>
+            </button>
+            <button class="cxy-close" title="收起" @click="assistant.closePanel()">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <!-- 快捷问题 -->
+        <div v-if="assistant.state.quick.length && !assistant.state.busy" class="cxy-quick">
+          <button v-for="(q, qi) in assistant.state.quick" :key="qi" class="cxy-chip"
+                  @click="assistant.askQuick(q)">{{ q }}</button>
+        </div>
+
+        <!-- 消息流 -->
+        <div class="cxy-messages" ref="cxyMessages">
+          <template v-for="m in assistant.state.messages" :key="m.id">
+            <!-- 用户消息 -->
+            <div v-if="m.role === 'user'" class="cxy-row cxy-row-user">
+              <div class="cxy-bubble cxy-bubble-user">{{ m.text }}</div>
+            </div>
+            <!-- 助手消息 -->
+            <div v-else class="cxy-row cxy-row-ai">
+              <div class="cxy-avatar"><img src="/static/images/logo.png" alt="词小屿"></div>
+              <div class="cxy-bubble cxy-bubble-ai">
+                <!-- 查询工具结果卡片 -->
+                <div v-if="m.queryData" class="cxy-card">
+                  <div v-if="m.queryData.tool === 'search_words'" class="cxy-card-words">
+                    <template v-if="(m.queryData.data && m.queryData.data.items || []).length">
+                      <div v-for="(it, i) in m.queryData.data.items" :key="i" class="cxy-word-row">
+                        <span class="cxy-word">{{ it.word }}</span>
+                        <span class="cxy-word-meta">{{ it.pos || '' }} {{ it.meaning_zh || '' }}</span>
+                        <span v-if="it.phonetic" class="cxy-word-pho">{{ it.phonetic }}</span>
+                      </div>
+                      <div class="cxy-card-note">命中 {{ m.queryData.data.matched }} 个</div>
+                    </template>
+                    <div v-else class="cxy-card-note">词库里没有找到相关单词</div>
+                  </div>
+                  <div v-else-if="m.queryData.tool === 'get_review_due'" class="cxy-card-review">
+                    <div v-if="(m.queryData.data && m.queryData.data.items || []).length" class="cxy-review-tags">
+                      <span v-for="(it, i) in m.queryData.data.items" :key="i" class="cxy-review-tag">{{ it.word }}</span>
+                    </div>
+                    <div v-else class="cxy-card-note">今天没有到期的复习单词</div>
+                    <div class="cxy-card-note">
+                      待复习 {{ m.queryData.data.matched }} 个 · 今日上限 {{ m.queryData.data.daily_limit }} · 已答 {{ m.queryData.data.answered_today }}
+                    </div>
+                  </div>
+                </div>
+                <!-- 回答正文（Markdown 轻量渲染） -->
+                <span v-if="m.text" class="cxy-answer" v-html="assistant.md2html(m.text)"></span>
+                <span v-if="m.streaming" class="cxy-cursor"></span>
+                <!-- FAQ 跳转按钮 -->
+                <div v-if="m.navigate && m.navigate.page" class="cxy-nav">
+                  <button class="cxy-nav-btn" @click="assistant.goPage(m.navigate.page)">前往该页
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                  </button>
+                </div>
+                <!-- 错误 -->
+                <div v-if="m.errorChunk && !m.text" class="cxy-error">{{ m.errorChunk }}</div>
+                <!-- 结束态错误标注 -->
+                <div v-if="m.errorChunk && m.text" class="cxy-error-inline">（{{ m.errorChunk }}）</div>
+                <!-- 写操作确认卡片 -->
+                <div v-if="m.confirm" class="cxy-confirm">
+                  <div class="cxy-confirm-title">
+                    <span class="cxy-tag-write">{{ m.confirm.tool === 'add_words' ? '添加单词' : '删除单词' }}</span>
+                    {{ m.confirm.human.summary }}
+                  </div>
+                  <ul v-if="m.confirm.tool === 'add_words' && (m.confirm.human.will_add || []).length" class="cxy-confirm-list">
+                    <li v-for="(w, i) in m.confirm.human.will_add" :key="i">{{ w }}</li>
+                  </ul>
+                  <div v-if="m.confirm.tool === 'add_words' && (m.confirm.human.will_skip || []).length" class="cxy-confirm-note">
+                    以下单词已存在，将跳过：{{ m.confirm.human.will_skip.join('、') }}
+                  </div>
+                  <div v-if="m.confirm.tool === 'delete_word'" class="cxy-confirm-word">
+                    <span class="cxy-confirm-word-a">{{ m.confirm.human.word }}</span>
+                    <span v-if="m.confirm.human.meaning_zh" class="cxy-confirm-word-b">{{ m.confirm.human.meaning_zh }}</span>
+                    <span v-if="!m.confirm.human.exists" class="cxy-confirm-word-warn">词库中未找到</span>
+                  </div>
+                  <div class="cxy-confirm-risk">{{ m.confirm.human.risk }}</div>
+                  <div class="cxy-confirm-actions">
+                    <el-button size="small" @click="assistant.cancelAction(m)" :disabled="m.confirm.executing">取消</el-button>
+                    <el-button size="small" type="primary" :loading="m.confirm.executing" @click="assistant.confirmAction(m)">确认执行</el-button>
+                  </div>
+                </div>
+                <!-- 执行结果汇报 -->
+                <div v-else-if="m.executed" class="cxy-executed"><span class="cxy-dot"></span>{{ m.executed }}</div>
+              </div>
+            </div>
+          </template>
+          <div v-if="!assistant.state.messages.length && assistant.state.loadingHistory" class="cxy-loading">正在恢复上一次对话…</div>
+        </div>
+
+        <!-- 输入区 -->
+        <footer class="cxy-foot">
+          <div class="cxy-input-row">
+            <input v-model="assistant.state.input" class="cxy-input" type="text" placeholder="问问词小屿：功能怎么用 / 查词 / 今天复习哪些…"
+                   :disabled="assistant.state.busy" @keyup.enter="assistant.send()" maxlength="300">
+            <button v-if="assistant.state.busy" class="cxy-send cxy-stop" title="停止生成" @click="assistant.stop()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+            <button v-else class="cxy-send" :disabled="!assistant.state.input.trim() || !assistant.state.configured" title="发送" @click="assistant.send()">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h14M12 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <div v-if="!assistant.state.configured" class="cxy-foot-note">提示：LLM 未配置，只能回答知识库内的问题（去「设置」选择模型）</div>
+        </footer>
+      </section>
+    </transition>
+
+    <!-- 悬浮挂件（面板展开时隐藏，避免遮挡） -->
+    <button v-show="!assistant.state.open" class="cxy-widget" :class="{'cxy-busy': assistant.state.busy, 'cxy-off': !assistant.state.configured}"
+            :style="{ right: assistant.state.pos.right + 'px', bottom: assistant.state.pos.bottom + 'px' }"
+            @pointerdown="assistant.onPointerDown($event)" :title="assistant.state.configured ? '词小屿' : '词小屿（LLM 未配置）'" aria-label="打开词小屿">
+      <img src="/static/images/logo.png" alt="词小屿" class="cxy-widget-img">
+      <span v-if="assistant.state.unread > 0" class="cxy-dot-badge">{{ assistant.state.unread }}</span>
+      <span v-if="assistant.state.unread > 0 && assistant.state.unreadSnippet" class="cxy-unread-snippet">{{ assistant.state.unreadSnippet }}</span>
+    </button>
+  </div>
+
 </div>
 
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -3156,6 +3289,8 @@ import { api, apiStream } from '/static/js/api.js'
 // 纯数据常量 + 纯函数工具（不依赖页面状态，可复用）
 import { TTS_MODELS } from '/static/js/constants.js'
 import { formatDate, formatDateOnly, sceneRoleText, getModelDefaultVoice, highlightPanelWords, humanizeError } from '/static/js/utils.js'
+// 词小屿：全局智能助手（挂件 + 面板 + 确认卡片 + SSE 流式）
+import { createAssistant } from '/static/js/assistant.js'
 
 const {createApp, ref, reactive, computed, watch, nextTick, onMounted, h} = Vue
 const ElIcons = ElementPlusIconsVue
@@ -3181,6 +3316,16 @@ const app = createApp({
     app.component('ThumbsDown', ThumbsDown)
 
     const currentPage = ref('home')
+
+    // ====== 词小屿 · 全局智能助手 ======
+    // 复用当前应用的 api/apiStream 请求层；getPage/goPage 让助手能感知当前页并跳页
+    const assistant = createAssistant({
+      api, apiStream,
+      getPage: () => currentPage.value,
+      goPage: (page) => { currentPage.value = page; closeMobileMenu?.() },
+    })
+    // 页面切换 → 刷新快捷问题（场景感知）；挂载后拉取助手配置状态
+    watch(currentPage, () => assistant.updateQuick())
 
     // ====== 用户身份与每日配额 ======
     const user = ref(null)          // {uid, username, role}
@@ -5313,6 +5458,7 @@ const app = createApp({
       loadUsage()
       migrateSelfTestToReview()
       loadTtsSettings()  // 编译表单音色下拉依赖该数据，需在启动时一并加载
+      assistant.init()   // 词小屿：拉取配置状态（LLM 是否可用）
     })
 
     // 模型选项加载完成后，恢复表单偏好（严格校验模型仍存在，避免失效模型）
@@ -5404,6 +5550,7 @@ const app = createApp({
       startSelfTest, revealSelfTest, finishSelfTest,
       artStyleOptions,
       user, limits, roleLabel, isGuest, loadMe, logout, quotaLeft, quotaExhausted, quotaHint,
+      assistant,
       cleaningData, cleanSuspicious,
       isMobile, isRowSelected, toggleCardSelect,
       sidebarCollapsed, toggleSidebar,

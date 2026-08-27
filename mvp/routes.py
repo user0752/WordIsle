@@ -702,9 +702,9 @@ async def delete_generation(gen_id: str):
 # 设计文档：开发过程文件/design-system/记忆测试-独立测试页开发文档.md
 # ========================================================================
 
-REVIEW_DAILY_LIMIT = 20                          # 每日复习量上限（防堆积，Anki 式）
 REVIEW_BOX_INTERVALS = {1: 1, 2: 3, 3: 7, 4: 30}  # 盒号 -> 答对后下次复习间隔（天）
 REVIEW_WORD_RE = re.compile(r"[^a-z\-']")        # 词形清洗（与 normalize_words 口径一致）
+# REVIEW_DAILY_LIMIT 已收编至 config.py（routes 与词小屿共用）
 
 
 def _review_now() -> str:

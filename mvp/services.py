@@ -1039,9 +1039,12 @@ async def _call_llm_with_fallback(
     response_format: dict | None = None,
     timeout: float = 30.0,
     detail: str = "",
+    tools: list[dict] | None = None,
+    tool_choice: str | None = None,
 ) -> dict | None:
     """调用 LLM，先试该调用点选定的模型，失败时降级到该调用点的默认模型（百炼 Qwen3.7-Flash）。
-    返回解析后的 data dict；两者都失败时返回 None。"""
+    返回解析后的 data dict；两者都失败时返回 None。
+    tools/tool_choice：可选 Function Calling 参数（词小屿等 Agent 场景使用）。"""
     payload: dict = {
         "messages": messages,
         "temperature": temperature,
@@ -1049,6 +1052,10 @@ async def _call_llm_with_fallback(
     }
     if response_format:
         payload["response_format"] = response_format
+    if tools:
+        payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
     feature = detail or route_key
 
     # 1) 尝试该调用点选定的模型
