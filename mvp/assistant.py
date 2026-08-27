@@ -113,17 +113,19 @@ def get_faqs() -> list[dict]:
 
 def match_faq(message: str) -> dict | None:
     """关键词匹配：统计每条 FAQ 命中关键词个数，取最高分（>0 才算命中）。
-    小写子串匹配，容忍大小写差异。"""
+    同分时取「命中的最长关键词」更长的条目（如「记忆测试怎么用」应命中记忆测试
+    而非宽泛的"怎么用"）。小写子串匹配，容忍大小写差异。"""
     msg = message.lower()
-    best, best_score = None, 0
+    best, best_key = None, (-1, -1)
     for faq in get_faqs():
         kws = faq.get("keywords", []) or []
-        if not kws:
+        hits = [kw for kw in kws if kw and kw.lower() in msg]
+        if not hits:
             continue
-        score = sum(1 for kw in kws if kw and kw.lower() in msg)
-        if score > best_score:
-            best, best_score = faq, score
-    return best if best_score > 0 else None
+        key = (len(hits), max(len(kw) for kw in hits))
+        if key > best_key:
+            best, best_key = faq, key
+    return best if best_key[0] > 0 else None
 
 
 # 意图覆写：真实的查词/复习/加词/删词操作直接走 LLM 工具链，避免 FAQ 抢答
