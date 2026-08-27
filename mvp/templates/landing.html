@@ -99,6 +99,11 @@
     background: linear-gradient(140deg, var(--accent-deep), var(--accent));
     box-shadow: 0 6px 16px rgba(30,74,60,0.28), inset 0 1px 0 rgba(255,255,255,0.2);
   }
+  .nav-brand .nav-logo {
+    width: 38px; height: 38px; flex: none; border-radius: 12px;
+    object-fit: cover;
+    box-shadow: 0 6px 16px rgba(30,74,60,0.24);
+  }
   .nav-brand .nav-name { font-family: var(--serif); font-weight: 700; font-size: 18px; letter-spacing: .5px; color: var(--ink-deep); }
   .nav-brand .nav-name small { display: block; font-size: 10.5px; letter-spacing: 3px; color: var(--ink-soft); font-weight: 600; }
   .nav-links { display: flex; gap: 30px; align-items: center; }
@@ -461,6 +466,10 @@
     width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 15px;
     background: linear-gradient(140deg, var(--accent-deep), var(--accent));
   }
+  .footer-brand .footer-logo {
+    width: 30px; height: 30px; border-radius: 9px; object-fit: cover;
+    box-shadow: 0 4px 12px rgba(30,74,60,0.18);
+  }
   .footer-meta { text-align: right; }
   .footer-meta p { font-size: 12px; color: var(--ink-soft); }
   .footer-meta p:first-child { letter-spacing: 2px; }
@@ -530,7 +539,7 @@
 <header class="site-nav" id="site-nav">
   <div class="nav-inner">
     <a class="nav-brand" href="#top" aria-label="词屿 WordIsle 首页">
-      <div class="nav-icon">🏝️</div>
+      <img class="nav-logo" src="/static/images/logo.png" alt="词屿 WordIsle 品牌 logo">
       <div>
         <span class="nav-name">词屿 WordIsle</span>
         <small>顽固词疗养岛</small>
@@ -857,7 +866,7 @@
 <footer class="site-footer">
   <div class="footer-inner">
     <div class="footer-brand">
-      <div class="nav-icon">🏝️</div>
+      <img class="footer-logo" src="/static/images/logo.png" alt="词屿 WordIsle 品牌 logo">
       <span>词屿 WordIsle · 顽固词疗养岛</span>
     </div>
     <a class="footer-gh" href="https://github.com/user0752/WordIsle" target="_blank" rel="noopener noreferrer">

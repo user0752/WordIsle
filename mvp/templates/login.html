@@ -82,6 +82,11 @@
     background: linear-gradient(140deg, var(--accent-deep), var(--accent));
     box-shadow: 0 6px 16px rgba(30, 74, 60, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   }
+  .brand .brand-icon.brand-logo {
+    background: transparent; box-shadow: none;
+    object-fit: cover; display: block;
+    box-shadow: 0 6px 16px rgba(30, 74, 60, 0.24);
+  }
   .brand .brand-text { font-family: var(--serif); font-weight: 700; font-size: 17px; letter-spacing: .5px; color: var(--ink-deep); line-height: 1.2; }
   .brand .brand-text small { display: block; font-size: 10.5px; letter-spacing: 3px; color: var(--ink-soft); font-weight: 600; }
   .back-link {
@@ -232,7 +237,7 @@
   <!-- 顶栏：品牌 + 返回 -->
   <header class="topbar">
     <a class="brand" href="/" aria-label="词屿 WordIsle 首页">
-      <div class="brand-icon">🏝️</div>
+      <img class="brand-icon brand-logo" src="/static/images/logo.png" alt="词屿 WordIsle 品牌 logo">
       <div class="brand-text">词屿 WordIsle<small>顽固词疗养岛</small></div>
     </a>
     <div class="top-actions">
