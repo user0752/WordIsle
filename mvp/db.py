@@ -808,6 +808,24 @@ def _open_user_db_readonly(path) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_feedback_comment(path):
+    """存量库兜底迁移：为 feedback 表补 comment 列（用户改进意见）。
+
+    运营看板会扫描所有用户库，而旧库（新版代码部署后未再登录过、未触发
+    init_db 迁移）可能缺该列，导致聚合查询报 no such column。此函数幂等，
+    迁移失败（列已存在 / 表缺失）时静默跳过，不影响线上数据。
+    """
+    try:
+        conn = sqlite3.connect(path, timeout=5)
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN comment TEXT DEFAULT ''")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
 # 生成类型 → 中文标签（与前端 generationTypeLabel 对齐）
 GENERATION_TYPE_LABELS = {
     "single": "单点深耕",
@@ -862,6 +880,8 @@ def collect_platform_dashboard(days: int = 30) -> dict:
                 "satisfaction": 0.0, "last_active": None, "created_at": u.get("created_at") or "",
             })
             continue
+        # 存量库兜底：确保 feedback 表含 comment 列（旧库可能未迁移）
+        _ensure_feedback_comment(path)
         try:
             conn = _open_user_db_readonly(path)
         except Exception:
