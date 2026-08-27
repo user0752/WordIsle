@@ -646,12 +646,13 @@ async def submit_feedback(gen_id: str, req: Request):
     """记录/取消对某条生成结果的 👍/👎 反馈。"""
     body = await _safe_json(req)
     rating = (body.get("rating") or "").strip().lower()
+    comment = (body.get("comment") or "").strip()[:500]  # 限制 500 字
     conn = get_db()
     exists = conn.execute("SELECT id FROM generations WHERE id=?", (gen_id,)).fetchone()
     conn.close()
     if not exists:
         raise HTTPException(404, "记录不存在")
-    result = upsert_feedback(gen_id, rating)
+    result = upsert_feedback(gen_id, rating, comment)
     return {"ok": True, "result": result, "stats": get_feedback_stats()}
 
 

@@ -323,6 +323,7 @@ def init_db(uid=None):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             generation_id TEXT NOT NULL,
             rating TEXT NOT NULL CHECK (rating IN ('up','down')),
+            comment TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE (generation_id, rating)
         );
@@ -433,6 +434,11 @@ def init_db(uid=None):
         pass
     # 迁移：已入库的熟词僻意频率一次性并入 words（仅在 words 频率为空时补齐）
     _migrate_words_frequency(conn)
+    # 迁移：为 feedback 表添加 comment 字段（用户改进意见）
+    try:
+        conn.execute("ALTER TABLE feedback ADD COLUMN comment TEXT DEFAULT ''")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -729,10 +735,11 @@ def collect_platform_usage(days: int = 0) -> dict:
             "summary": summary, "users_rank": rank_list}
 
 
-def upsert_feedback(generation_id: str, rating: str) -> dict:
+def upsert_feedback(generation_id: str, rating: str, comment: str = "") -> dict:
     """记录用户对某条生成结果的反馈（up/down）。
     同一 generation 的同一 rating 幂等：重复点击相同值即取消反馈。
-    返回 {generation_id, rating} 或 None（取消时）。"""
+    comment 可选，用于记录用户的改进意见。
+    返回 {generation_id, rating, comment} 或 None（取消时）。"""
     if rating not in ("up", "down"):
         raise HTTPException(400, "feedback rating 只能是 up 或 down")
     conn = get_db()
@@ -749,11 +756,11 @@ def upsert_feedback(generation_id: str, rating: str) -> dict:
             conn.commit()
             return None
         conn.execute(
-            "INSERT OR IGNORE INTO feedback (generation_id, rating) VALUES (?,?)",
-            (generation_id, rating),
+            "INSERT OR IGNORE INTO feedback (generation_id, rating, comment) VALUES (?,?,?)",
+            (generation_id, rating, comment),
         )
         conn.commit()
-        return {"generation_id": generation_id, "rating": rating}
+        return {"generation_id": generation_id, "rating": rating, "comment": comment}
     finally:
         conn.close()
 
@@ -911,7 +918,7 @@ def collect_platform_dashboard(days: int = 30) -> dict:
             if fb_day_rows and (fdr_max := max(r["d"] for r in fb_day_rows)) > last_activity:
                 last_activity = fdr_max + " 00:00:00"
             recent_rows = conn.execute(
-                "SELECT f.id, f.generation_id, f.rating, f.created_at, "
+                "SELECT f.id, f.generation_id, f.rating, f.comment, f.created_at, "
                 "       g.story_title, g.generation_type "
                 "FROM feedback f LEFT JOIN generations g ON g.id = f.generation_id "
                 "ORDER BY f.created_at DESC LIMIT 50"
@@ -922,7 +929,8 @@ def collect_platform_dashboard(days: int = 30) -> dict:
                     "title": r["story_title"] or "",
                     "generation_type": r["generation_type"] or "batch",
                     "username": uname, "role": role,
-                    "rating": r["rating"], "created_at": r["created_at"],
+                    "rating": r["rating"], "comment": r["comment"] or "",
+                    "created_at": r["created_at"],
                 })
 
             # —— 音频 / 视频数量 ——

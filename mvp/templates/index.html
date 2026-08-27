@@ -2983,6 +2983,10 @@
                         <span class="dash-fb-user"><span class="role-badge" :class="'role-'+f.role">{{ dashRoleLabel(f.role) }}</span>{{ f.username }}</span>
                         <span class="dash-fb-text">反馈了「{{ f.title || '未命名记录' }}」</span>
                       </div>
+                      <div v-if="f.comment" class="dash-fb-comment">
+                        <el-icon style="font-size: 13px; margin-right: 4px;"><ChatDotSquare /></el-icon>
+                        <span>{{ f.comment }}</span>
+                      </div>
                       <div class="dash-fb-meta">
                         <el-tag size="small" :type="generationTypeTag(f.generation_type)" effect="plain">{{ generationTypeLabel(f.generation_type) }}</el-tag>
                         <span class="text-secondary">{{ formatDate(f.created_at) }}</span>
@@ -3082,6 +3086,29 @@
       </main>
     </div>
   </div>
+
+  <!-- 反馈改进意见对话框 -->
+  <el-dialog v-model="feedbackDialogVisible" title="告诉我们哪里需要改进" width="500px">
+    <div style="margin-bottom: 16px; color: var(--text-secondary); font-size: 14px;">
+      您的反馈将帮助我们改进生成质量，让内容更贴合您的学习需求。
+    </div>
+    <el-form>
+      <el-form-item label="改进意见">
+        <el-input
+          v-model="feedbackComment"
+          type="textarea"
+          :rows="5"
+          placeholder="例如：场景描述不够生动、例句与单词关联不强、图片风格不符合预期等..."
+          maxlength="500"
+          show-word-limit
+        ></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="feedbackDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="submitFeedbackWithComment">提交反馈</el-button>
+    </template>
+  </el-dialog>
 
   <!-- 添加单词对话框 -->
   <el-dialog v-model="showAddWordDialog" title="添加单词" width="480px" @close="addWordForm.word='';addWordForm.pos='';addWordForm.meaning_zh=''">
@@ -3532,6 +3559,11 @@ const app = createApp({
 
     // AI 结果反馈（有帮助 / 需改进）
     const feedbackGiven = ref('')
+    const feedbackDialogVisible = ref(false)
+    const feedbackComment = ref('')
+    const feedbackTargetGenId = ref('')
+    const feedbackTargetRating = ref('')
+
     function giveFeedback(v) {
       // 从当前结果获取 generation_id
       let genId = ''
@@ -3540,17 +3572,37 @@ const app = createApp({
       else if (videoResult.value) genId = videoResult.value.id
       if (!genId) { ElementPlus.ElMessage.warning('无相关生成记录'); return }
 
+      // 点击"待改进"时弹出反馈对话框
+      if (v === 'down') {
+        feedbackTargetGenId.value = genId
+        feedbackTargetRating.value = v
+        feedbackComment.value = ''
+        feedbackDialogVisible.value = true
+        return
+      }
+
+      // 点击"有帮助"直接提交
+      submitFeedbackToApi(genId, v, '')
+    }
+
+    function submitFeedbackWithComment() {
+      const comment = feedbackComment.value.trim()
+      feedbackDialogVisible.value = false
+      submitFeedbackToApi(feedbackTargetGenId.value, feedbackTargetRating.value, comment)
+    }
+
+    function submitFeedbackToApi(genId, rating, comment) {
       api(`/api/generations/${genId}/feedback`, {
         method: 'POST',
-        body: JSON.stringify({ rating: v }),
+        body: JSON.stringify({ rating, comment }),
       }).then(res => {
         if (res.result === null) {
           feedbackGiven.value = ''
           ElementPlus.ElMessage.info('已取消反馈')
         } else {
-          feedbackGiven.value = v
-          if (v === 'up') ElementPlus.ElMessage.success('感谢反馈，将保持该方向')
-          else ElementPlus.ElMessage.info('已记录，后续将优化生成')
+          feedbackGiven.value = rating
+          if (rating === 'up') ElementPlus.ElMessage.success('感谢反馈，将保持该方向')
+          else ElementPlus.ElMessage.success('已记录改进意见，感谢反馈')
         }
         loadFeedbackStats()
       }).catch(e => ElementPlus.ElMessage.error(e.message))
@@ -5331,6 +5383,7 @@ const app = createApp({
       dashHistRows, dashHistTotal, dashHistPage, dashHistQ, dashHistRating, dashHistRole, dashHistLoading, loadDashHist,
       dashHistExpanded, dashHistVisible,
       genProgress, genFeatureLabel, genFeatureHint, cancelGenProgress, menuBusy, feedbackGiven, giveFeedback,
+      feedbackDialogVisible, feedbackComment, submitFeedbackWithComment,
       ThumbsUp, ThumbsDown,
       feedbackStats,
       TTS_MODELS, groupedTtsModels, imageModels,
