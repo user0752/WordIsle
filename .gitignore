@@ -11,7 +11,6 @@ mvp/data/
 阿里云百炼视频生成计费.md
 *.log
 mvp/_check.py
-mvp/toeic.db
 .codebuddy/
 design-system/
 开发过程文件/

@@ -1,5 +1,5 @@
 """
-TOEIC MVP 用户系统
+WordIsle MVP 用户系统
 ==================
 - 全局库 system.db：users（账号）+ quotas（每日配额，跨用户维度）
 - 会话：HMAC 签名 HttpOnly Cookie（无状态，不建 session 表）
@@ -33,7 +33,7 @@ ROLE_GUEST = "guest"
 router = APIRouter()
 
 # 认证审计日志：登录 / 退出 / 游客进入 均记录 谁 + 何时 + 从哪个 IP，进后台日志留痕
-logger = setup_stream_logger("toeic.auth")
+logger = setup_stream_logger("wordisle.auth")
 
 
 def _client_ip(request: Request) -> str:

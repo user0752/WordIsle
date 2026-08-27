@@ -1,5 +1,5 @@
 """
-TOEIC 顽固词深度加工系统 - MVP 个人版
+词屿（WordIsle）顽固词深度加工系统 - MVP 个人版
 =========================================
 单文件，零依赖基础设施。FastAPI + SQLite + DeepSeek + 百炼 TTS。
 
@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
     init_db(DEV_USERNAME)   # 开发者库（含旧数据迁移后的种子/表结构）
     yield
 
-app = FastAPI(title="TOEIC MVP", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="WordIsle MVP", docs_url=None, redoc_url=None, lifespan=lifespan)
 setup_middleware(app)
 
 # 静态文件：前端资源 + 音频 + 图片 + 视频目录
@@ -131,11 +131,11 @@ async def index():
     return HTMLResponse(_load_index_html(), headers={"Cache-Control": "no-store"})
 
 # ========================================================================
-# 日志落盘：toeic.* 业务日志 JSON 单行，按天轮转（含用户身份 uid/username/role）
+# 日志落盘：wordisle.* 业务日志 JSON 单行，按天轮转（含用户身份 uid/username/role）
 # ========================================================================
 
 def _setup_logging():
-    """给 toeic.* logger 追加按天轮转的 JSON 文件 handler。
+    """给 wordisle.* logger 追加按天轮转的 JSON 文件 handler。
 
     不做完整控制台/多格式堆叠，保持轻量：
       - 保留 services/routes/auth 自己的 StreamHandler（走 stdout，供启动管理器 tail）
@@ -148,7 +148,7 @@ def _setup_logging():
     from datetime import datetime as _dt
     from logging.handlers import TimedRotatingFileHandler
 
-    logger = logging.getLogger("toeic")
+    logger = logging.getLogger("wordisle")
     if logger.level == logging.NOTSET:
         logger.setLevel(logging.INFO)
     if any(isinstance(h, TimedRotatingFileHandler) for h in logger.handlers):

@@ -1,5 +1,5 @@
 """
-TOEIC MVP API 路由
+WordIsle MVP API 路由
 ===================
 所有业务 API 路由，使用 FastAPI APIRouter。
 """
@@ -21,7 +21,7 @@ from db import *
 from services import *
 from auth import get_current_user, require_quota
 
-logger = setup_stream_logger("toeic.routes")
+logger = setup_stream_logger("wordisle.routes")
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -2442,7 +2442,7 @@ async def polysemy_candidates(limit: int = 100):
 
 @router.post("/api/polysemy/auto-detect")
 async def polysemy_auto_detect(req: Request):
-    """自动检测单词库中的候选词，调用 LLM 判断是否为托业高频熟词僻意，是则自动入库。
+    """自动检测单词库中的候选词，调用 LLM 判断是否为高频熟词僻意（含商务义），是则自动入库。
 
     请求体（可选）:
       - batch_size: 一次送给 LLM 的单词数，默认 20，建议 10~30

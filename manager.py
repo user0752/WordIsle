@@ -1,7 +1,7 @@
 """
-TOEIC 启动管理器
+词屿（WordIsle）启动管理器
 ================
-- 启动 / 停止 / 重启 TOEIC MVP 服务
+- 启动 / 停止 / 重启 WordIsle MVP 服务
 - 实时捕获 stdout/stderr，按级别 (INFO/WARNING/ERROR) 高亮
 - 周期性健康检查，监控前端 + 后端 API 状态
 - 日志搜索、过滤、清空、保存到文件
@@ -120,7 +120,7 @@ def find_python() -> str:
 
     优先级:
       1. 项目专属 venv: mvp/venv/Scripts/python.exe (推荐，已配齐依赖)
-      2. 环境变量 TOEIC_SERVICE_PYTHON (由 manager.bat 解析传入)
+      2. 环境变量 WORDISLE_SERVICE_PYTHON (由 manager.bat 解析传入)
       3. 当前 Python (管理器自己用的)
       4. py launcher / PATH 中的 python (兜底探测)
     """
@@ -131,7 +131,7 @@ def find_python() -> str:
         return str(venv_py)
 
     # 2. .bat 解析的服务 Python 路径
-    env_py = os.environ.get("TOEIC_SERVICE_PYTHON", "").strip()
+    env_py = os.environ.get("WORDISLE_SERVICE_PYTHON", "").strip()
     if env_py and Path(env_py).exists() and _test_python([env_py]):
         return env_py
 
@@ -664,7 +664,7 @@ class ServiceManager:
 class ManagerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("TOEIC 启动管理器")
+        self.root.title("词屿（WordIsle）启动管理器")
         self.root.geometry("1040x760")
         self.root.minsize(940, 620)
         self.root.configure(bg=C["bg"])
@@ -739,7 +739,7 @@ class ManagerApp:
         # 顶部标题
         header = tk.Frame(self.root, bg=C["bg"])
         header.pack(fill="x", padx=14, pady=(10, 4))
-        tk.Label(header, text="TOEIC 启动管理器", bg=C["bg"],
+        tk.Label(header, text="词屿（WordIsle）启动管理器", bg=C["bg"],
                  fg="#ffffff", font=("Microsoft YaHei UI", 15, "bold")).pack(side="left")
         py_name = Path(self.svc.python_exe).name
         tk.Label(header, text=f"Python: {py_name}", bg=C["bg"],
@@ -1036,7 +1036,7 @@ class ManagerApp:
         if not self.log_lines:
             messagebox.showinfo("提示", "没有日志可保存", parent=self.root)
             return
-        default_name = f"toeic_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        default_name = f"wordisle_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         path = filedialog.asksaveasfilename(
             title="保存日志", initialdir=str(LOG_DIR), initialfile=default_name,
             filetypes=[("日志文件", "*.log"), ("文本文件", "*.txt"), ("所有文件", "*.*")],
@@ -1322,7 +1322,7 @@ def run_cli():
     def banner():
         print()
         print("=" * 60)
-        print("  TOEIC 启动管理器 (CLI)")
+        print("  词屿（WordIsle）启动管理器 (CLI)")
         print("=" * 60)
         print(f"  前端: {BASE_URL}")
         print(f"  Python: {Path(svc.python_exe).name}")

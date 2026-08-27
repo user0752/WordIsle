@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TOEIC WordIsle - Linux 启动脚本（等价 Windows start.bat）
+# WordIsle - Linux 启动脚本（等价 Windows start.bat）
 set -e
 cd "$(dirname "$0")"
 

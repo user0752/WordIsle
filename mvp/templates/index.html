@@ -3972,7 +3972,7 @@ const app = createApp({
 
     // ====== 遮词自测（第一层 · 测试效应）：看图回忆 → 揭晓 → 自我报告 ======
     // 生成页卡片与历史详情页卡片共用同一套自测状态（按词记录，finishSelfTest 由模板传入当前词）
-    const SELFTEST_KEY = 'toeic_selftest_v1'
+    const SELFTEST_KEY = 'wordisle_selftest_v1'
     const selfTest = reactive({ active: false, revealed: false, answered: '' })
     const selfTestRecord = ref(null)
     const selfTestMasked = computed(() => selfTest.active && !selfTest.revealed)
@@ -4402,7 +4402,7 @@ const app = createApp({
     const sceneCompileLoading = ref(false)
 
     // ---- 表单偏好记忆（localStorage）：记住各编译表单的模型/风格/画面数等，刷新不丢 ----
-    const FORM_PREFS_KEY = 'toeic_form_prefs_v1'
+    const FORM_PREFS_KEY = 'wordisle_form_prefs_v1'
     function saveFormPrefs() {
       try {
         const data = {

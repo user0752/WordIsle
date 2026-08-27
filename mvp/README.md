@@ -1,4 +1,4 @@
-# TOEIC MVP 个人版
+# WordIsle MVP 个人版（词屿）
 
 最小可跑版本：FastAPI + SQLite + DeepSeek + 百炼 TTS。零 Redis/Nginx/Celery/Postgres。
 

@@ -21,7 +21,7 @@ from db import consume_daily_quota, current_uid, get_db, setup_stream_logger
 from services import _call_llm_with_fallback, get_route_llm
 from auth import get_current_user, require_quota
 
-logger = setup_stream_logger("toeic.assistant")
+logger = setup_stream_logger("wordisle.assistant")
 
 # 所有接口强制登录（复用现有认证依赖，写入 current_uid contextvar）
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -432,7 +432,7 @@ def clear_history(user: str):
 # Agent 主流程：意图识别 → 工具调用 → 汇报
 # ========================================================================
 
-_SYSTEM_PROMPT = """你是「词小屿」，词屿（WordIsle）——一个 TOEIC 顽固词疗养网站的贴心向导与受控操作员。
+_SYSTEM_PROMPT = """你是「词小屿」，词屿（WordIsle）——一个英语顽固词疗养网站的贴心向导与受控操作员。
 你已接入词屿官方 FAQ 知识库与 4 个工具，请做好这 3 件事：
 
 1. 向导：介绍功能、回答"怎么用/在哪/是什么"。词屿共 14 个模块：

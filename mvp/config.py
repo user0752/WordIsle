@@ -1,5 +1,5 @@
 """
-TOEIC MVP 配置
+WordIsle MVP 配置
 ==============
 所有环境变量、路径、模型常量统一在此管理。
 """
@@ -373,7 +373,7 @@ LLM_ROUTES = [
     {"key": "batch",  "label": "批量编译",      "desc": "剧情连环画生成（荒诞/冲突/场景/微电影）", "default": "bailian-qwen3.7-flash"},
     {"key": "single", "label": "单点深耕",      "desc": "单词语义记忆卡片生成", "default": "bailian-qwen3.7-flash"},
     {"key": "video",  "label": "视频脚本",      "desc": "视频编译的旁白与提示词", "default": "bailian-qwen3.7-flash"},
-    {"key": "polysemy", "label": "熟词僻意检测", "desc": "批量判断是否为托业高频熟词僻意", "default": "bailian-qwen3.7-flash"},
+    {"key": "polysemy", "label": "熟词僻意检测", "desc": "批量判断是否为高频熟词僻意（含商务义）", "default": "bailian-qwen3.7-flash"},
     {"key": "enrich", "label": "单词补充",       "desc": "词性/释义自动补全（失败降级默认模型）", "default": "bailian-qwen3.7-flash"},
     {"key": "scene_detect", "label": "场景检测", "desc": "单词自动归类到场景", "default": "bailian-qwen3.7-flash"},
     {"key": "scene_collocations", "label": "场景词伙", "desc": "场景内词伙搭配生成", "default": "bailian-qwen3.7-flash"},

@@ -5,7 +5,7 @@ set "MODE=cli"
 if /i "%~1"=="gui" set "MODE=gui"
 
 echo ====================================
-echo   TOEIC Start Manager   [%MODE%]
+echo   WordIsle Start Manager   [%MODE%]
 echo ====================================
 echo.
 

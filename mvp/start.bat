@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo.
 echo ====================================
-echo   TOEIC Word Processor - MVP
+echo   WordIsle Word Processor - MVP
 echo ====================================
 
 REM 1. 检查 .env

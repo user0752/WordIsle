@@ -1,5 +1,5 @@
 """
-TOEIC MVP 数据库层
+WordIsle MVP 数据库层
 ==================
 SQLite 连接管理、表初始化、单词清洗、每日配额、参数校验。
 """
@@ -56,7 +56,7 @@ current_user: ContextVar = ContextVar("current_user", default=None)
 
 
 class UserLogFilter(logging.Filter):
-    """把当前请求用户（uid/username/role）注入每条 toeic.* / uvicorn.access 日志记录。
+    """把当前请求用户（uid/username/role）注入每条 wordisle.* / uvicorn.access 日志记录。
 
     让后台日志能回答「谁调用了什么模型、做了什么」；无用户上下文（启动 / 健康检查等）
     时回退为 '-'，保证任何记录都带 user 字段、格式化不报错。
@@ -499,7 +499,7 @@ def inherit_link_frequency(conn, word: str):
 
 
 # ========================================================================
-# 托业高频熟词僻意种子数据
+# 高频熟词僻意（含商务义）种子数据
 
 
 def normalize_words(raw: str) -> list[str]:

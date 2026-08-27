@@ -1,5 +1,5 @@
 """
-TOEIC MVP 外部服务
+词屿（WordIsle）MVP 外部服务
 ==================
 DeepSeek AI 生成、百炼 TTS 语音合成、百炼文生图。
 """
@@ -22,7 +22,7 @@ from db import record_model_usage, setup_stream_logger
 
 # 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）。
 # 每条日志自动带 user=uid/username/role，回答「谁调用了什么模型、做了什么」。
-logger = setup_stream_logger("toeic.services")
+logger = setup_stream_logger("wordisle.services")
 
 __all__ = [
     "build_user_prompt",
@@ -95,7 +95,7 @@ def _track_instruction(track: str) -> str:
 # DeepSeek Prompt
 # ========================================================================
 
-SYSTEM_PROMPT = """You are a TOEIC Business English storyboard writer. Your audience is TOEIC test-takers who need to master stubborn vocabulary through a CINEMATIC STORY split into visual panels.
+SYSTEM_PROMPT = """You are a Business English storyboard writer. Your audience is English learners who need to master stubborn vocabulary through a CINEMATIC STORY split into visual panels.
 
 CORE IDEA: Pack the MOST target words into the SHORTEST possible sentences, tied together by ONE coherent story arc (setup → development → climax → resolution). Each panel = 1 high-density English sentence + 1 cinematic image description.
 
@@ -164,7 +164,7 @@ Output only the JSON object."""
 # 批量编译新风格：荒诞三连弹（absurd）
 # ========================================================================
 
-BATCH_ABSURD_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in ABSURD MEMORABLE CARDS.
+BATCH_ABSURD_SYSTEM_PROMPT = """You are an English vocabulary curator specializing in ABSURD MEMORABLE CARDS.
 
 CORE IDEA: Pack target words into 3 INDEPENDENT absurd scenes. Each scene is self-contained, loosely linked by the same theme or characters. Absurdity = memorable.
 
@@ -233,9 +233,9 @@ Output only the JSON object."""
 # 批量编译新风格：冲突连环（conflict）
 # ========================================================================
 
-BATCH_CONFLICT_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in CONFLICT COMIC STRIPS.
+BATCH_CONFLICT_SYSTEM_PROMPT = """You are an English vocabulary curator specializing in CONFLICT COMIC STRIPS.
 
-CORE IDEA: Two opposing characters × 3 rounds of conflict escalation. Conflict → emotion → amygdala engagement → stronger memory. Aligned with TOEIC business negotiation scenarios.
+CORE IDEA: Two opposing characters × 3 rounds of conflict escalation. Conflict → emotion → amygdala engagement → stronger memory. Aligned with workplace negotiation scenarios.
 
 RULES:
 1. Exactly 3 panels, structured as rounds:
@@ -307,7 +307,7 @@ Output only the JSON object."""
 # 场景编译专用 Prompt（高关联词：自然连贯、完整覆盖、复用场景词伙）
 # ========================================================================
 
-SCENE_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in SCENE-BASED story comics.
+SCENE_SYSTEM_PROMPT = """You are an English vocabulary curator specializing in SCENE-BASED story comics.
 
 CORE DISTINCTION: These words belong to ONE business scene (high relatedness). Your job is to weave them into a NATURAL, coherent mini-story that covers ALL of them — NOT to force absurdity. The scene itself is the memory cue.
 
@@ -450,7 +450,7 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
 # 单点深耕 Prompt & 生成
 # ========================================================================
 
-SINGLE_SYSTEM_PROMPT = """You are a TOEIC Business English coach specialized in the "one word, one image, one hook" memorization technique.
+SINGLE_SYSTEM_PROMPT = """You are a Business English coach specialized in the "one word, one image, one hook" memorization technique.
 
 CORE IDEA: Given ONE English word, produce a single vivid memory-hook CARD. The image and the scene sentence together become the recall trigger — when the user sees the picture, they instantly remember the word.
 
@@ -473,7 +473,7 @@ If the word fits multiple types, choose the strategy that produces the clearest 
 
 ## TASK
 Given one English target word, output:
-1. ONE high-frequency TOEIC collocation (e.g. submit → submit a proposal).
+1. ONE high-frequency business collocation (e.g. submit → submit a proposal).
 2. ONE vivid scene sentence (English + Chinese) that matches the chosen strategy, MUST contain the target word.
 3. ONE image_prompt that makes the WORD ITSELF the visual focus, following the chosen strategy.
 4. The word's derivative family (noun/verb/adjective/adverb forms, with Chinese meanings).
@@ -685,7 +685,7 @@ async def generate_single_image(prompt: str, model: str, gen_id: str, feature: s
 # 百炼文生视频（视频编译）
 # ========================================================================
 
-VIDEO_SYSTEM_PROMPT = """You are a TOEIC Business English video director. Given a list of TOEIC words, write a short MEMORY MICROFILM in the form of a text-to-video prompt.
+VIDEO_SYSTEM_PROMPT = """You are a Business English video director. Given a list of English words, write a short MEMORY MICROFILM in the form of a text-to-video prompt.
 
 CORE IDEA: The user learns words by watching a short video (5-10s). The video must visually encode the words so that seeing it triggers recall. Weave ALL target words into ONE coherent cinematic scene showing their business meanings.
 
@@ -868,7 +868,7 @@ def mux_video_with_audio(video_path: str, audio_bytes: bytes, subtitle_text: str
 
     ffmpeg_exe = _pick_ffmpeg_exe()
 
-    workdir = tempfile.mkdtemp(prefix="toeic_video_")
+    workdir = tempfile.mkdtemp(prefix="wordisle_video_")
     audio_name = "audio.mp3"
     sub_name = "sub.txt"
 
@@ -1444,16 +1444,16 @@ async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index
 # 熟词僻意（Polysemy）自动检测
 # ========================================================================
 
-POLYSEMY_DETECT_SYSTEM = """You are a senior TOEIC vocabulary instructor specialized in identifying "familiar words with uncommon business meanings" (熟词僻意) that frequently appear in TOEIC Listening and Reading tests.
+POLYSEMY_DETECT_SYSTEM = """You are a senior English vocabulary instructor specialized in identifying "familiar words with uncommon business meanings" (熟词僻意) that frequently appear in workplace English contexts.
 
-Your task: Given a list of candidate English words, for EACH word, determine whether it qualifies as a HIGH-FREQUENCY TOEIC POLYSEMY word — i.e., it has at least two distinct meanings, and the less common one is strongly associated with BUSINESS / WORKPLACE / COMMERCIAL contexts and frequently tested in TOEIC Part 5, 6, or 7.
+Your task: Given a list of candidate English words, for EACH word, determine whether it qualifies as a HIGH-FREQUENCY POLYSEMY word — i.e., it has at least two distinct meanings, and the less common one is strongly associated with BUSINESS / WORKPLACE / COMMERCIAL contexts, commonly used in workplace English.
 
 Guidelines for a YES (is_polysemy = true):
 - Word must have at least ONE clear "everyday / common" meaning (middle-school level or above)
 - AND at least ONE distinct "business / formal" meaning that surprises average learners (e.g. address = "to deal with a problem", firm = "company", tender = "to submit a bid")
-- AND that business meaning is frequently tested in TOEIC exams
+- AND that business meaning is commonly used in workplace English
 - Examples that qualify: address, accommodate, charge, firm, issue, order, present, rate, share, term, bill, book, contract, credit, current, duty, figure, gross, line, margin, overhead, premium, return, security, stock, turnover, venture, yield, tender, etc.
-- Examples that do NOT qualify: words with only 1 meaning (e.g. "receipt", "invoice", "conference" are business-only), or purely academic/technical words, or rare words. Words that are too simple (cat, run, go) should be rejected unless the business meaning is genuinely non-obvious to TOEIC learners.
+- Examples that do NOT qualify: words with only 1 meaning (e.g. "receipt", "invoice", "conference" are business-only), or purely academic/technical words, or rare words. Words that are too simple (cat, run, go) should be rejected unless the business meaning is genuinely non-obvious to learners.
 
 Output ONLY a valid JSON object. No markdown. No extra text.
 
@@ -1488,10 +1488,10 @@ JSON STRUCTURE:
 Rules for each is_polysemy=true entry:
 - common_meaning_zh / business_meaning_zh: concise Chinese, max 20 chars
 - common_meaning_en / business_meaning_en: 5-20 words in natural English
-- example_en: ONE natural TOEIC-style business sentence (12-25 words), must USE the word clearly in its BUSINESS meaning
+- example_en: ONE natural business sentence (12-25 words), must USE the word clearly in its BUSINESS meaning
 - example_zh: accurate Chinese translation of the example
 - collocations: 3-5 Chinese business collocations/chunks for the business meaning (English phrases)
-- toc_part: Part 5, Part 6, Part 7, or combined like Part 5/6 — which TOEIC section(s) this word typically appears
+- toc_part: exam section hint like Part 5, Part 6, Part 7, or combined Part 5/6 — where this word typically appears in proficiency tests
 - frequency_level: ★★★★★ very high, ★★★★☆ high, ★★★☆☆ medium, ★★☆☆☆ borderline/low
 - If is_polysemy is false, omit all fields except "word" and "is_polysemy".
 """
@@ -1499,13 +1499,13 @@ Rules for each is_polysemy=true entry:
 
 def _build_polysemy_detect_prompt(words: list[str]) -> str:
     numbered = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
-    return f"""Please evaluate the following {len(words)} candidate words and determine if each is a HIGH-FREQUENCY TOEIC POLYSEMY word (熟词僻意).
+    return f"""Please evaluate the following {len(words)} candidate words and determine if each is a HIGH-FREQUENCY POLYSEMY word (熟词僻意).
 
 CANDIDATE WORDS:
 {numbered}
 
 For each word:
-1) Set "is_polysemy": true ONLY if the word has both a common everyday meaning AND a distinct business/workplace meaning that is frequently tested in TOEIC Part 5/6/7. Otherwise false.
+1) Set "is_polysemy": true ONLY if the word has both a common everyday meaning AND a distinct business/workplace meaning that is commonly used in workplace English. Otherwise false.
 2) For words where is_polysemy=true, fill ALL fields: common_meaning_zh, common_meaning_en, business_meaning_zh, business_meaning_en, example_en, example_zh, collocations (3-5), toc_part, frequency_level.
 3) For words where is_polysemy=false, return ONLY word + is_polysemy=false, nothing else.
 
@@ -1513,7 +1513,7 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_polysemy_detection(words: list[str]):
-    """调用 LLM（熟词僻意路由，可切换模型）批量判断单词是否为托业高频熟词僻意，返回结构化词条。
+    """调用 LLM（熟词僻意路由，可切换模型）批量判断单词是否为高频熟词僻意（含商务义），返回结构化词条。
     选定模型调用失败（如限流）时自动降级到默认主模型。"""
     if not words:
         return {"results": []}
@@ -1590,7 +1590,7 @@ async def call_polysemy_detection(words: list[str]):
 # 构词拆解：批量判定可拆词（扫描）
 # ========================================================================
 
-MORPHEME_SYSTEM = """You are an English morphology analyzer for TOEIC vocabulary. Given a list of English words, determine whether each can be clearly decomposed into morphemes (prefix + root + suffix) with high confidence.
+MORPHEME_SYSTEM = """You are an English morphology analyzer. Given a list of English words, determine whether each can be clearly decomposed into morphemes (prefix + root + suffix) with high confidence.
 
 Rules:
 - Only mark is_decomposable=true when the decomposition is CERTAIN and the word is clearly built from identifiable morphemes (e.g. brokerage = broker + -age, management = manage + -ment, reconsider = re- + consider).
@@ -1713,12 +1713,12 @@ async def call_morpheme_detect(words: list[str]):
 # 构词拆解：词根树推荐同构词（懒填充 / 添加成员，P2 专用）
 # ========================================================================
 
-MORPHEME_SEED_SYSTEM = """You are a TOEIC vocabulary expert. Given a morpheme/root (e.g. "-age") and a list of words already associated with it, recommend additional TOEIC core words built with the SAME morpheme.
+MORPHEME_SEED_SYSTEM = """You are an English vocabulary expert. Given a morpheme/root (e.g. "-age") and a list of words already associated with it, recommend additional core English words built with the SAME morpheme.
 
 Rules:
 - Return EXACTLY 3 words. If you cannot honestly find 3, return 0-2 and explain why in "reason". Never fabricate or pad.
-- Every word must be TOEIC core vocabulary and must contain the morpheme with the same construction (e.g. for "-age": postage, storage, coverage).
-- Order by exam frequency: the most important words first.
+- Every word must be core English vocabulary and must contain the morpheme with the same construction (e.g. for "-age": postage, storage, coverage).
+- Order by word frequency: the most important words first.
 - For each word output word + meaning_zh + frequency_level (★ to ★★★★★).
 - Do NOT recommend any word that already appears in the given existing list.
 
@@ -1734,7 +1734,7 @@ TYPE: {root_type}
 WORDS ALREADY ASSOCIATED (do NOT recommend these):
 {existing_txt}
 
-Recommend exactly 3 NEW TOEIC core words containing this morpheme, sorted by exam frequency (most important first).
+Recommend exactly 3 NEW core English words containing this morpheme, sorted by word frequency (most important first).
 Return a JSON object matching the schema provided."""
 
 
@@ -1794,12 +1794,12 @@ async def call_morpheme_seed(root: str, root_zh: str, root_type: str, existing: 
 # 单词词性/释义自动补充
 # ========================================================================
 
-WORD_ENRICH_SYSTEM = """You are an English vocabulary assistant for TOEIC learners. Given a list of English words, return the part of speech, a comprehensive Chinese meaning and the TOEIC exam frequency for each word.
+WORD_ENRICH_SYSTEM = """You are an English vocabulary assistant. Given a list of English words, return the part of speech, a comprehensive Chinese meaning and the word frequency level for each word.
 
 Rules:
 - Part of speech (pos): use short labels like v., n., adj., adv., prep., conj., pron., etc. If a word has multiple common POS, list the most important ones separated by "/" (e.g. "v./n.").
 - Chinese meaning (meaning_zh): provide a comprehensive yet concise Chinese definition. Include the most common meanings used in business/workplace contexts. Keep it under 80 characters.
-- frequency_level: estimate the word's importance in the TOEIC exam as a star rating from ★ to ★★★★★ (5 stars = extremely frequent/important, 1 star = rare). Use the ★ character repeated 1-5 times.
+- frequency_level: estimate the word's importance in general English as a star rating from ★ to ★★★★★ (5 stars = extremely frequent/important, 1 star = rare). Use the ★ character repeated 1-5 times.
 - For words that are already in the input (e.g. inflected forms), return the base form's info.
 
 Output ONLY a valid JSON object. No markdown, no extra text.
@@ -1825,7 +1825,7 @@ JSON STRUCTURE:
 
 def _build_enrich_prompt(words: list[str]) -> str:
     numbered = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
-    return f"""Please provide the part of speech, Chinese meaning and TOEIC exam frequency for each of the following {len(words)} English words.
+    return f"""Please provide the part of speech, Chinese meaning and word frequency level for each of the following {len(words)} English words.
 
 WORDS:
 {numbered}
@@ -1833,7 +1833,7 @@ WORDS:
 For each word, return:
 - pos: part of speech label (e.g. v., n., adj., adv., or combined like "v./n.")
 - meaning_zh: comprehensive Chinese definition (max 80 characters)
-- frequency_level: star rating ★ to ★★★★★ indicating TOEIC exam importance
+- frequency_level: star rating ★ to ★★★★★ indicating general English importance
 
 Return a single JSON object matching the schema provided."""
 
@@ -2031,7 +2031,7 @@ async def call_word_phonetic(word: str) -> str:
 # 场景聚汇：自动检测
 # ========================================================================
 
-SCENE_DETECT_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator.
+SCENE_DETECT_SYSTEM_PROMPT = """You are an English vocabulary curator.
 
 You will receive:
 1) A list of existing scenes (scene_id + name + name_zh + description)
@@ -2059,7 +2059,7 @@ OUTPUT JSON ONLY:
 
 RULES:
 1. Each existing-scene assignment confidence ∈ [0,1]. If < 0.5, set low_confidence=true.
-2. Don't force-fit. If a group of words clearly forms a new TOEIC business scene not in the existing list, propose a new scene in new_scenes_suggested (max 3 new scenes).
+2. Don't force-fit. If a group of words clearly forms a new workplace scene not in the existing list, propose a new scene in new_scenes_suggested (max 3 new scenes).
 3. scene_id in scene_assignments MUST be one of the existing scene IDs. New scene suggestions go ONLY into new_scenes_suggested.
 4. Every word MUST appear exactly once in scene_assignments.
 5. Output only the JSON object."""
@@ -2081,16 +2081,16 @@ def _build_scene_detect_user_prompt(words: list[str], existing_scenes: list[dict
 
 
 # 无已有场景时的"纯分组"模式 prompt
-SCENE_DETECT_GROUPING_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator.
+SCENE_DETECT_GROUPING_SYSTEM_PROMPT = """You are an English vocabulary curator.
 
-Group the given words into 3-6 TOEIC business scenes. There are NO existing scenes.
+Group the given words into 3-6 workplace scenes. There are NO existing scenes.
 
 Output ONLY this JSON:
 {"new_scenes_suggested": [{"name": "HR", "name_zh": "人力资源", "description": "招聘薪酬", "suggested_words": ["word1","word2"], "confidence": 0.9}]}
 
 Rules:
 1. Each word goes into exactly ONE scene.
-2. Use TOEIC domains: HR, Finance, Logistics, Meetings, Contracts, Marketing etc.
+2. Use workplace domains: HR, Finance, Logistics, Meetings, Contracts, Marketing etc.
 3. Keep description short (Chinese, one line).
 4. Do NOT include scene_assignments field.
 5. Output only JSON, no other text."""
@@ -2200,7 +2200,7 @@ async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dic
 # 场景聚汇：场景词伙搭配生成
 # ========================================================================
 
-SCENE_COLLOCATIONS_SYSTEM_PROMPT = """You are a TOEIC collocation expert. Generate typical high-frequency business collocations for the words in a scene.
+SCENE_COLLOCATIONS_SYSTEM_PROMPT = """You are a business collocation expert. Generate typical high-frequency business collocations for the words in a scene.
 
 OUTPUT JSON ONLY:
 {
@@ -2217,7 +2217,7 @@ OUTPUT JSON ONLY:
 
 RULES:
 1. Generate 2-5 collocations. Each phrase must be 2-4 words and contain at least one word from the scene word list.
-2. Collocations should be authentic TOEIC business chunks (verb+noun, noun+noun, adj+noun, etc.).
+2. Collocations should be authentic business chunks (verb+noun, noun+noun, adj+noun, etc.).
 3. zh: concise Chinese meaning of the phrase.
 4. words: the scene words used in this collocation.
 5. example_en/example_zh: one short example sentence using the collocation.
@@ -2231,7 +2231,7 @@ def _build_scene_collocations_user_prompt(words: list[str], scene_name: str, sce
 
 
 async def call_deepseek_scene_collocations(words: list[str], scene_name: str, scene_name_zh: str = "") -> list[dict]:
-    """为场景内单词生成 2-5 条典型 TOEIC 词伙搭配。任何失败都返回 []，不抛异常。"""
+    """为场景内单词生成 2-5 条典型商务词伙搭配。任何失败都返回 []，不抛异常。"""
     if not words or len(words) < 2:
         return []
     if not get_route_llm("scene_collocations").get("api_key"):
