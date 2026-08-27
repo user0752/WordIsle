@@ -3208,7 +3208,7 @@
                   </div>
                 </div>
                 <!-- 回答正文（Markdown 轻量渲染） -->
-                <span v-if="m.text" class="cxy-answer" v-html="assistant.md2html(m.text)"></span>
+                <div v-if="m.text" class="cxy-answer" v-html="assistant.md2html(m.text)"></div>
                 <span v-if="m.streaming" class="cxy-cursor"></span>
                 <!-- 等待首字时的思考指示器（流式 TTFB 期间给用户反馈） -->
                 <div v-if="m.streaming && !m.text" class="cxy-typing">

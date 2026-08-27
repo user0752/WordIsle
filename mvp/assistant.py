@@ -43,26 +43,30 @@ async def _sse_stream(gen):
         yield _sse(evt, data)
 
 
-async def _stream_text(text: str, chunk: int = 26, gap: float = 0.02):
-    """把最终答复文本按小片逐段 yield `result` 事件，制造流式输出效果。"""
+async def _stream_text(text: str, chunk: int = 140, gap: float = 0.02):
+    """把最终答复文本按行/语义片段逐段 yield `result` 事件，制造流式输出效果。
+    切分必须保留原文换行（\n）：块与块之间要补回换行，否则前端拼接后
+    变成长行，markdown 的列表/换行语义全部失效。"""
     text = (text or "").strip() or "……"
     parts = _chunk_text(text, chunk)
-    for p in parts:
-        yield ("result", {"text": p})
+    n = len(parts)
+    for i, p in enumerate(parts):
+        yield ("result", {"text": p if i == n - 1 else p + "\n"})
         if gap:
             await asyncio.sleep(gap)
 
 
-def _chunk_text(text: str, size: int) -> list[str]:
-    """文本切分：先按 \n 分块，长块内优先在标点处切，无标点时按固定长度兜底。"""
+def _chunk_text(text: str, size: int = 140) -> list[str]:
+    """按原文换行分块：一行一块；仅当单行超过 size 才在标点处切（切点不额外加换行）。
+    这样流式拼接后能还原完整句子与 markdown 结构（列表/加粗不跨行破坏）。"""
     out = []
-    for line in text.split("\n"):
-        line = line.strip()
+    for raw in text.split("\n"):
+        line = raw.strip()
         if not line:
             continue
         while len(line) > size:
             cut = -1
-            for sep in ("。", "！", "？", "；", ",", "，", " ", ":"):
+            for sep in ("。", "！", "？", "；", ",", "，", " ", ":", "："):
                 idx = line.rfind(sep, 0, size + 1)
                 if idx > 0:
                     cut = idx + 1
