@@ -61,10 +61,13 @@ export function md2html(text) {
   html = html.replace(/`([^`\n]+)`/g, '<code class="cxy-inline-code">$1</code>')
   // **加粗**
   html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-  // 无序列表：把连续的 "- xxx" 行聚合成 ul
-  html = html.replace(/(?:^|\n)[ \t]*-[ \t]+[^\n]+(?:\n[ \t]*-[ \t]+[^\n]+)*/g, (block) => {
-    const items = block.split('\n').map(l => l.replace(/^[ \t]*-[ \t]+/, '').trim()).filter(Boolean)
-    return '\n<ul class="cxy-list">' + items.map(i => `<li>${i}</li>`).join('') + '</ul>'
+  // 列表（无序 "- " / 有序 "1. "）：把连续列表行聚合成一个 <ul>/<ol>
+  html = html.replace(/(?:^|\n)[ \t]*([-*] |\d+[.、)][\t ]+)[^\n]+(?:\n[ \t]*(?:[-*] |\d+[.、)][\t ]+)[^\n]+)*/g, (block) => {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+    const ordered = lines.length > 0 && /^\d+[.、)]/.test(lines[0])
+    const items = lines.map(l => `<li>${l.replace(/^(?:[-*] |\d+[.、)][\t ]+)/, '')}</li>`).join('')
+    const tag = ordered ? 'ol' : 'ul'
+    return `\n<${tag} class="cxy-list">${items}</${tag}>`
   })
   // 换行 → <br>
   html = html.replace(/\n+/g, '<br>')
@@ -209,7 +212,7 @@ export function createAssistant({ api, apiStream, getPage, goPage }) {
     const m = Object.assign({
       id: _uid(), role: 'assistant', kind: 'chat', text: '',
       streaming: false, navigate: null, confirm: null, queryData: null,
-      errorChunk: null, executed: null, executing: false,
+      errorChunk: null, executed: null, executing: false, stepLabel: '',
     }, partial)
     state.messages.push(m)
     scrollBottom()
@@ -244,10 +247,12 @@ export function createAssistant({ api, apiStream, getPage, goPage }) {
       await apiStream('/api/assistant/chat',
         { method: 'POST', body: JSON.stringify({ message: text, page: getPage() }) },
         {
+          onStep: (p) => { m.stepLabel = (p && p.label) || '' },  // 意图识别等分步反馈
           onTool: (p) => handleTool(p, m),
           onResult: (p) => {
             gotContent = true
             m.text += (p && p.text) || ''
+            scrollBottom()   // 流式过程中随时滚到底部，保证可见新内容
           },
           onDone: () => _finish(controller, gotContent),
           onError: (p) => {

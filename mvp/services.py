@@ -1082,6 +1082,156 @@ async def _call_llm_with_fallback(
 
 
 # ========================================================================
+# LLM 真实流式调用（词小屿 SSE 用）：逐 token 解析上游 SSE，支持函数调用累积
+# ========================================================================
+
+async def _chat_completion_stream(base_url: str, api_key: str, model: str, payload: dict,
+                                  timeout: float = 120.0, detail: str = ""):
+    """流式 chat/completions（stream=true）：解析上游 SSE，逐条产出事件。
+
+    yield (type, data)：
+      ("delta", text)                      实时文本增量
+      ("done", {"content", "tool_calls"})  流结束汇总（tool_calls 为完整列表）
+    HTTP/网络失败抛异常，由上层做模型兜底。
+    """
+    t0 = time.monotonic()
+    req_payload = {**payload, "stream": True}
+    # 百炼渠道：关闭思考模式（qwen 思考会先"想"很久才吐字，首 token 延迟可达 10s+，
+    # 词小屿的问答/工具场景不需要思考，关闭后首字秒出）
+    if "dashscope" in base_url:
+        req_payload.setdefault("enable_thinking", False)
+    content_parts: list[str] = []
+    tool_calls_acc: dict[int, dict] = {}
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            "POST",
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={**req_payload, "model": model},
+        ) as resp:
+            if resp.status_code != 200:
+                body = (await resp.aread())[:300].decode(errors="ignore")
+                raise RuntimeError(f"LLM 流式调用失败 HTTP {resp.status_code}: {body}")
+
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    evt = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                choices = evt.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                text = delta.get("content")
+                if text:
+                    content_parts.append(text)
+                    yield ("delta", text)
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    acc = tool_calls_acc.setdefault(idx, {"id": "", "name": "", "arguments": []})
+                    if tc.get("id"):
+                        acc["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        acc["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        acc["arguments"].append(fn["arguments"])
+
+    tool_calls = [
+        {"id": acc["id"], "type": "function",
+         "function": {"name": acc["name"], "arguments": "".join(acc["arguments"])}}
+        for _, acc in sorted(tool_calls_acc.items())
+    ]
+    content = "".join(content_parts)
+    # 计费登记：工具场景按输入粗估；纯文本按输出粗估（流式响应通常无 usage 字段）
+    if tool_calls:
+        tokens = _estimate_tokens(" ".join(str(m.get("content", "")) for m in payload.get("messages", [])))
+    else:
+        tokens = _estimate_tokens(content) or 1
+    record_model_usage("llm", model, detail, tokens)
+    logger.info("LLM 流式调用成功 [%s] model=%s 耗时=%.1fs", detail or "未标注功能", model, time.monotonic() - t0)
+    yield ("done", {"content": content, "tool_calls": tool_calls})
+
+
+async def stream_llm_with_fallback(
+    messages: list[dict],
+    route_key: str,
+    temperature: float = 0.3,
+    max_tokens: int = 1024,
+    timeout: float = 60.0,
+    detail: str = "",
+    tools: list[dict] | None = None,
+    tool_choice: str | None = "auto",
+):
+    """词小屿专用：真实流式 LLM 生成器（首 token 秒出，逐条 yield）。
+
+    先试该调用点选定的模型流式；失败降级默认模型流式；再失败降级非流式兜底。
+    yield 事件（dict）：
+      {"type": "delta", "text": str}                      实时文本增量
+      {"type": "result", "content": str, "tool_calls": [...]}  结束汇总（非流式兜底时也给出）
+    """
+    payload: dict = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+    if tools:
+        payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
+    feature = detail or route_key
+
+    def _emit_stream(cfg: dict):
+        async def _gen():
+            async for t, d in _chat_completion_stream(
+                cfg["base_url"], cfg["api_key"], cfg["model"], payload,
+                timeout=timeout, detail=detail,
+            ):
+                if t == "delta":
+                    yield {"type": "delta", "text": d}
+                elif t == "done":
+                    yield {"type": "result", "content": d["content"], "tool_calls": d["tool_calls"]}
+        return _gen()
+
+    # 1) 尝试该调用点选定的模型（流式）
+    cfg = get_route_llm(route_key)
+    if cfg.get("api_key"):
+        logger.info("LLM 流式调用开始 [%s] model=%s(%s) route=%s", feature, cfg["model"], cfg["value"], route_key)
+        try:
+            async for evt in _emit_stream(cfg):
+                yield evt
+            return
+        except Exception as e:
+            logger.warning("LLM 流式调用失败 [%s] model=%s error=%r，准备降级", feature, cfg["model"], e)
+
+    # 2) 降级到该调用点的默认模型（流式）
+    default_value = LLM_ROUTE_DEFAULT.get(route_key)
+    default_cfg = LLM_MODEL_BY_VALUE.get(default_value)
+    if default_cfg and default_cfg.get("api_key") and default_cfg["value"] != cfg["value"]:
+        logger.warning("LLM 降级 [%s] model=%s -> 默认兜底模型 %s（流式）", feature, cfg["model"], default_cfg["model"])
+        try:
+            async for evt in _emit_stream(default_cfg):
+                yield evt
+            return
+        except Exception as e:
+            logger.error("LLM 流式调用失败 [%s] 默认兜底模型 %s error=%r", feature, default_cfg["model"], e)
+
+    # 3) 非流式兜底（两种模型都流式失败时，保证可用）
+    data = await _call_llm_with_fallback(messages, route_key, temperature=temperature,
+                                         max_tokens=max_tokens, timeout=timeout, detail=detail,
+                                         tools=tools, tool_choice=tool_choice)
+    if data:
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        yield {"type": "result", "content": (msg.get("content") or ""), "tool_calls": msg.get("tool_calls") or []}
+    else:
+        yield {"type": "result", "content": "", "tool_calls": []}
+
+
+# ========================================================================
 # 百炼 TTS 语音合成
 # ========================================================================
 

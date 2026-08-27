@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from config import BASE_DIR, DEV_USERNAME, REVIEW_DAILY_LIMIT
 from db import consume_daily_quota, current_uid, get_db, setup_stream_logger
-from services import _call_llm_with_fallback, get_route_llm
+from services import stream_llm_with_fallback, get_route_llm
 from auth import get_current_user, require_quota
 
 logger = setup_stream_logger("wordisle.assistant")
@@ -493,7 +493,7 @@ async def chat_stream(user: str, message: str, page: str):
             yield ("done", {"ok": True})
             return
 
-    # -------- L1：LLM 意图识别（Function Calling） --------
+    # -------- L1：LLM 意图识别（Function Calling，真实流式：首字秒出） --------
     # 意图覆写命中 → 在用户消息里显式指定工具（DashScope 思考模式不支持 tool_choice=对象，
     # 用指令让模型必然选该工具，模型无关且稳定）
     forced_tool = _match_override(text)
@@ -505,25 +505,38 @@ async def chat_stream(user: str, message: str, page: str):
         {"role": "user", "content": text},
     ]
 
-    data = await _call_llm_with_fallback(
+    # 真实流式：delta 逐字推到前端，流结束再汇总 content / tool_calls（真流式失败自动降级）
+    full_parts: list[str] = []
+    tool_calls: list = []
+    final_content = ""
+    model = ""
+    got_any = False
+    async for evt in stream_llm_with_fallback(
         messages, "assistant", temperature=0.3, max_tokens=1024, timeout=60.0,
         detail="智能助手", tools=TOOL_SCHEMAS, tool_choice="auto",
-    )
-    if not data:
-        consume_daily_quota("ai")
+    ):
+        if evt["type"] == "delta":
+            got_any = True
+            full_parts.append(evt["text"])
+            yield ("result", {"text": evt["text"]})
+        elif evt["type"] == "result":
+            if evt["content"]:
+                got_any = True
+                final_content = evt["content"]
+                if not full_parts:  # 非流式兜底：一次性给出全文
+                    yield ("result", {"text": evt["content"]})
+            if evt["tool_calls"]:
+                tool_calls = evt["tool_calls"]
+    consume_daily_quota("ai")
+
+    if not got_any and not tool_calls:
         yield ("error", {"msg": "智能助手当前不可用（LLM 未配置或调用失败），请稍后再试，或在「设置」中检查模型配置"})
         return
 
-    choice = (data.get("choices") or [{}])[0]
-    msg = choice.get("message") or {}
-    content = (msg.get("content") or "").strip()
-    tool_calls = msg.get("tool_calls") or []
-    model = data.get("model") or ""
+    content = (final_content or "".join(full_parts)).strip()
 
+    tool_calls = [tc for tc in tool_calls if isinstance(tc, dict) and tc.get("function")]
     if not tool_calls:
-        consume_daily_quota("ai")
-        async for evt, d in _stream_text(content):
-            yield (evt, d)
         save_message(user, "assistant", content)
         yield ("done", {"ok": True})
         return
@@ -537,8 +550,6 @@ async def chat_stream(user: str, message: str, page: str):
         args = {}
     if not isinstance(args, dict):
         args = {}
-
-    consume_daily_quota("ai")
 
     if name not in _QUERY_TOOLS and name not in _WRITE_TOOLS:
         fallback = content or "抱歉，我刚才没理解你的意图，请换一种说法再问一次。"
