@@ -3087,29 +3087,6 @@
     </div>
   </div>
 
-  <!-- 反馈改进意见对话框 -->
-  <el-dialog v-model="feedbackDialogVisible" title="告诉我们哪里需要改进" width="500px">
-    <div style="margin-bottom: 16px; color: var(--text-secondary); font-size: 14px;">
-      您的反馈将帮助我们改进生成质量，让内容更贴合您的学习需求。
-    </div>
-    <el-form>
-      <el-form-item label="改进意见">
-        <el-input
-          v-model="feedbackComment"
-          type="textarea"
-          :rows="5"
-          placeholder="例如：场景描述不够生动、例句与单词关联不强、图片风格不符合预期等..."
-          maxlength="500"
-          show-word-limit
-        ></el-input>
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="feedbackDialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="submitFeedbackWithComment">提交反馈</el-button>
-    </template>
-  </el-dialog>
-
   <!-- 添加单词对话框 -->
   <el-dialog v-model="showAddWordDialog" title="添加单词" width="480px" @close="addWordForm.word='';addWordForm.pos='';addWordForm.meaning_zh=''">
     <el-form :model="addWordForm" :rules="addWordRules" ref="addWordFormRef" label-width="80px">
@@ -3142,6 +3119,29 @@
     <template #footer>
       <el-button @click="showAddWordDialog=false">取消</el-button>
       <el-button type="primary" :loading="addWordLoading" :disabled="quotaExhausted('enrich')" @click="submitAddWord">添加</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 反馈改进意见对话框 -->
+  <el-dialog v-model="feedbackDialogVisible" title="告诉我们哪里需要改进" width="500px">
+    <div style="margin-bottom: 16px; color: var(--text-secondary); font-size: 14px;">
+      您的反馈将帮助我们改进生成质量，让内容更贴合您的学习需求。
+    </div>
+    <el-form>
+      <el-form-item label="改进意见">
+        <el-input
+          v-model="feedbackComment"
+          type="textarea"
+          :rows="5"
+          placeholder="例如：场景描述不够生动、例句与单词关联不强、图片风格不符合预期等..."
+          maxlength="500"
+          show-word-limit
+        ></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="feedbackDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="submitFeedbackWithComment">提交反馈</el-button>
     </template>
   </el-dialog>
 
@@ -3565,29 +3565,19 @@ const app = createApp({
     const feedbackTargetRating = ref('')
 
     function giveFeedback(v) {
-      console.log('[Feedback] 点击反馈按钮:', v)
       // 从当前结果获取 generation_id
       let genId = ''
       if (resultData.value) genId = resultData.value.id
       else if (singleResult.value) genId = singleResult.value.id
       else if (videoResult.value) genId = videoResult.value.id
-      
-      console.log('[Feedback] genId:', genId, 'resultData:', resultData.value, 'singleResult:', singleResult.value, 'videoResult:', videoResult.value)
-      
-      if (!genId) { 
-        console.warn('[Feedback] 无相关生成记录')
-        ElementPlus.ElMessage.warning('无相关生成记录')
-        return 
-      }
+      if (!genId) { ElementPlus.ElMessage.warning('无相关生成记录'); return }
 
       // 点击"待改进"时弹出反馈对话框
       if (v === 'down') {
-        console.log('[Feedback] 显示反馈对话框, genId:', genId)
         feedbackTargetGenId.value = genId
         feedbackTargetRating.value = v
         feedbackComment.value = ''
         feedbackDialogVisible.value = true
-        console.log('[Feedback] feedbackDialogVisible:', feedbackDialogVisible.value)
         return
       }
 
