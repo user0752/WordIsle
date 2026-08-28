@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from config import BASE_DIR, DEV_USERNAME, REVIEW_DAILY_LIMIT
-from db import consume_daily_quota, current_uid, get_db, setup_stream_logger
+from db import consume_daily_quota, current_uid, get_db, setup_stream_logger, upsert_assistant_feedback
 from services import stream_llm_with_fallback, get_route_llm
 from auth import get_current_user, require_quota
 
@@ -43,28 +43,34 @@ async def _sse_stream(gen):
         yield _sse(evt, data)
 
 
-async def _stream_text(text: str, chunk: int = 140, gap: float = 0.02):
+async def _stream_text(text: str, chunk: int = 24, gap: float = 0.025):
     """把最终答复文本按行/语义片段逐段 yield `result` 事件，制造流式输出效果。
-    切分必须保留原文换行（\n）：块与块之间要补回换行，否则前端拼接后
-    变成长行，markdown 的列表/换行语义全部失效。"""
+    切块必须足够细（~24 字），否则一条短回答两三块就到齐，视觉上等于一次性弹出。
+    块内自带换行前缀（段间 \\n\\n、行间 \\n），按序拼接即还原原文结构。"""
     text = (text or "").strip() or "……"
-    parts = _chunk_text(text, chunk)
-    n = len(parts)
-    for i, p in enumerate(parts):
-        yield ("result", {"text": p if i == n - 1 else p + "\n"})
+    for p in _chunk_text(text, chunk):
+        yield ("result", {"text": p})
         if gap:
             await asyncio.sleep(gap)
 
 
-def _chunk_text(text: str, size: int = 140) -> list[str]:
-    """按原文换行分块：一行一块；仅当单行超过 size 才在标点处切（切点不额外加换行）。
-    这样流式拼接后能还原完整句子与 markdown 结构（列表/加粗不跨行破坏）。"""
-    out = []
+def _chunk_text(text: str, size: int = 24) -> list[str]:
+    """按原文换行分块：一行一块（单行超过 size 在标点处切）。
+    每块携带它前面的换行前缀：普通行前缀 "\\n"，空行（段落分隔）后前缀 "\\n\\n"，
+    流式拼接后能完整还原段落与 markdown 结构（列表/加粗不跨行破坏）。"""
+    out: list[str] = []
+    brk = ""
     for raw in text.split("\n"):
         line = raw.strip()
         if not line:
+            if out:
+                brk = "\n\n"
             continue
-        while len(line) > size:
+        while True:
+            if len(line) <= size:
+                out.append(brk + line)
+                brk = "\n"
+                break
             cut = -1
             for sep in ("。", "！", "？", "；", ",", "，", " ", ":", "："):
                 idx = line.rfind(sep, 0, size + 1)
@@ -73,9 +79,9 @@ def _chunk_text(text: str, size: int = 140) -> list[str]:
                     break
             if cut <= 0:
                 cut = size
-            out.append(line[:cut])
+            out.append(brk + line[:cut])
+            brk = ""
             line = line[cut:].lstrip()
-        out.append(line)
     return out
 
 
@@ -473,6 +479,39 @@ def _assistant_for_scope() -> str:
     return current_uid.get(None) or DEV_USERNAME
 
 
+# 建议追问：回答结束后给 3 条可点击的后续问题（确定性词池，零额外 LLM 调用）。
+# 词池文案刻意与意图覆写正则对齐：只有明确带工具动作的建议（如「帮我查一下 resemble」）
+# 会触发真实工具链，纯咨询类建议落到 FAQ / LLM，不会被误判成操作。
+_SUGGESTION_POOLS: dict[str, list[str]] = {
+    "write": [
+        "词库里现在有哪些词？",
+        "不小心加错了单词怎么删除？",
+        "今天有哪些单词该复习了？",
+    ],
+    "search_words": [
+        "这个词还有哪些常见搭配？",
+        "今天有哪些单词该复习了？",
+        "带我去场景聚汇看看",
+    ],
+    "get_review_due": [
+        "帮我查一下 resemble 的意思",
+        "记忆测试的复习节奏是怎样的？",
+        "带我去记忆测试页面",
+    ],
+    "chat": [
+        "今天有哪些单词该复习了？",
+        "怎么把文章里的生词导入词库？",
+        "批量编译（单词连环画）怎么用？",
+    ],
+}
+
+
+def _build_suggestions(answer: str, tool: str = "") -> list[str]:
+    """根据回答上下文返回 3 条建议追问。tool 命中词池用专属建议，否则用通用闲聊池。"""
+    key = tool if tool in _SUGGESTION_POOLS else "chat"
+    return list(_SUGGESTION_POOLS[key])
+
+
 async def chat_stream(user: str, message: str, page: str):
     """词小屿单轮对话主生成器（SSE 事件流）。"""
     text = message.strip()
@@ -494,7 +533,7 @@ async def chat_stream(user: str, message: str, page: str):
             async for evt, data in _stream_text(answer):
                 yield (evt, data)
             save_message(user, "assistant", answer)
-            yield ("done", {"ok": True})
+            yield ("done", {"ok": True, "suggests": _build_suggestions(answer)})
             return
 
     # -------- L1：LLM 意图识别（Function Calling，真实流式：首字秒出） --------
@@ -542,7 +581,7 @@ async def chat_stream(user: str, message: str, page: str):
     tool_calls = [tc for tc in tool_calls if isinstance(tc, dict) and tc.get("function")]
     if not tool_calls:
         save_message(user, "assistant", content)
-        yield ("done", {"ok": True})
+        yield ("done", {"ok": True, "suggests": _build_suggestions(content)})
         return
 
     # -------- 工具调用（本版取第一条，保证可预期） --------
@@ -560,7 +599,7 @@ async def chat_stream(user: str, message: str, page: str):
         async for evt, d in _stream_text(fallback):
             yield (evt, d)
         save_message(user, "assistant", fallback)
-        yield ("done", {"ok": True})
+        yield ("done", {"ok": True, "suggests": _build_suggestions(fallback)})
         return
 
     # -------- 写操作：只产意图，前端渲染确认卡片（安全铁律） --------
@@ -575,7 +614,7 @@ async def chat_stream(user: str, message: str, page: str):
             async for evt, d in _stream_text(followup):
                 yield (evt, d)
             save_message(user, "assistant", followup)
-            yield ("done", {"ok": True})
+            yield ("done", {"ok": True, "suggests": _build_suggestions(followup, tool="write")})
             return
         yield ("step", {"step": "tool", "label": "准备操作", "model": model, "status": "ok"})
         yield ("tool", {"tool": name, "args": args, "human_readable": human, "confirm_required": True})
@@ -583,7 +622,7 @@ async def chat_stream(user: str, message: str, page: str):
         async for evt, d in _stream_text(intro):
             yield (evt, d)
         save_message(user, "assistant", f"{intro}（已弹出操作确认卡片，等待用户确认后执行）")
-        yield ("done", {"ok": True})
+        yield ("done", {"ok": True, "suggests": _build_suggestions(intro, tool="write")})
         return
 
     # -------- 查询工具：后端直接执行并返回结构化数据 --------
@@ -603,7 +642,7 @@ async def chat_stream(user: str, message: str, page: str):
     async for evt, d in _stream_text(summary):
         yield (evt, d)
     save_message(user, "assistant", summary)
-    yield ("done", {"ok": True})
+    yield ("done", {"ok": True, "suggests": _build_suggestions(summary, tool=name)})
 
 
 # ========================================================================
@@ -636,6 +675,19 @@ async def assistant_history(limit: int = 50):
     user = _assistant_for_scope()
     items = fetch_history(user, limit)
     return {"items": items, "total": len(items)}
+
+
+@router.post("/api/assistant/feedback")
+async def assistant_feedback(req: Request):
+    """词小屿单条回答的点赞/点踩。重复提交同方向视为取消（toggle）。
+    前端提交该条回答对应的用户提问 + 助手回答原文作为定位键。"""
+    body = await _safe_json(req)
+    rating = str(body.get("rating", "")).strip()
+    question = str(body.get("question", ""))[:500]
+    answer = str(body.get("answer", ""))[:4000]
+    user = _assistant_for_scope()
+    saved = upsert_assistant_feedback(user, question, answer, rating)
+    return {"ok": True, "rated": saved is not None}
 
 
 @router.delete("/api/assistant/conversation")

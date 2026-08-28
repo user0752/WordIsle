@@ -360,6 +360,17 @@ def init_db(uid=None):
         );
         CREATE INDEX IF NOT EXISTS idx_assistant_conv_user
             ON assistant_conversations(user_id, id);
+        -- 智能助手词小屿：单条回答的点赞点踩（重复提交同向 = 取消）
+        CREATE TABLE IF NOT EXISTS assistant_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            question TEXT NOT NULL DEFAULT '',
+            answer TEXT NOT NULL DEFAULT '',
+            rating TEXT NOT NULL CHECK (rating IN ('up','down')),
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_assistant_fb_user
+            ON assistant_feedback(user_id, id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_audios_unique
             ON audios (generation_id, voice, speed, tts_model);
     """)
@@ -790,6 +801,35 @@ def get_feedback_stats() -> dict:
             "total": total,
             "satisfaction": round(up / total, 4) if total else 0.0,
         }
+    finally:
+        conn.close()
+
+
+def upsert_assistant_feedback(user: str, question: str, answer: str, rating: str) -> dict | None:
+    """记录用户对词小屿某条回答的点赞/点踩（up/down）。
+    同一 (用户, 问题, 回答) 的同一 rating 已存在则视为取消（删除该条），返回 None；
+    否则入库并返回写入记录。换方向（up↔down）不互斥，各自独立 toggle。"""
+    if rating not in ("up", "down"):
+        raise HTTPException(400, "feedback rating 只能是 up 或 down")
+    conn = get_db(user)
+    try:
+        existing = conn.execute(
+            "SELECT id FROM assistant_feedback WHERE user_id=? AND question=? AND answer=? AND rating=?",
+            (user, question, answer, rating),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM assistant_feedback WHERE user_id=? AND question=? AND answer=? AND rating=?",
+                (user, question, answer, rating),
+            )
+            conn.commit()
+            return None
+        conn.execute(
+            "INSERT INTO assistant_feedback (user_id, question, answer, rating) VALUES (?,?,?,?)",
+            (user, question, answer, rating),
+        )
+        conn.commit()
+        return {"user_id": user, "question": question, "answer": answer, "rating": rating}
     finally:
         conn.close()
 
