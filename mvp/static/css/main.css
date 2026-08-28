@@ -2085,6 +2085,13 @@
     border-radius: 0;
     border: none;
   }
+  .cxy-panel-max {
+    right: 16px;
+    bottom: 16px;
+    width: min(960px, calc(100vw - 32px));
+    height: calc(100vh - 32px);
+    min-height: 0;
+  }
   .cxy-panel-enter-active, .cxy-panel-leave-active { transition: opacity .18s ease, transform .18s ease; }
   .cxy-panel-enter-from, .cxy-panel-leave-to { opacity: 0; transform: translateY(16px) scale(.98); }
 
@@ -2137,6 +2144,13 @@
   }
   .cxy-chip:hover { background: var(--accent-soft); }
 
+  .cxy-msg-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .cxy-messages {
     flex: 1;
     min-height: 0;
@@ -2340,6 +2354,143 @@
   .cxy-send:disabled { opacity: .4; cursor: not-allowed; }
   .cxy-send.cxy-stop { background: rgba(214,69,69,.9); }
   .cxy-foot-note { margin-top: 6px; font-size: 11px; color: var(--text-tertiary); text-align: center; }
+  .cxy-textarea {
+    resize: none;
+    min-height: 38px;
+    max-height: 120px;
+    line-height: 1.5;
+    font-family: inherit;
+    overflow-y: auto;
+  }
+
+  /* 附加体验：回到底部 / 复制回答 / 调节手柄 */
+  .cxy-jump {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    width: 32px; height: 32px;
+    border: 1px solid var(--accent-border);
+    border-radius: 50%;
+    background: var(--bg-card);
+    color: var(--accent-dark);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,.12);
+    z-index: 6;
+  }
+  .cxy-jump:hover { background: var(--accent-soft); }
+  .cxy-fade-enter-active, .cxy-fade-leave-active { transition: opacity .18s ease, transform .18s ease; }
+  .cxy-fade-enter-from, .cxy-fade-leave-to { opacity: 0; transform: translateY(6px); }
+
+  .cxy-copy-row { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+  .cxy-copy {
+    display: inline-flex; align-items: center; gap: 4px;
+    border: none; background: transparent;
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease;
+  }
+  .cxy-copy:hover { color: var(--accent-dark); background: var(--accent-bg); }
+  .cxy-copy.cxy-copy-ok { color: var(--success); }
+
+  /* 头部小图标按钮（音效开关 / 导出），与清空/收起同规格 */
+  .cxy-hbtn {
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 8px;
+    background: transparent; color: #fff;
+    cursor: pointer; opacity: .85;
+    transition: background .15s ease, opacity .15s ease;
+  }
+  .cxy-hbtn:hover { background: rgba(255,255,255,.16); opacity: 1; }
+  .cxy-hbtn.cxy-hbtn-on { background: rgba(255,255,255,.28); opacity: 1; }
+
+  /* 历史会话日期分隔线（今天 / 昨天 / M月D日） */
+  .cxy-day {
+    display: flex; align-items: center; gap: 10px;
+    margin: 10px 2px 4px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+  }
+  .cxy-day::before, .cxy-day::after { content: ''; flex: 1; height: 1px; background: var(--bg-surface); }
+
+  /* 建议追问 chips 行（回答结束后出现） */
+  .cxy-suggest-row {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 6px;
+    margin: 10px 2px 0;
+  }
+  .cxy-suggest-label { font-size: 11.5px; color: var(--text-tertiary); flex: none; }
+  .cxy-suggest { max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 助手消息操作按钮（朗读 / 点赞点踩 / 重新生成），与复制按钮同风格 */
+  .cxy-act {
+    display: inline-flex; align-items: center; gap: 4px;
+    border: none; background: transparent;
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease;
+  }
+  .cxy-act:hover { color: var(--accent-dark); background: var(--accent-bg); }
+  .cxy-act.cxy-act-on { color: var(--accent); }
+  .cxy-act.cxy-act-down { color: #d64545; }
+
+  /* 语音输入麦克风（录音态红色呼吸） */
+  .cxy-mic {
+    width: 38px; height: 38px;
+    flex: none;
+    border: 1px solid var(--accent-border);
+    border-radius: 50%;
+    background: var(--bg-card);
+    color: var(--accent-dark);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s ease, color .15s ease;
+  }
+  .cxy-mic:disabled { opacity: .4; cursor: not-allowed; }
+  .cxy-mic:hover { background: var(--accent-soft); }
+  .cxy-mic.cxy-mic-on {
+    background: rgba(214,69,69,.12);
+    border-color: rgba(214,69,69,.5);
+    color: #d64545;
+    animation: cxy-mic-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes cxy-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(214,69,69,.35); }
+    50% { box-shadow: 0 0 0 6px rgba(214,69,69,0); }
+  }
+
+  .cxy-answer br.cxy-p { content: ''; display: block; margin-top: .85em; }
+
+  .cxy-resize {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 22px;
+    height: 22px;
+    cursor: nesw-resize;
+    touch-action: none;
+    z-index: 5;
+  }
+  .cxy-resize::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    bottom: 5px;
+    width: 9px;
+    height: 9px;
+    border-left: 2px solid var(--accent-border);
+    border-bottom: 2px solid var(--accent-border);
+    border-bottom-left-radius: 3px;
+    transition: border-color .15s ease;
+  }
+  .cxy-resize:hover::after { border-color: var(--accent); }
 
   /* 移动端：挂件 48px（≥44 触控目标），面板全屏 */
   @media (max-width: 640px) {

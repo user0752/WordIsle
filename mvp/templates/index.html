@@ -3149,7 +3149,10 @@
   <div class="cxy-root" v-if="user">
     <!-- 对话面板 -->
     <transition name="cxy-panel">
-      <section v-if="assistant.state.open" class="cxy-panel" :class="{'cxy-panel-mobile': isMobile}" aria-label="词小屿对话面板">
+      <section v-if="assistant.state.open" class="cxy-panel"
+               :class="{'cxy-panel-mobile': isMobile, 'cxy-panel-max': assistant.state.maximized && !isMobile}"
+               :style="(!isMobile && !assistant.state.maximized) ? assistant.panelStyle() : null"
+               aria-label="词小屿对话面板">
         <!-- 面板头部 -->
         <header class="cxy-head">
           <div class="cxy-head-avatar"><img src="/static/images/logo.png" alt="词小屿"></div>
@@ -3158,8 +3161,20 @@
             <div class="cxy-head-sub">{{ assistant.state.configured ? '向导 · 查词 · 复习 · 加词' : 'LLM 未配置，仅可用常见问答' }}</div>
           </div>
           <div class="cxy-head-actions">
+            <button class="cxy-hbtn" :class="{'cxy-hbtn-on': assistant.state.soundOn}"
+                    :title="assistant.state.soundOn ? '关闭打字音效' : '开启打字音效'" @click="assistant.toggleSound()">
+              <svg v-if="assistant.state.soundOn" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.6 5.4a9 9 0 0 1 0 13.2"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M22 9l-6 6M16 9l6 6"/></svg>
+            </button>
+            <button class="cxy-hbtn" title="导出会话为 Markdown" @click="assistant.exportChat()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            </button>
             <button class="cxy-clear" title="清空会话" @click="assistant.clearConversation()">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>
+            </button>
+            <button v-if="!isMobile" class="cxy-max" :title="assistant.state.maximized ? '还原尺寸' : '最大化'" @click="assistant.toggleMax()">
+              <svg v-if="!assistant.state.maximized" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>
             </button>
             <button class="cxy-close" title="收起" @click="assistant.closePanel()">
               <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -3174,8 +3189,12 @@
         </div>
 
         <!-- 消息流 -->
-        <div class="cxy-messages" ref="cxyMessages">
-          <template v-for="m in assistant.state.messages" :key="m.id">
+        <div class="cxy-msg-wrap">
+          <div class="cxy-messages" ref="cxyMessages" @scroll="assistant.onMessagesScroll($event)">
+          <template v-for="seg in assistant.segments()" :key="seg.key">
+            <!-- 日期分隔线（今天 / 昨天 / M月D日） -->
+            <div class="cxy-day"><span>{{ seg.label }}</span></div>
+            <template v-for="m in seg.items" :key="m.id">
             <!-- 用户消息 -->
             <div v-if="m.role === 'user'" class="cxy-row cxy-row-user">
               <div class="cxy-bubble cxy-bubble-user">{{ m.text }}</div>
@@ -3210,6 +3229,34 @@
                 <!-- 回答正文（Markdown 轻量渲染） -->
                 <div v-if="m.text" class="cxy-answer" v-html="assistant.md2html(m.text)"></div>
                 <span v-if="m.streaming" class="cxy-cursor"></span>
+                <!-- 复制回答 -->
+                <div v-if="m.text && !m.streaming" class="cxy-copy-row">
+                  <button class="cxy-copy" :class="{'cxy-copy-ok': m.copied}" @click="assistant.copyMsg(m)">
+                    <svg v-if="!m.copied" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+                    {{ m.copied ? '已复制' : '复制' }}
+                  </button>
+                  <!-- 朗读（speakingMsg 同条再点 = 停止） -->
+                  <button v-if="assistant.state.canSpeak" class="cxy-act"
+                          :class="{'cxy-act-on': assistant.state.speakingMsg === m}"
+                          :title="assistant.state.speakingMsg === m ? '停止朗读' : '朗读回答'"
+                          @click="assistant.state.speakingMsg === m ? assistant.stopSpeak() : assistant.speak(m)">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+                    {{ assistant.state.speakingMsg === m ? '停止' : '朗读' }}
+                  </button>
+                  <!-- 点赞点踩（同向再点 = 取消） -->
+                  <button class="cxy-act" :class="{'cxy-act-on': m.rating === 'up'}" title="有帮助" @click="assistant.rate(m, 'up')">
+                    <ThumbsUp />
+                  </button>
+                  <button class="cxy-act" :class="{'cxy-act-down': m.rating === 'down'}" title="没帮助" @click="assistant.rate(m, 'down')">
+                    <ThumbsDown />
+                  </button>
+                  <!-- 重新生成（仅最后一条助手消息，生成中不可用） -->
+                  <button v-if="assistant.isLastAi(m) && !assistant.state.busy" class="cxy-act" title="重新生成回答" @click="assistant.regenerate()">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+                    重新生成
+                  </button>
+                </div>
                 <!-- 等待首字时的思考指示器（流式 TTFB 期间给用户反馈） -->
                 <div v-if="m.streaming && !m.text" class="cxy-typing">
                   <span class="cxy-typing-dots"><i></i><i></i><i></i></span>
@@ -3252,15 +3299,36 @@
                 <div v-else-if="m.executed" class="cxy-executed"><span class="cxy-dot"></span>{{ m.executed }}</div>
               </div>
             </div>
+            </template>
           </template>
+          <!-- 建议追问（回答结束后出现，点击直接追问） -->
+          <div v-if="!assistant.state.busy && assistant.state.suggestions.length" class="cxy-suggest-row">
+            <span class="cxy-suggest-label">继续问：</span>
+            <button v-for="(s, si) in assistant.state.suggestions" :key="si" class="cxy-chip cxy-suggest"
+                    @click="assistant.askSuggest(s)">{{ s }}</button>
+          </div>
           <div v-if="!assistant.state.messages.length && assistant.state.loadingHistory" class="cxy-loading">正在恢复上一次对话…</div>
+          </div>
+          <transition name="cxy-fade">
+            <button v-if="!assistant.state.atBottom" class="cxy-jump" title="回到底部" @click="assistant.jumpToBottom()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+            </button>
+          </transition>
         </div>
 
         <!-- 输入区 -->
         <footer class="cxy-foot">
           <div class="cxy-input-row">
-            <input v-model="assistant.state.input" class="cxy-input" type="text" placeholder="问问词小屿：功能怎么用 / 查词 / 今天复习哪些…"
-                   :disabled="assistant.state.busy" @keyup.enter="assistant.send()" maxlength="300">
+            <textarea v-model="assistant.state.input" class="cxy-input cxy-textarea" rows="1"
+                      placeholder="问问词小屿：功能怎么用 / 查词 / 今天复习哪些…（Enter 发送，Shift+Enter 换行）"
+                      :disabled="assistant.state.busy" @keydown="assistant.onInputKey($event)"
+                      @input="assistant.autoGrow($event)" maxlength="1000"></textarea>
+            <button v-if="assistant.state.canListen" class="cxy-mic"
+                    :class="{'cxy-mic-on': assistant.state.recording}"
+                    :disabled="assistant.state.busy"
+                    :title="assistant.state.recording ? '停止录音' : '语音输入'" @click="assistant.toggleListen()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>
+            </button>
             <button v-if="assistant.state.busy" class="cxy-send cxy-stop" title="停止生成" @click="assistant.stop()">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
@@ -3270,6 +3338,9 @@
           </div>
           <div v-if="!assistant.state.configured" class="cxy-foot-note">提示：LLM 未配置，只能回答知识库内的问题（去「设置」选择模型）</div>
         </footer>
+
+        <!-- 尺寸调节手柄（左下角拖拽调宽高） -->
+        <div v-if="!isMobile && !assistant.state.maximized" class="cxy-resize" @pointerdown="assistant.onResizeDown($event)" title="拖拽调整面板大小"></div>
       </section>
     </transition>
 
