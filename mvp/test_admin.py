@@ -64,6 +64,9 @@ class AdminDashboardTestCase(unittest.TestCase):
         auth_module.DEV_PASSWORD = "dev-pass"
         auth_module.ADMIN_USERS = [("admin1", "admin1-pass")]
         main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "dev-wordisle.db"
+        # 联合跑时前面模块已把 uid 加入 _initialized_dbs 缓存，换目录后会跳过建库；
+        # 清空缓存确保登录 dev 时在新临时目录重建全表。
+        db_module._initialized_dbs.clear()
         auth_module.SYSTEM_DB_PATH = routes_module.SYSTEM_DB_PATH = db_module.SYSTEM_DB_PATH = cls._tmp_path / "system.db"
         db_module.USER_DATA_DIR = cls._tmp_path
         main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
