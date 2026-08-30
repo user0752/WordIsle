@@ -70,6 +70,13 @@ function _isRetryable(errObj) {
   return s == null                // 原生网络错误（TypeError 等）不带 status 属性
 }
 
+/** 401 会话失效：统一跳登录页（登录页本身不跳转）。 */
+function _handle401(resp) {
+  if (resp.status === 401 && window.location.pathname !== '/login') {
+    window.location.href = '/login'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 通用请求
 //   签名与原 index.html 里的 api() 兼容，另支持可选配置：
@@ -95,6 +102,7 @@ export async function api(url, opts = {}, cfg = {}) {
           signal: controller ? controller.signal : undefined,
         })
         if (!resp.ok) {
+          _handle401(resp)
           const errObj = await _toError(resp)
           if (attempt < retries && _isRetryable(errObj)) {
             attempt++
@@ -126,9 +134,14 @@ export async function api(url, opts = {}, cfg = {}) {
  * SSE 流式请求（POST）
  *   用 fetch + ReadableStream 手动解析 SSE，因为原生 EventSource 不支持 POST。
  *   content 格式：`event: step\ndata: {...}\n\n` 与 `event: result\ndata: {...}\n\n`
- *   回调：onStep(payload) 逐条收到 step 事件；onResult(payload) 收到最终 result。
+ *   回调：
+ *     onStep(payload)     逐条收到 step 事件（分步进度）
+ *     onResult(payload)   收到最终 result 事件（单个）
+ *     onTool(payload)     收到 tool 事件（工具意图/确认卡片数据）
+ *     onDone(payload)     收到 done 事件
+ *     onError(payload)    收到 error 事件（业务侧兜底话术）
  */
-export async function apiStream(url, opts = {}, { onStep, onResult } = {}, cfg = {}) {
+export async function apiStream(url, opts = {}, { onStep, onResult, onTool, onDone, onError } = {}, cfg = {}) {
   const { timeout = DEFAULT_TIMEOUT, withLoading = true, signal: externalSignal } = cfg
   if (withLoading) _incLoading()
 
@@ -147,6 +160,7 @@ export async function apiStream(url, opts = {}, { onStep, onResult } = {}, cfg =
       signal: controller.signal,
     })
     if (!resp.ok) {
+      _handle401(resp)
       const errObj = await _toError(resp)
       throw new Error(errObj.msg)
     }
@@ -178,6 +192,9 @@ export async function apiStream(url, opts = {}, { onStep, onResult } = {}, cfg =
         try { payload = JSON.parse(data) } catch (_) { continue }
         if (event === 'step' && onStep) onStep(payload)
         else if (event === 'result') { result = payload; if (onResult) onResult(payload) }
+        else if (event === 'tool' && onTool) onTool(payload)
+        else if (event === 'done' && onDone) onDone(payload)
+        else if (event === 'error' && onError) onError(payload)
       }
     }
     return result

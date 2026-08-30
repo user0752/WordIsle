@@ -1,0 +1,65 @@
+{
+  "data": [
+    {
+      "id": "image-001",
+      "title": "方案一：印章岛屿",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756233600000,
+      "devMetadata": {
+        "imageSrc": "assets/logo-01-stamp-island.jpg"
+      },
+      "canvasData": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "image-002",
+      "title": "方案二：W 形词树",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756233600000,
+      "devMetadata": {
+        "imageSrc": "assets/logo-02-wordtree-island.jpg"
+      },
+      "canvasData": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "image-003",
+      "title": "方案三：海浪字母",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756233600000,
+      "devMetadata": {
+        "imageSrc": "assets/logo-03-wave-monogram.jpg"
+      },
+      "canvasData": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "image-004",
+      "title": "方案四：图鉴徽章",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756233600000,
+      "devMetadata": {
+        "imageSrc": "assets/logo-04-botanical-badge.jpg"
+      },
+      "canvasData": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "freeSize",
+    "projectName": "词屿品牌 Logo 设计方案"
+  }
+}

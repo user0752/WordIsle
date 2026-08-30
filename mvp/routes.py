@@ -1,12 +1,11 @@
 """
-TOEIC MVP API 路由
+WordIsle MVP API 路由
 ===================
 所有业务 API 路由，使用 FastAPI APIRouter。
 """
 
 import asyncio
 import json
-import logging
 import random
 import re
 import sqlite3
@@ -14,21 +13,17 @@ import uuid
 from datetime import date, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from config import *
 from db import *
 from services import *
+from auth import get_current_user, require_quota
 
-logger = logging.getLogger("toeic.routes")
-if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
-    logger.addHandler(_h)
-    logger.setLevel(logging.INFO)
+logger = setup_stream_logger("wordisle.routes")
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ========================================================================
 # 内部辅助函数
@@ -373,6 +368,7 @@ async def generate(req: Request):
     """批量编译（同步）：剧情生成 + 批量文生图 + 可选 TTS。"""
     body = await _safe_json(req)
     p = _parse_generate_body(body)
+    require_quota("batch")
     return await _consume_result(_run_generate(p))
 
 
@@ -381,6 +377,7 @@ async def generate_stream(req: Request):
     """批量编译（SSE 流式）：逐步推送实际调用的模型与状态。"""
     body = await _safe_json(req)
     p = _parse_generate_body(body)
+    require_quota("batch")
     return StreamingResponse(_sse_stream(_run_generate(p)), media_type="text/event-stream")
 
 
@@ -539,6 +536,7 @@ async def single_compile(req: Request):
     """单点深耕（同步）：生成词伙 + 场景句 + 派生词 + 1 张记忆钩子图。"""
     body = await _safe_json(req)
     p = _parse_single_body(body)
+    require_quota("single")
     return await _consume_result(_run_single_compile(p))
 
 
@@ -547,6 +545,7 @@ async def single_compile_stream(req: Request):
     """单点深耕（SSE 流式）：逐步推送实际调用的模型与状态。"""
     body = await _safe_json(req)
     p = _parse_single_body(body)
+    require_quota("single")
     return StreamingResponse(_sse_stream(_run_single_compile(p)), media_type="text/event-stream")
 
 
@@ -647,12 +646,13 @@ async def submit_feedback(gen_id: str, req: Request):
     """记录/取消对某条生成结果的 👍/👎 反馈。"""
     body = await _safe_json(req)
     rating = (body.get("rating") or "").strip().lower()
+    comment = (body.get("comment") or "").strip()[:500]  # 限制 500 字
     conn = get_db()
     exists = conn.execute("SELECT id FROM generations WHERE id=?", (gen_id,)).fetchone()
     conn.close()
     if not exists:
         raise HTTPException(404, "记录不存在")
-    result = upsert_feedback(gen_id, rating)
+    result = upsert_feedback(gen_id, rating, comment)
     return {"ok": True, "result": result, "stats": get_feedback_stats()}
 
 
@@ -660,6 +660,36 @@ async def submit_feedback(gen_id: str, req: Request):
 async def get_feedback():
     """反馈满意度统计（供查看用户对生成结果的满意度）。"""
     return get_feedback_stats()
+
+
+# ========================================================================
+# 平台看板（运维视图）：仅开发者/管理员可访问，聚合所有用户库的数据
+# ========================================================================
+
+def _require_staff():
+    """反馈看板 / 全站历史等运维数据仅开发者与管理员可见；游客返回 403。"""
+    user = current_user.get(None)
+    if not user or user.get("role") not in ("dev", "admin"):
+        raise HTTPException(403, "仅开发者/管理员可访问运维看板")
+
+
+@router.get("/api/admin/dashboard")
+async def admin_dashboard(days: int = 30):
+    """反馈看板：跨库聚合活跃度 / 反馈 / 生成统计（dev/admin）。"""
+    _require_staff()
+    return collect_platform_dashboard(_clamp_int(days, 7, 90, 30))
+
+
+@router.get("/api/admin/history")
+async def admin_history(page: int = 1, page_size: int = 20, q: str = "",
+                        rating: str = "", role: str = ""):
+    """全站历史：所有用户的生成记录（分页 + 关键词 / 反馈 / 角色过滤，dev/admin）。"""
+    _require_staff()
+    return list_platform_history(
+        page=_clamp_int(page, 1, 100000, 1),
+        page_size=_clamp_int(page_size, 1, 100, 20),
+        q=q, rating=rating, role=role,
+    )
 
 
 @router.delete("/api/generations/{gen_id}")
@@ -672,9 +702,9 @@ async def delete_generation(gen_id: str):
 # 设计文档：开发过程文件/design-system/记忆测试-独立测试页开发文档.md
 # ========================================================================
 
-REVIEW_DAILY_LIMIT = 20                          # 每日复习量上限（防堆积，Anki 式）
 REVIEW_BOX_INTERVALS = {1: 1, 2: 3, 3: 7, 4: 30}  # 盒号 -> 答对后下次复习间隔（天）
 REVIEW_WORD_RE = re.compile(r"[^a-z\-']")        # 词形清洗（与 normalize_words 口径一致）
+# REVIEW_DAILY_LIMIT 已收编至 config.py（routes 与词小屿共用）
 
 
 def _review_now() -> str:
@@ -1129,7 +1159,7 @@ async def health():
         usage = {"ai": row["ai_count"], "tts": row["tts_count"], "image": row["image_count"]}
     return {
         "status": "ok",
-        "db": DB_PATH.exists(),
+        "db": SYSTEM_DB_PATH.exists(),
         # 各模型通道密钥状态（供 manager 状态行/自检展示）
         "deepseek_key":      bool(DEEPSEEK_API_KEY),                     # LLM(DeepSeek 官方)
         "bailian_llm_key":   bool(IMAGE_API_KEY or TTS_API_KEY),         # LLM(百炼, 默认通道 Qwen3.7-Flash)
@@ -1145,7 +1175,11 @@ async def health():
 @router.get("/api/usage")
 async def usage_stats(days: int = 0):
     """返回模型调用统计（按日汇总、按模型汇总、最近明细），供用量情况页面展示。
-    days=0（缺省）返回全部历史；days>0 仅返回近 days 天。"""
+    days=0（缺省）返回全部历史；days>0 仅返回近 days 天。
+    开发者/管理员返回全站聚合（recent 带用户身份 + 用户用量排行榜），游客返回自己库的数据。"""
+    user = current_user.get(None)
+    if user and user.get("role") in ("dev", "admin"):
+        return collect_platform_usage(days)
     return get_model_usage_stats(days)
 
 
@@ -1412,6 +1446,7 @@ async def video_generate(req: Request):
     """视频编译（同步）：选词 → LLM 写视频脚本 → 百炼文生视频 → 存盘入库。"""
     body = await _safe_json(req)
     p = _parse_video_body(body)
+    require_quota("video")
     return await _consume_result(_run_video_generate(p))
 
 
@@ -1420,6 +1455,7 @@ async def video_generate_stream(req: Request):
     """视频编译（SSE 流式）：逐步推送实际调用的模型与状态。"""
     body = await _safe_json(req)
     p = _parse_video_body(body)
+    require_quota("video")
     return StreamingResponse(_sse_stream(_run_video_generate(p)), media_type="text/event-stream")
 
 
@@ -1534,6 +1570,7 @@ async def create_word_stream(req: Request):
     pos = _coerce_str(body.get("pos", ""))
     meaning_zh = _coerce_str(body.get("meaning_zh", ""))
     frequency_level = _coerce_str(body.get("frequency_level", ""))
+    require_quota("enrich")
     return StreamingResponse(
         _sse_stream(_run_single_add_stream(word, pos, meaning_zh, frequency_level)),
         media_type="text/event-stream",
@@ -1967,6 +2004,7 @@ async def import_words_stream(req: Request):
     word_list = body.get("words", [])
     if not isinstance(word_list, list):
         word_list = []
+    require_quota("enrich")
     return StreamingResponse(_sse_stream(_run_import_stream(word_list)), media_type="text/event-stream")
 
 
@@ -2058,6 +2096,8 @@ async def island_extract_stream(req: Request):
             yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词", "status": "failed", "message": "这篇文章里没找到值得学习的单词"})
             yield ("result", {"words": [], "total": 0})
             return
+        # 入库防线：过滤测试残留词/非法词，避免脏词进入提词候选
+        words = [w for w in words if isinstance(w, dict) and is_clean_ai_word(str(w.get("word", "")))]
         # 标记词库已有词（已在岛上疗养中），供前端标注
         conn = get_db()
         try:
@@ -2066,6 +2106,10 @@ async def island_extract_stream(req: Request):
             conn.close()
         for w in words:
             w["existing"] = w["word"] in existing
+        if not words:
+            yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词", "status": "failed", "message": "这篇文章里没找到值得学习的单词"})
+            yield ("result", {"words": [], "total": 0})
+            return
         yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词",
                         "status": "ok", "message": f"提取 {len(words)} 个值得学习的词"})
         yield ("result", {"words": words, "total": len(words)})
@@ -2094,6 +2138,7 @@ async def island_confirm_stream(req: Request):
             })
     if not cleaned:
         raise HTTPException(400, "未选择任何单词")
+    require_quota("extract")
 
     async def _run():
         yield ("step", {"step": "import", "label": f"写入 {len(cleaned)} 个单词", "status": "running"})
@@ -2340,6 +2385,38 @@ async def polysemy_batch_delete(req: Request):
     return {"ok": True, "deleted": deleted, "count": len(cleaned)}
 
 
+@router.post("/api/polysemy/clean-suspicious")
+async def clean_suspicious_data(user: dict = Depends(get_current_user)):
+    """一键清理疑似测试残留数据（仅开发者/管理员）。
+    对当前用户库执行数据体检：删除黑名单测试词 + 剥离释义中的会话残留元信息。"""
+    if user["role"] not in ("dev", "admin"):
+        raise HTTPException(403, "仅开发者/管理员可执行清理")
+    conn = get_db()
+    try:
+        words_del, words_fix = [], []
+        for r in conn.execute("SELECT id, word, meaning_zh FROM words ORDER BY id").fetchall():
+            w = (r["word"] or "").strip().lower()
+            if w in AI_WORD_BLACKLIST:
+                words_del.append({"id": r["id"], "word": r["word"]})
+                continue
+            clean = clean_meaning_residue(r["meaning_zh"] or "")
+            if clean != (r["meaning_zh"] or ""):
+                words_fix.append({"id": r["id"], "word": r["word"], "after": clean})
+        for it in words_del:
+            conn.execute("DELETE FROM words WHERE id=?", (it["id"],))
+        for it in words_fix:
+            conn.execute("UPDATE words SET meaning_zh=? WHERE id=?", (it["after"], it["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "deleted": [d["word"] for d in words_del],
+        "fixed": [f["word"] for f in words_fix],
+        "deleted_count": len(words_del),
+        "fixed_count": len(words_fix),
+    }
+
+
 @router.get("/api/polysemy/candidates")
 async def polysemy_candidates(limit: int = 100):
     """获取单词库中尚未收录到熟词僻意表的候选词（仅查询，不调用LLM）。"""
@@ -2365,7 +2442,7 @@ async def polysemy_candidates(limit: int = 100):
 
 @router.post("/api/polysemy/auto-detect")
 async def polysemy_auto_detect(req: Request):
-    """自动检测单词库中的候选词，调用 LLM 判断是否为托业高频熟词僻意，是则自动入库。
+    """自动检测单词库中的候选词，调用 LLM 判断是否为高频熟词僻意（含商务义），是则自动入库。
 
     请求体（可选）:
       - batch_size: 一次送给 LLM 的单词数，默认 20，建议 10~30
@@ -2374,6 +2451,7 @@ async def polysemy_auto_detect(req: Request):
     body = await _safe_json(req)
     batch_size = _clamp_int(body.get("batch_size", 20), 5, 50, 20)
     max_batches = _clamp_int(body.get("max_batches", 5), 1, 20, 5)
+    require_quota("polysemy")
 
     # 1) 获取候选词（总量够多一些，后续分批）
     conn = get_db()
@@ -2460,6 +2538,10 @@ async def polysemy_auto_detect(req: Request):
             for item in results:
                 w = item.get("word", "").strip().lower()
                 if not w or w not in batch:
+                    continue
+                # 入库防线：过滤测试残留词/非法词（黑名单 + 启发式校验）
+                if not is_clean_ai_word(w):
+                    rejected_words.append(w)
                     continue
                 if item.get("is_polysemy") is True:
                     # 字段兜底
@@ -2634,6 +2716,7 @@ async def polysemy_auto_detect_stream(req: Request):
     body = await _safe_json(req)
     batch_size = _clamp_int(body.get("batch_size", 20), 5, 50, 20)
     max_batches = _clamp_int(body.get("max_batches", 5), 1, 20, 5)
+    require_quota("polysemy")
     return StreamingResponse(
         _sse_stream(_run_polysemy_detect_stream(batch_size, max_batches)),
         media_type="text/event-stream",
@@ -2814,6 +2897,9 @@ async def _run_morpheme_detect_stream(limit: int, force: bool, words: list[str] 
                 w = str(item.get("word", "")).strip().lower()
                 if not w or w not in batch:
                     continue
+                # 入库防线：过滤测试残留词/非法词（黑名单 + 启发式校验）
+                if not is_clean_ai_word(w):
+                    continue
                 if item.get("is_decomposable") is True:
                     morphemes = json.dumps({
                         "stem": item.get("stem", ""),
@@ -2984,6 +3070,7 @@ async def get_morpheme_root(root_id: int):
 @router.post("/api/morphemes/roots/{root_id}/expand")
 async def expand_morpheme_root(root_id: int, request: Request):
     """为某词根树追加 3 个 P2 推荐词（消耗 ai 配额 1 次；去重 + 软上限 15）。"""
+    require_quota("morpheme")
     conn = get_db()
     try:
         r = conn.execute("SELECT * FROM word_roots WHERE id=?", (root_id,)).fetchone()
@@ -3202,6 +3289,7 @@ async def detect_scenes(request: Request):
     body = await _safe_json(request)
     limit = _clamp_int(body.get("limit", 50), 1, 500, 50)
     force = _to_bool(body.get("force", False))
+    require_quota("scene")
 
     conn = get_db()
     try:
@@ -3740,6 +3828,7 @@ async def compile_scene(scene_id: int, request: Request):
     track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
     if track not in ("general", "tech"):
         track = "general"
+    require_quota("scene")
     return await _consume_result(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style,
                                                     generate_audio, tts_model, tts_voice, track))
 
@@ -3758,6 +3847,7 @@ async def compile_scene_stream(scene_id: int, request: Request):
     track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
     if track not in ("general", "tech"):
         track = "general"
+    require_quota("scene")
     return StreamingResponse(
         _sse_stream(_run_scene_compile(scene_id, panel_count, theme_hint, image_model, art_style,
                                        generate_audio, tts_model, tts_voice, track)),

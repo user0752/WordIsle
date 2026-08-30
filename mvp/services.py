@@ -1,14 +1,15 @@
 """
-TOEIC MVP 外部服务
+词屿（WordIsle）MVP 外部服务
 ==================
 DeepSeek AI 生成、百炼 TTS 语音合成、百炼文生图。
 """
 
 import asyncio
 import base64
+import functools
 import json
-import logging
 import re
+import sys
 import time
 
 import dashscope
@@ -17,15 +18,11 @@ from dashscope.audio.http_tts import HttpSpeechSynthesizer
 from fastapi import HTTPException
 
 from config import *
-from db import record_model_usage
+from db import record_model_usage, setup_stream_logger
 
-# 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）
-logger = logging.getLogger("toeic.services")
-if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
-    logger.addHandler(_h)
-    logger.setLevel(logging.INFO)
+# 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）。
+# 每条日志自动带 user=uid/username/role，回答「谁调用了什么模型、做了什么」。
+logger = setup_stream_logger("wordisle.services")
 
 __all__ = [
     "build_user_prompt",
@@ -98,7 +95,7 @@ def _track_instruction(track: str) -> str:
 # DeepSeek Prompt
 # ========================================================================
 
-SYSTEM_PROMPT = """You are a TOEIC Business English storyboard writer. Your audience is TOEIC test-takers who need to master stubborn vocabulary through a CINEMATIC STORY split into visual panels.
+SYSTEM_PROMPT = """You are a Business English storyboard writer. Your audience is English learners who need to master stubborn vocabulary through a CINEMATIC STORY split into visual panels.
 
 CORE IDEA: Pack the MOST target words into the SHORTEST possible sentences, tied together by ONE coherent story arc (setup → development → climax → resolution). Each panel = 1 high-density English sentence + 1 cinematic image description.
 
@@ -167,7 +164,7 @@ Output only the JSON object."""
 # 批量编译新风格：荒诞三连弹（absurd）
 # ========================================================================
 
-BATCH_ABSURD_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in ABSURD MEMORABLE CARDS.
+BATCH_ABSURD_SYSTEM_PROMPT = """You are an English vocabulary curator specializing in ABSURD MEMORABLE CARDS.
 
 CORE IDEA: Pack target words into 3 INDEPENDENT absurd scenes. Each scene is self-contained, loosely linked by the same theme or characters. Absurdity = memorable.
 
@@ -236,9 +233,9 @@ Output only the JSON object."""
 # 批量编译新风格：冲突连环（conflict）
 # ========================================================================
 
-BATCH_CONFLICT_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in CONFLICT COMIC STRIPS.
+BATCH_CONFLICT_SYSTEM_PROMPT = """You are an English vocabulary curator specializing in CONFLICT COMIC STRIPS.
 
-CORE IDEA: Two opposing characters × 3 rounds of conflict escalation. Conflict → emotion → amygdala engagement → stronger memory. Aligned with TOEIC business negotiation scenarios.
+CORE IDEA: Two opposing characters × 3 rounds of conflict escalation. Conflict → emotion → amygdala engagement → stronger memory. Aligned with workplace negotiation scenarios.
 
 RULES:
 1. Exactly 3 panels, structured as rounds:
@@ -310,7 +307,7 @@ Output only the JSON object."""
 # 场景编译专用 Prompt（高关联词：自然连贯、完整覆盖、复用场景词伙）
 # ========================================================================
 
-SCENE_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator specializing in SCENE-BASED story comics.
+SCENE_SYSTEM_PROMPT = """You are an English vocabulary curator specializing in SCENE-BASED story comics.
 
 CORE DISTINCTION: These words belong to ONE business scene (high relatedness). Your job is to weave them into a NATURAL, coherent mini-story that covers ALL of them — NOT to force absurdity. The scene itself is the memory cue.
 
@@ -453,7 +450,7 @@ async def call_deepseek(words: list[str], panel_count: int = 4, theme_hint: str 
 # 单点深耕 Prompt & 生成
 # ========================================================================
 
-SINGLE_SYSTEM_PROMPT = """You are a TOEIC Business English coach specialized in the "one word, one image, one hook" memorization technique.
+SINGLE_SYSTEM_PROMPT = """You are a Business English coach specialized in the "one word, one image, one hook" memorization technique.
 
 CORE IDEA: Given ONE English word, produce a single vivid memory-hook CARD. The image and the scene sentence together become the recall trigger — when the user sees the picture, they instantly remember the word.
 
@@ -476,7 +473,7 @@ If the word fits multiple types, choose the strategy that produces the clearest 
 
 ## TASK
 Given one English target word, output:
-1. ONE high-frequency TOEIC collocation (e.g. submit → submit a proposal).
+1. ONE high-frequency business collocation (e.g. submit → submit a proposal).
 2. ONE vivid scene sentence (English + Chinese) that matches the chosen strategy, MUST contain the target word.
 3. ONE image_prompt that makes the WORD ITSELF the visual focus, following the chosen strategy.
 4. The word's derivative family (noun/verb/adjective/adverb forms, with Chinese meanings).
@@ -688,7 +685,7 @@ async def generate_single_image(prompt: str, model: str, gen_id: str, feature: s
 # 百炼文生视频（视频编译）
 # ========================================================================
 
-VIDEO_SYSTEM_PROMPT = """You are a TOEIC Business English video director. Given a list of TOEIC words, write a short MEMORY MICROFILM in the form of a text-to-video prompt.
+VIDEO_SYSTEM_PROMPT = """You are a Business English video director. Given a list of English words, write a short MEMORY MICROFILM in the form of a text-to-video prompt.
 
 CORE IDEA: The user learns words by watching a short video (5-10s). The video must visually encode the words so that seeing it triggers recall. Weave ALL target words into ONE coherent cinematic scene showing their business meanings.
 
@@ -800,38 +797,78 @@ def _wrap_text(text: str, max_chars: int = 28) -> str:
 
 
 def _pick_font() -> str:
-    """挑选一个可用的 Windows 中文字体路径供 drawtext 使用。"""
+    """挑选一个可用的系统字体路径供 drawtext 使用（跨平台）。
+
+    Linux 下载体中文字体在前（当前字幕为英文，置前是为中文扩展预留），
+    英文字体兜底；全部缺失时返回空串（不阻断，仅无字体渲染）。
+    """
     import os as _os
-    candidates = [
-        r"C:\Windows\Fonts\arial.ttf",
-        r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\arialbd.ttf",
-    ]
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arialbd.ttf",
+        ]
+    else:
+        candidates = [
+            # 中文字体在前（当前字幕为英文，置前是为中文扩展预留）
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            # 英文字体兜底
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
     for f in candidates:
         if _os.path.exists(f):
             return f.replace("\\", "/")
     return ""
 
 
+@functools.lru_cache(maxsize=None)
+def _ffmpeg_has_drawtext(exe: str) -> bool:
+    """探测 ffmpeg 是否编译了 drawtext 滤镜（依赖 libfreetype），结果进程内缓存。"""
+    import subprocess as _sp
+    try:
+        r = _sp.run([exe, "-hide_banner", "-filters"],
+                    capture_output=True, text=True, timeout=10)
+        return r.returncode == 0 and "drawtext" in r.stdout
+    except Exception:
+        return False
+
+
+def _pick_ffmpeg_exe() -> str:
+    """优先返回支持 drawtext 的系统 ffmpeg；否则回退 imageio-ffmpeg 自带二进制。"""
+    import shutil as _shutil
+    sys_ff = _shutil.which("ffmpeg")
+    if sys_ff and _ffmpeg_has_drawtext(sys_ff):
+        logger.info("ffmpeg 使用系统版本: %s", sys_ff)
+        return sys_ff
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        logger.info("ffmpeg 回退 imageio-ffmpeg: %s", exe)
+        return exe
+    except Exception:
+        logger.warning("未找到可用 ffmpeg（系统缺失且 imageio-ffmpeg 不可用）")
+        return sys_ff or "ffmpeg"
+
+
 def mux_video_with_audio(video_path: str, audio_bytes: bytes, subtitle_text: str, output_path: str) -> None:
     """用 ffmpeg 把 TTS 旁白合成进无声视频，并烧录英文字幕。
 
     必须使用完整版 ffmpeg（含 drawtext/libfreetype 与 aac 编码器）。
-    系统 PATH 里的 ffmpeg 可能是精简版（--disable-everything），因此优先采用
-    imageio-ffmpeg 自带的完整二进制。
+    ffmpeg 选择策略：优先系统 ffmpeg 且带 drawtext（_pick_ffmpeg_exe），
+    imageio-ffmpeg 自带二进制仅作回退。
     """
     import subprocess
     import tempfile
     import os as _os
     import shutil as _shutil
 
-    try:
-        import imageio_ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        ffmpeg_exe = "ffmpeg"
+    ffmpeg_exe = _pick_ffmpeg_exe()
 
-    workdir = tempfile.mkdtemp(prefix="toeic_video_")
+    workdir = tempfile.mkdtemp(prefix="wordisle_video_")
     audio_name = "audio.mp3"
     sub_name = "sub.txt"
 
@@ -1002,9 +1039,12 @@ async def _call_llm_with_fallback(
     response_format: dict | None = None,
     timeout: float = 30.0,
     detail: str = "",
+    tools: list[dict] | None = None,
+    tool_choice: str | None = None,
 ) -> dict | None:
     """调用 LLM，先试该调用点选定的模型，失败时降级到该调用点的默认模型（百炼 Qwen3.7-Flash）。
-    返回解析后的 data dict；两者都失败时返回 None。"""
+    返回解析后的 data dict；两者都失败时返回 None。
+    tools/tool_choice：可选 Function Calling 参数（词小屿等 Agent 场景使用）。"""
     payload: dict = {
         "messages": messages,
         "temperature": temperature,
@@ -1012,6 +1052,10 @@ async def _call_llm_with_fallback(
     }
     if response_format:
         payload["response_format"] = response_format
+    if tools:
+        payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
     feature = detail or route_key
 
     # 1) 尝试该调用点选定的模型
@@ -1035,6 +1079,156 @@ async def _call_llm_with_fallback(
 
     logger.error("LLM 调用失败 [%s] 全部候选模型均无响应（route=%s）", feature, route_key)
     return None
+
+
+# ========================================================================
+# LLM 真实流式调用（词小屿 SSE 用）：逐 token 解析上游 SSE，支持函数调用累积
+# ========================================================================
+
+async def _chat_completion_stream(base_url: str, api_key: str, model: str, payload: dict,
+                                  timeout: float = 120.0, detail: str = ""):
+    """流式 chat/completions（stream=true）：解析上游 SSE，逐条产出事件。
+
+    yield (type, data)：
+      ("delta", text)                      实时文本增量
+      ("done", {"content", "tool_calls"})  流结束汇总（tool_calls 为完整列表）
+    HTTP/网络失败抛异常，由上层做模型兜底。
+    """
+    t0 = time.monotonic()
+    req_payload = {**payload, "stream": True}
+    # 百炼渠道：关闭思考模式（qwen 思考会先"想"很久才吐字，首 token 延迟可达 10s+，
+    # 词小屿的问答/工具场景不需要思考，关闭后首字秒出）
+    if "dashscope" in base_url:
+        req_payload.setdefault("enable_thinking", False)
+    content_parts: list[str] = []
+    tool_calls_acc: dict[int, dict] = {}
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            "POST",
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={**req_payload, "model": model},
+        ) as resp:
+            if resp.status_code != 200:
+                body = (await resp.aread())[:300].decode(errors="ignore")
+                raise RuntimeError(f"LLM 流式调用失败 HTTP {resp.status_code}: {body}")
+
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    evt = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                choices = evt.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                text = delta.get("content")
+                if text:
+                    content_parts.append(text)
+                    yield ("delta", text)
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    acc = tool_calls_acc.setdefault(idx, {"id": "", "name": "", "arguments": []})
+                    if tc.get("id"):
+                        acc["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        acc["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        acc["arguments"].append(fn["arguments"])
+
+    tool_calls = [
+        {"id": acc["id"], "type": "function",
+         "function": {"name": acc["name"], "arguments": "".join(acc["arguments"])}}
+        for _, acc in sorted(tool_calls_acc.items())
+    ]
+    content = "".join(content_parts)
+    # 计费登记：工具场景按输入粗估；纯文本按输出粗估（流式响应通常无 usage 字段）
+    if tool_calls:
+        tokens = _estimate_tokens(" ".join(str(m.get("content", "")) for m in payload.get("messages", [])))
+    else:
+        tokens = _estimate_tokens(content) or 1
+    record_model_usage("llm", model, detail, tokens)
+    logger.info("LLM 流式调用成功 [%s] model=%s 耗时=%.1fs", detail or "未标注功能", model, time.monotonic() - t0)
+    yield ("done", {"content": content, "tool_calls": tool_calls})
+
+
+async def stream_llm_with_fallback(
+    messages: list[dict],
+    route_key: str,
+    temperature: float = 0.3,
+    max_tokens: int = 1024,
+    timeout: float = 60.0,
+    detail: str = "",
+    tools: list[dict] | None = None,
+    tool_choice: str | None = "auto",
+):
+    """词小屿专用：真实流式 LLM 生成器（首 token 秒出，逐条 yield）。
+
+    先试该调用点选定的模型流式；失败降级默认模型流式；再失败降级非流式兜底。
+    yield 事件（dict）：
+      {"type": "delta", "text": str}                      实时文本增量
+      {"type": "result", "content": str, "tool_calls": [...]}  结束汇总（非流式兜底时也给出）
+    """
+    payload: dict = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+    if tools:
+        payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
+    feature = detail or route_key
+
+    def _emit_stream(cfg: dict):
+        async def _gen():
+            async for t, d in _chat_completion_stream(
+                cfg["base_url"], cfg["api_key"], cfg["model"], payload,
+                timeout=timeout, detail=detail,
+            ):
+                if t == "delta":
+                    yield {"type": "delta", "text": d}
+                elif t == "done":
+                    yield {"type": "result", "content": d["content"], "tool_calls": d["tool_calls"]}
+        return _gen()
+
+    # 1) 尝试该调用点选定的模型（流式）
+    cfg = get_route_llm(route_key)
+    if cfg.get("api_key"):
+        logger.info("LLM 流式调用开始 [%s] model=%s(%s) route=%s", feature, cfg["model"], cfg["value"], route_key)
+        try:
+            async for evt in _emit_stream(cfg):
+                yield evt
+            return
+        except Exception as e:
+            logger.warning("LLM 流式调用失败 [%s] model=%s error=%r，准备降级", feature, cfg["model"], e)
+
+    # 2) 降级到该调用点的默认模型（流式）
+    default_value = LLM_ROUTE_DEFAULT.get(route_key)
+    default_cfg = LLM_MODEL_BY_VALUE.get(default_value)
+    if default_cfg and default_cfg.get("api_key") and default_cfg["value"] != cfg["value"]:
+        logger.warning("LLM 降级 [%s] model=%s -> 默认兜底模型 %s（流式）", feature, cfg["model"], default_cfg["model"])
+        try:
+            async for evt in _emit_stream(default_cfg):
+                yield evt
+            return
+        except Exception as e:
+            logger.error("LLM 流式调用失败 [%s] 默认兜底模型 %s error=%r", feature, default_cfg["model"], e)
+
+    # 3) 非流式兜底（两种模型都流式失败时，保证可用）
+    data = await _call_llm_with_fallback(messages, route_key, temperature=temperature,
+                                         max_tokens=max_tokens, timeout=timeout, detail=detail,
+                                         tools=tools, tool_choice=tool_choice)
+    if data:
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        yield {"type": "result", "content": (msg.get("content") or ""), "tool_calls": msg.get("tool_calls") or []}
+    else:
+        yield {"type": "result", "content": "", "tool_calls": []}
 
 
 # ========================================================================
@@ -1400,16 +1594,16 @@ async def generate_panel_image(prompt: str, model: str, gen_id: str, scene_index
 # 熟词僻意（Polysemy）自动检测
 # ========================================================================
 
-POLYSEMY_DETECT_SYSTEM = """You are a senior TOEIC vocabulary instructor specialized in identifying "familiar words with uncommon business meanings" (熟词僻意) that frequently appear in TOEIC Listening and Reading tests.
+POLYSEMY_DETECT_SYSTEM = """You are a senior English vocabulary instructor specialized in identifying "familiar words with uncommon business meanings" (熟词僻意) that frequently appear in workplace English contexts.
 
-Your task: Given a list of candidate English words, for EACH word, determine whether it qualifies as a HIGH-FREQUENCY TOEIC POLYSEMY word — i.e., it has at least two distinct meanings, and the less common one is strongly associated with BUSINESS / WORKPLACE / COMMERCIAL contexts and frequently tested in TOEIC Part 5, 6, or 7.
+Your task: Given a list of candidate English words, for EACH word, determine whether it qualifies as a HIGH-FREQUENCY POLYSEMY word — i.e., it has at least two distinct meanings, and the less common one is strongly associated with BUSINESS / WORKPLACE / COMMERCIAL contexts, commonly used in workplace English.
 
 Guidelines for a YES (is_polysemy = true):
 - Word must have at least ONE clear "everyday / common" meaning (middle-school level or above)
 - AND at least ONE distinct "business / formal" meaning that surprises average learners (e.g. address = "to deal with a problem", firm = "company", tender = "to submit a bid")
-- AND that business meaning is frequently tested in TOEIC exams
+- AND that business meaning is commonly used in workplace English
 - Examples that qualify: address, accommodate, charge, firm, issue, order, present, rate, share, term, bill, book, contract, credit, current, duty, figure, gross, line, margin, overhead, premium, return, security, stock, turnover, venture, yield, tender, etc.
-- Examples that do NOT qualify: words with only 1 meaning (e.g. "receipt", "invoice", "conference" are business-only), or purely academic/technical words, or rare words. Words that are too simple (cat, run, go) should be rejected unless the business meaning is genuinely non-obvious to TOEIC learners.
+- Examples that do NOT qualify: words with only 1 meaning (e.g. "receipt", "invoice", "conference" are business-only), or purely academic/technical words, or rare words. Words that are too simple (cat, run, go) should be rejected unless the business meaning is genuinely non-obvious to learners.
 
 Output ONLY a valid JSON object. No markdown. No extra text.
 
@@ -1444,10 +1638,10 @@ JSON STRUCTURE:
 Rules for each is_polysemy=true entry:
 - common_meaning_zh / business_meaning_zh: concise Chinese, max 20 chars
 - common_meaning_en / business_meaning_en: 5-20 words in natural English
-- example_en: ONE natural TOEIC-style business sentence (12-25 words), must USE the word clearly in its BUSINESS meaning
+- example_en: ONE natural business sentence (12-25 words), must USE the word clearly in its BUSINESS meaning
 - example_zh: accurate Chinese translation of the example
 - collocations: 3-5 Chinese business collocations/chunks for the business meaning (English phrases)
-- toc_part: Part 5, Part 6, Part 7, or combined like Part 5/6 — which TOEIC section(s) this word typically appears
+- toc_part: exam section hint like Part 5, Part 6, Part 7, or combined Part 5/6 — where this word typically appears in proficiency tests
 - frequency_level: ★★★★★ very high, ★★★★☆ high, ★★★☆☆ medium, ★★☆☆☆ borderline/low
 - If is_polysemy is false, omit all fields except "word" and "is_polysemy".
 """
@@ -1455,13 +1649,13 @@ Rules for each is_polysemy=true entry:
 
 def _build_polysemy_detect_prompt(words: list[str]) -> str:
     numbered = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
-    return f"""Please evaluate the following {len(words)} candidate words and determine if each is a HIGH-FREQUENCY TOEIC POLYSEMY word (熟词僻意).
+    return f"""Please evaluate the following {len(words)} candidate words and determine if each is a HIGH-FREQUENCY POLYSEMY word (熟词僻意).
 
 CANDIDATE WORDS:
 {numbered}
 
 For each word:
-1) Set "is_polysemy": true ONLY if the word has both a common everyday meaning AND a distinct business/workplace meaning that is frequently tested in TOEIC Part 5/6/7. Otherwise false.
+1) Set "is_polysemy": true ONLY if the word has both a common everyday meaning AND a distinct business/workplace meaning that is commonly used in workplace English. Otherwise false.
 2) For words where is_polysemy=true, fill ALL fields: common_meaning_zh, common_meaning_en, business_meaning_zh, business_meaning_en, example_en, example_zh, collocations (3-5), toc_part, frequency_level.
 3) For words where is_polysemy=false, return ONLY word + is_polysemy=false, nothing else.
 
@@ -1469,7 +1663,7 @@ Return a single JSON object matching the schema provided."""
 
 
 async def call_polysemy_detection(words: list[str]):
-    """调用 LLM（熟词僻意路由，可切换模型）批量判断单词是否为托业高频熟词僻意，返回结构化词条。
+    """调用 LLM（熟词僻意路由，可切换模型）批量判断单词是否为高频熟词僻意（含商务义），返回结构化词条。
     选定模型调用失败（如限流）时自动降级到默认主模型。"""
     if not words:
         return {"results": []}
@@ -1546,7 +1740,7 @@ async def call_polysemy_detection(words: list[str]):
 # 构词拆解：批量判定可拆词（扫描）
 # ========================================================================
 
-MORPHEME_SYSTEM = """You are an English morphology analyzer for TOEIC vocabulary. Given a list of English words, determine whether each can be clearly decomposed into morphemes (prefix + root + suffix) with high confidence.
+MORPHEME_SYSTEM = """You are an English morphology analyzer. Given a list of English words, determine whether each can be clearly decomposed into morphemes (prefix + root + suffix) with high confidence.
 
 Rules:
 - Only mark is_decomposable=true when the decomposition is CERTAIN and the word is clearly built from identifiable morphemes (e.g. brokerage = broker + -age, management = manage + -ment, reconsider = re- + consider).
@@ -1669,12 +1863,12 @@ async def call_morpheme_detect(words: list[str]):
 # 构词拆解：词根树推荐同构词（懒填充 / 添加成员，P2 专用）
 # ========================================================================
 
-MORPHEME_SEED_SYSTEM = """You are a TOEIC vocabulary expert. Given a morpheme/root (e.g. "-age") and a list of words already associated with it, recommend additional TOEIC core words built with the SAME morpheme.
+MORPHEME_SEED_SYSTEM = """You are an English vocabulary expert. Given a morpheme/root (e.g. "-age") and a list of words already associated with it, recommend additional core English words built with the SAME morpheme.
 
 Rules:
 - Return EXACTLY 3 words. If you cannot honestly find 3, return 0-2 and explain why in "reason". Never fabricate or pad.
-- Every word must be TOEIC core vocabulary and must contain the morpheme with the same construction (e.g. for "-age": postage, storage, coverage).
-- Order by exam frequency: the most important words first.
+- Every word must be core English vocabulary and must contain the morpheme with the same construction (e.g. for "-age": postage, storage, coverage).
+- Order by word frequency: the most important words first.
 - For each word output word + meaning_zh + frequency_level (★ to ★★★★★).
 - Do NOT recommend any word that already appears in the given existing list.
 
@@ -1690,7 +1884,7 @@ TYPE: {root_type}
 WORDS ALREADY ASSOCIATED (do NOT recommend these):
 {existing_txt}
 
-Recommend exactly 3 NEW TOEIC core words containing this morpheme, sorted by exam frequency (most important first).
+Recommend exactly 3 NEW core English words containing this morpheme, sorted by word frequency (most important first).
 Return a JSON object matching the schema provided."""
 
 
@@ -1750,12 +1944,12 @@ async def call_morpheme_seed(root: str, root_zh: str, root_type: str, existing: 
 # 单词词性/释义自动补充
 # ========================================================================
 
-WORD_ENRICH_SYSTEM = """You are an English vocabulary assistant for TOEIC learners. Given a list of English words, return the part of speech, a comprehensive Chinese meaning and the TOEIC exam frequency for each word.
+WORD_ENRICH_SYSTEM = """You are an English vocabulary assistant. Given a list of English words, return the part of speech, a comprehensive Chinese meaning and the word frequency level for each word.
 
 Rules:
 - Part of speech (pos): use short labels like v., n., adj., adv., prep., conj., pron., etc. If a word has multiple common POS, list the most important ones separated by "/" (e.g. "v./n.").
 - Chinese meaning (meaning_zh): provide a comprehensive yet concise Chinese definition. Include the most common meanings used in business/workplace contexts. Keep it under 80 characters.
-- frequency_level: estimate the word's importance in the TOEIC exam as a star rating from ★ to ★★★★★ (5 stars = extremely frequent/important, 1 star = rare). Use the ★ character repeated 1-5 times.
+- frequency_level: estimate the word's importance in general English as a star rating from ★ to ★★★★★ (5 stars = extremely frequent/important, 1 star = rare). Use the ★ character repeated 1-5 times.
 - For words that are already in the input (e.g. inflected forms), return the base form's info.
 
 Output ONLY a valid JSON object. No markdown, no extra text.
@@ -1781,7 +1975,7 @@ JSON STRUCTURE:
 
 def _build_enrich_prompt(words: list[str]) -> str:
     numbered = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(words))
-    return f"""Please provide the part of speech, Chinese meaning and TOEIC exam frequency for each of the following {len(words)} English words.
+    return f"""Please provide the part of speech, Chinese meaning and word frequency level for each of the following {len(words)} English words.
 
 WORDS:
 {numbered}
@@ -1789,7 +1983,7 @@ WORDS:
 For each word, return:
 - pos: part of speech label (e.g. v., n., adj., adv., or combined like "v./n.")
 - meaning_zh: comprehensive Chinese definition (max 80 characters)
-- frequency_level: star rating ★ to ★★★★★ indicating TOEIC exam importance
+- frequency_level: star rating ★ to ★★★★★ indicating general English importance
 
 Return a single JSON object matching the schema provided."""
 
@@ -1987,7 +2181,7 @@ async def call_word_phonetic(word: str) -> str:
 # 场景聚汇：自动检测
 # ========================================================================
 
-SCENE_DETECT_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator.
+SCENE_DETECT_SYSTEM_PROMPT = """You are an English vocabulary curator.
 
 You will receive:
 1) A list of existing scenes (scene_id + name + name_zh + description)
@@ -2015,7 +2209,7 @@ OUTPUT JSON ONLY:
 
 RULES:
 1. Each existing-scene assignment confidence ∈ [0,1]. If < 0.5, set low_confidence=true.
-2. Don't force-fit. If a group of words clearly forms a new TOEIC business scene not in the existing list, propose a new scene in new_scenes_suggested (max 3 new scenes).
+2. Don't force-fit. If a group of words clearly forms a new workplace scene not in the existing list, propose a new scene in new_scenes_suggested (max 3 new scenes).
 3. scene_id in scene_assignments MUST be one of the existing scene IDs. New scene suggestions go ONLY into new_scenes_suggested.
 4. Every word MUST appear exactly once in scene_assignments.
 5. Output only the JSON object."""
@@ -2037,16 +2231,16 @@ def _build_scene_detect_user_prompt(words: list[str], existing_scenes: list[dict
 
 
 # 无已有场景时的"纯分组"模式 prompt
-SCENE_DETECT_GROUPING_SYSTEM_PROMPT = """You are a TOEIC vocabulary curator.
+SCENE_DETECT_GROUPING_SYSTEM_PROMPT = """You are an English vocabulary curator.
 
-Group the given words into 3-6 TOEIC business scenes. There are NO existing scenes.
+Group the given words into 3-6 workplace scenes. There are NO existing scenes.
 
 Output ONLY this JSON:
 {"new_scenes_suggested": [{"name": "HR", "name_zh": "人力资源", "description": "招聘薪酬", "suggested_words": ["word1","word2"], "confidence": 0.9}]}
 
 Rules:
 1. Each word goes into exactly ONE scene.
-2. Use TOEIC domains: HR, Finance, Logistics, Meetings, Contracts, Marketing etc.
+2. Use workplace domains: HR, Finance, Logistics, Meetings, Contracts, Marketing etc.
 3. Keep description short (Chinese, one line).
 4. Do NOT include scene_assignments field.
 5. Output only JSON, no other text."""
@@ -2156,7 +2350,7 @@ async def call_deepseek_scene_detect(words: list[str], existing_scenes: list[dic
 # 场景聚汇：场景词伙搭配生成
 # ========================================================================
 
-SCENE_COLLOCATIONS_SYSTEM_PROMPT = """You are a TOEIC collocation expert. Generate typical high-frequency business collocations for the words in a scene.
+SCENE_COLLOCATIONS_SYSTEM_PROMPT = """You are a business collocation expert. Generate typical high-frequency business collocations for the words in a scene.
 
 OUTPUT JSON ONLY:
 {
@@ -2173,7 +2367,7 @@ OUTPUT JSON ONLY:
 
 RULES:
 1. Generate 2-5 collocations. Each phrase must be 2-4 words and contain at least one word from the scene word list.
-2. Collocations should be authentic TOEIC business chunks (verb+noun, noun+noun, adj+noun, etc.).
+2. Collocations should be authentic business chunks (verb+noun, noun+noun, adj+noun, etc.).
 3. zh: concise Chinese meaning of the phrase.
 4. words: the scene words used in this collocation.
 5. example_en/example_zh: one short example sentence using the collocation.
@@ -2187,7 +2381,7 @@ def _build_scene_collocations_user_prompt(words: list[str], scene_name: str, sce
 
 
 async def call_deepseek_scene_collocations(words: list[str], scene_name: str, scene_name_zh: str = "") -> list[dict]:
-    """为场景内单词生成 2-5 条典型 TOEIC 词伙搭配。任何失败都返回 []，不抛异常。"""
+    """为场景内单词生成 2-5 条典型商务词伙搭配。任何失败都返回 []，不抛异常。"""
     if not words or len(words) < 2:
         return []
     if not get_route_llm("scene_collocations").get("api_key"):

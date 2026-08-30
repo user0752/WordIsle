@@ -1,5 +1,5 @@
 """
-TOEIC MVP 中间件
+WordIsle MVP 中间件
 ================
 FastAPI 中间件配置，统一管理。
 """

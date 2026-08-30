@@ -14,14 +14,40 @@
 </head>
 <body>
 <div id="app">
-  <div class="app-layout">
+  <!-- 移动端汉堡按钮：位于 app-layout 之外，fixed 独立层级（在 header/遮罩之上），不受 header 层叠上下文影响 -->
+  <button class="mobile-menu-btn" @click="toggleMobileMenu" aria-label="切换菜单" aria-expanded="false">
+    <svg class="icon-burger" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    <svg class="icon-close" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+  <div class="app-layout" :class="{'sidebar-collapsed': sidebarCollapsed}">
     <!-- 顶部栏 — 极简毛玻璃 -->
     <header class="app-header">
+      <!-- 桌面端：侧边栏折叠开关（移动端用汉堡按钮） -->
+      <button class="sidebar-toggle" v-if="!isMobile" @click="toggleSidebar"
+              :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'" :aria-expanded="!sidebarCollapsed">
+        <svg class="icon-open-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.2 4v16"/></svg>
+        <svg class="icon-close-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.2 4v16"/><path d="m6.5 10.5 2.6 2.6-2.6 2.6"/></svg>
+      </button>
       <div class="logo" @click="currentPage='words'">
         <div class="logo-icon">
-          <el-icon :size="16"><Reading /></el-icon>
+          <img src="/static/images/logo.png" alt="词屿 WordIsle 品牌 logo">
         </div>
         <span class="logo-text">词屿 WordIsle</span>
+      </div>
+
+      <!-- GitHub 开源仓库 -->
+      <a class="gh-link" href="https://github.com/user0752/WordIsle" target="_blank" rel="noopener noreferrer" title="GitHub 开源仓库" aria-label="GitHub 开源仓库">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      </a>
+
+      <!-- 用户身份区 -->
+      <div class="header-user" v-if="user">
+        <span class="role-badge" :class="'role-' + user.role">{{ roleLabel }}</span>
+        <span class="user-name">{{ user.username }}</span>
+        <el-tooltip v-if="isGuest" content="游客数据仅保存在当前浏览器（Cookie 30 天），清除缓存或换设备将无法找回" placement="bottom">
+          <el-icon class="guest-warn" :size="14"><Warning /></el-icon>
+        </el-tooltip>
+        <el-button link size="small" @click="logout">退出登录</el-button>
       </div>
     </header>
 
@@ -96,6 +122,10 @@
           <el-menu-item index="usage">
             <el-icon><data-analysis /></el-icon>
             <span>用量情况</span>
+          </el-menu-item>
+          <el-menu-item index="dashboard" v-if="user && (user.role==='dev' || user.role==='admin')">
+            <el-icon><Odometer /></el-icon>
+            <span>反馈看板</span>
           </el-menu-item>
           <el-menu-item index="settings">
             <el-icon><Setting /></el-icon>
@@ -288,7 +318,7 @@
             </div>
           </el-card>
           <el-card shadow="never">
-            <el-table :data="wordsData" v-loading="wordsLoading" @selection-change="s=>selectedWords=s" row-key="id" stripe>
+            <el-table v-if="!isMobile" :data="wordsData" v-loading="wordsLoading" @selection-change="s=>selectedWords=s" row-key="id" stripe>
               <el-table-column type="selection" width="50"></el-table-column>
               <el-table-column label="单词" min-width="140">
                 <template #default="{row}">
@@ -343,7 +373,7 @@
                 </template>
               </el-table-column>
               <el-table-column label="导入时间" width="160">
-                <template #default="{row}"><span class="text-secondary">{{ formatDate(row.created_at) }}</span></template>
+                <template #default="{row}"><span class="text-secondary">{{ formatDateOnly(row.created_at) }}</span></template>
               </el-table-column>
               <el-table-column label="操作" width="170" fixed="right">
                 <template #default="{row}">
@@ -353,6 +383,35 @@
                 </template>
               </el-table-column>
             </el-table>
+            <!-- 移动端：单词卡片列表（复用同一数据源） -->
+            <div v-else class="resp-card-list" v-loading="wordsLoading">
+              <div v-for="row in wordsData" :key="row.id" class="resp-card">
+                <div class="resp-card-head">
+                  <el-checkbox :model-value="isRowSelected(row)" @change="toggleCardSelect(row)"></el-checkbox>
+                  <span class="resp-card-word" :style="{ color: row._playing ? 'var(--el-color-primary)' : '' }" @click="playWordAudio(row)">{{ row.word }}</span>
+                  <el-tag v-if="row.healed_at" size="small" type="success" effect="plain" class="ml-xs">🌴 治愈</el-tag>
+                  <el-tag v-if="row.frequency_level" size="small" type="warning" class="ml-xs">{{ row.frequency_level }}</el-tag>
+                  <span style="flex:1"></span>
+                  <el-button link size="small" :icon="row._playing ? 'VideoPause' : 'VideoPlay'" :loading="row._audioLoading" @click="playWordAudio(row)"></el-button>
+                </div>
+                <div v-if="row.phonetic" class="resp-card-line"><span class="resp-card-label">音标</span><span>{{ row.phonetic }}</span></div>
+                <div class="resp-card-line">
+                  <span class="resp-card-label">词性</span>
+                  <el-input v-model="row.pos" size="small" placeholder="词性" style="width:100px" @change="()=>updateWord(row,'pos',row.pos)"></el-input>
+                </div>
+                <div class="resp-card-line">
+                  <span class="resp-card-label">释义</span>
+                  <el-input v-model="row.meaning_zh" size="small" placeholder="中文释义" @change="()=>updateWord(row,'meaning_zh',row.meaning_zh)"></el-input>
+                </div>
+                <div class="resp-card-line"><span class="resp-card-label">导入</span><span class="text-secondary">{{ formatDateOnly(row.created_at) }}</span></div>
+                <div class="resp-card-actions">
+                  <el-button v-if="!row.phonetic" link type="primary" size="small" :loading="row._loadingPhonetic" @click="fetchPhonetic(row)">补音标</el-button>
+                  <el-button v-if="!row.healed_at" link type="success" size="small" @click="toggleWordHealed(row)">治愈</el-button>
+                  <el-button v-else link type="warning" size="small" @click="toggleWordHealed(row)">撤销治愈</el-button>
+                  <el-button link type="danger" size="small" :icon="Delete" @click="deleteWord(row)">删除</el-button>
+                </div>
+              </div>
+            </div>
             <div class="pagination-wrapper">
               <el-pagination v-model:current-page="wordPage" v-model:page-size="wordPageSize" :total="wordTotal" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @size-change="loadWords" @current-change="loadWords"></el-pagination>
             </div>
@@ -436,7 +495,7 @@
                       <el-tag v-for="w in parseResult.words" :key="w" class="word-tag-item" effect="plain">{{ w }}</el-tag>
                     </div>
                   </div>
-                  <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="importing" :disabled="!parseResult.words.length" @click="doImport">
+                  <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="importing" :disabled="!parseResult.words.length || quotaExhausted('enrich')" @click="doImport">
                     确认上岛 ({{ parseResult.words.length }} 个顽固词)
                   </el-button>
 
@@ -470,7 +529,8 @@
               </template>
               <el-input v-model="articleText" type="textarea" :rows="12" placeholder="粘贴一篇英文文章，AI 将阅读并挑出值得学习的单词，例如：&#10;Kubernetes 1.29 introduced several improvements to sidecar containers. Native sidecars solve the long-standing problem of job completion..."></el-input>
               <div class="flex gap-sm mt-md" style="align-items:center;flex-wrap:wrap">
-                <el-button type="primary" :icon="MagicStick" :loading="extracting" @click="runExtract">AI 提词</el-button>
+                <el-button type="primary" :icon="MagicStick" :loading="extracting" :disabled="quotaExhausted('extract')" @click="runExtract">AI 提词</el-button>
+                <span v-if="quotaHint('extract')" class="ml-sm text-secondary" style="font-size:12px">{{ quotaHint('extract') }}</span>
                 <el-button :icon="RefreshLeft" @click="articleText=''; extractResult=null">清空</el-button>
                 <span class="text-secondary" style="font-size:13px;margin-left:8px">最多提取</span>
                 <el-input-number v-model="extractMax" :min="3" :max="30" size="small" style="width:100px"></el-input-number>
@@ -521,7 +581,7 @@
                   </div>
                 </div>
               </div>
-              <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="islandConfirming" :disabled="!selectedExtractCount" @click="confirmIsland">
+              <el-button type="primary" size="large" style="width:100%;margin-top:16px" :loading="islandConfirming" :disabled="!selectedExtractCount || quotaExhausted('extract')" @click="confirmIsland">
                 确认上岛 ({{ selectedExtractCount }} 个词，带着原文语境来过的地方)
               </el-button>
             </el-card>
@@ -544,7 +604,8 @@
             <el-form label-width="120px" label-position="right">
               <el-form-item label="目标单词">
                 <el-input v-model="singleForm.word" placeholder="输入或粘贴一个英文单词，如 submit / tender / address" style="width:360px" clearable @keyup.enter="handleSingleCompile"></el-input>
-                <el-button type="primary" class="ml-md" :icon="Aim" :loading="singleCompiling" @click="handleSingleCompile">深耕</el-button>
+                <el-button type="primary" class="ml-md" :icon="Aim" :loading="singleCompiling" :disabled="quotaExhausted('single')" @click="handleSingleCompile">深耕</el-button>
+                <span v-if="quotaHint('single')" class="ml-sm text-secondary" style="font-size:12px">{{ quotaHint('single') }}</span>
                 <el-button class="ml-md" :icon="Collection" @click="openWordPicker">从词库选择</el-button>
                 <span class="ml-md text-secondary" style="font-size:13px">记忆卡片生成 + 文生图约需 1-2 分钟，请耐心等待</span>
               </el-form-item>
@@ -629,7 +690,7 @@
           <el-card v-if="singleResult" shadow="never">
             <template #header>
               <div class="flex-between">
-                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？？？' : singleResult.word }}</span>
+                <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked, 'card-word-title': true }">{{ selfTestMasked ? '？？？' : singleResult.word }}</span>
                   <span v-if="singleResult.meaning_zh && !selfTestMasked" class="word-meaning">{{ singleResult.meaning_zh }}</span>
                   <el-tag v-if="singleResult.hook_type && !selfTestMasked" size="small" class="ml-sm" type="warning">{{ singleResult.hook_type }}</el-tag>
                 </span>
@@ -651,7 +712,7 @@
                 <!-- 窄屏字幕条：场景句压图，图句同框（桌面端隐藏） -->
                 <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en"
                      class="single-caption" :class="{ 'is-masked': selfTestMasked }">
-                  <div class="single-caption-en">{{ singleResult.scene_sentence.en }}</div>
+                  <div class="single-caption-en" v-html="highlightWord(singleResult.scene_sentence.en, singleResult.word)"></div>
                   <div class="single-caption-zh">{{ singleResult.scene_sentence.zh }}</div>
                 </div>
               </div>
@@ -675,7 +736,7 @@
                 <!-- ② 场景句中英（窄屏由图上字幕条替代，此处隐藏） -->
                 <div v-if="singleResult.scene_sentence && singleResult.scene_sentence.en" class="single-section single-scene-section">
                   <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句</div>
-                  <div class="single-sentence-en">{{ singleResult.scene_sentence.en }}</div>
+                  <div class="single-sentence-en" v-html="highlightWord(singleResult.scene_sentence.en, singleResult.word)"></div>
                   <div class="single-sentence-zh">{{ singleResult.scene_sentence.zh }}</div>
                 </div>
 
@@ -854,7 +915,8 @@
               </el-form-item>
               <el-divider></el-divider>
               <el-form-item>
-                <el-button type="primary" size="large" :icon="MagicStick" :loading="compiling" @click="handleCompile">开始 AI 编译</el-button>
+                <el-button type="primary" size="large" :icon="MagicStick" :loading="compiling" :disabled="quotaExhausted('batch')" @click="handleCompile">开始 AI 编译</el-button>
+                <span v-if="quotaHint('batch')" class="ml-md" style="font-size:13px;color:#c24a3a">{{ quotaHint('batch') }}</span>
                 <span class="ml-md text-secondary" style="font-size:13px">剧情生成 + 文生图通常需要 2-4 分钟（取决于画面数与模型），请耐心等待</span>
               </el-form-item>
             </el-form>
@@ -980,7 +1042,8 @@
               </el-form-item>
               <el-divider></el-divider>
               <el-form-item>
-                <el-button type="primary" size="large" :icon="MagicStick" :loading="videoCompiling" @click="handleVideoCompile">开始 AI 视频编译</el-button>
+                <el-button type="primary" size="large" :icon="MagicStick" :loading="videoCompiling" :disabled="quotaExhausted('video')" @click="handleVideoCompile">开始 AI 视频编译</el-button>
+                <span v-if="quotaHint('video')" class="ml-md" style="font-size:13px;color:#c24a3a">{{ quotaHint('video') }}</span>
                 <span class="ml-md text-secondary" style="font-size:13px">脚本生成 + 文生视频约需 1-5 分钟，请耐心等待</span>
               </el-form-item>
             </el-form>
@@ -1046,15 +1109,16 @@
               </div>
               <div class="flex gap-sm">
                 <el-tooltip content="扫描未分类单词，调用 AI 自动归入已有场景，并可能提出新场景建议" placement="top">
-                  <el-button type="success" :icon="MagicStick" :loading="sceneDetectLoading" @click="runSceneDetect(false)">
+                  <el-button type="success" :icon="MagicStick" :loading="sceneDetectLoading" :disabled="quotaExhausted('scene')" @click="runSceneDetect(false)">
                     增量检测
                   </el-button>
                 </el-tooltip>
                 <el-tooltip content="重新扫描所有单词（覆盖已有分类）" placement="top">
-                  <el-button :icon="Refresh" :loading="sceneDetectLoading" @click="runSceneDetect(true)">
+                  <el-button :icon="Refresh" :loading="sceneDetectLoading" :disabled="quotaExhausted('scene')" @click="runSceneDetect(true)">
                     全量重扫
                   </el-button>
                 </el-tooltip>
+                <span v-if="quotaHint('scene')" class="ml-sm text-secondary" style="font-size:12px;align-self:center">{{ quotaHint('scene') }}</span>
               </div>
             </div>
 
@@ -1233,7 +1297,8 @@
                       </el-option>
                     </el-select>
                   </template>
-                  <el-button type="primary" :icon="MagicStick" :loading="sceneCompileLoading" @click="compileScene">开始编译</el-button>
+                  <el-button type="primary" :icon="MagicStick" :loading="sceneCompileLoading" :disabled="quotaExhausted('scene')" @click="compileScene">开始编译</el-button>
+                  <span v-if="quotaHint('scene')" class="ml-sm" style="font-size:12px;color:#c24a3a">{{ quotaHint('scene') }}</span>
                 </div>
               </el-card>
 
@@ -1267,12 +1332,25 @@
                   <el-icon :size="32"><warning-filled /></el-icon>
                   <p>该场景下暂无单词</p>
                 </div>
-                <el-table v-else :data="sceneDetail.words" stripe size="small">
-                  <el-table-column prop="word" label="单词" min-width="120"></el-table-column>
-                  <el-table-column prop="pos" label="词性" width="80"></el-table-column>
-                  <el-table-column prop="meaning_zh" label="释义" min-width="200"></el-table-column>
-                  <el-table-column prop="assigned_at" label="归入时间" width="160"></el-table-column>
-                </el-table>
+                <template v-else>
+                  <el-table v-if="!isMobile" :data="sceneDetail.words" stripe size="small">
+                    <el-table-column prop="word" label="单词" min-width="120"></el-table-column>
+                    <el-table-column prop="pos" label="词性" width="80"></el-table-column>
+                    <el-table-column prop="meaning_zh" label="释义" min-width="200"></el-table-column>
+                    <el-table-column prop="assigned_at" label="归入时间" width="160"></el-table-column>
+                  </el-table>
+                  <div v-else class="resp-card-list">
+                    <div v-for="w in sceneDetail.words" :key="w.word" class="resp-card">
+                      <div class="resp-card-head">
+                        <span class="resp-card-word">{{ w.word }}</span>
+                        <el-tag v-if="w.pos" size="small" class="ml-xs">{{ w.pos }}</el-tag>
+                        <span style="flex:1"></span>
+                        <span class="text-secondary" style="font-size:12px">{{ w.assigned_at }}</span>
+                      </div>
+                      <div class="resp-card-line"><span class="resp-card-label">释义</span><span>{{ w.meaning_zh || '—' }}</span></div>
+                    </div>
+                  </div>
+                </template>
               </el-card>
 
               <!-- 词伙搭配 -->
@@ -1592,8 +1670,8 @@
           <el-card v-if="feedbackStats" shadow="never" class="mb-md">
             <div class="feedback-stats">
               <span class="feedback-stats-label">反馈满意度</span>
-              <el-tag type="success" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><ThumbsUp /></el-icon>{{ feedbackStats.up }} 有帮助</el-tag>
-              <el-tag type="danger" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><ThumbsDown /></el-icon>{{ feedbackStats.down }} 需改进</el-tag>
+              <el-tag type="success" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><component :is="ThumbsUp" /></el-icon>{{ feedbackStats.up }} 有帮助</el-tag>
+              <el-tag type="danger" effect="plain" class="ml-sm"><el-icon style="margin-right:4px"><component :is="ThumbsDown" /></el-icon>{{ feedbackStats.down }} 需改进</el-tag>
               <span class="feedback-satisfaction">满意度 {{ Math.round(feedbackStats.satisfaction * 100) }}%</span>
               <span class="text-secondary feedback-stats-meta">（{{ feedbackStats.rated }} 条已反馈）</span>
             </div>
@@ -1655,9 +1733,13 @@
             </div>
             <div class="flex gap-sm">
               <el-tooltip content="扫描单词库，调用AI自动识别考试高频熟词僻意并入库" placement="top">
-                <el-button type="success" :icon="MagicStick" :loading="autoDetectRunning" @click="runAutoDetect">
+                <el-button type="success" :icon="MagicStick" :loading="autoDetectRunning" :disabled="quotaExhausted('polysemy')" @click="runAutoDetect">
                   自动检测{{ candidateTotal>0 ? ` (${candidateTotal})` : '' }}
                 </el-button>
+              </el-tooltip>
+              <span v-if="quotaHint('polysemy')" class="ml-sm text-secondary" style="font-size:12px;align-self:center">{{ quotaHint('polysemy') }}</span>
+              <el-tooltip v-if="user && (user.role==='dev' || user.role==='admin')" content="删除已识别的测试残留词（inplicate/deprecated 等）并清理释义中的会话残留注释" placement="top">
+                <el-button :icon="Brush" :loading="cleaningData" @click="cleanSuspicious">一键清理疑似测试词</el-button>
               </el-tooltip>
             </div>
           </div>
@@ -1824,13 +1906,14 @@
             </div>
             <div class="flex gap-sm">
               <el-tooltip content="扫描词库中未判定的单词，调用AI识别可拆词并构建词根树" placement="top">
-                <el-button type="success" :icon="MagicStick" :loading="morphemeDetectRunning" @click="runMorphemeDetect(false)">
+                <el-button type="success" :icon="MagicStick" :loading="morphemeDetectRunning" :disabled="quotaExhausted('morpheme')" @click="runMorphemeDetect(false)">
                   增量检查{{ morphemeCandidateTotal>0 ? ` (${morphemeCandidateTotal})` : '' }}
                 </el-button>
               </el-tooltip>
               <el-tooltip content="全量重扫：重新判定全部单词（较耗时）" placement="top">
-                <el-button type="warning" plain :icon="Refresh" :loading="morphemeDetectRunning" @click="runMorphemeDetect(true)">全量重扫</el-button>
+                <el-button type="warning" plain :icon="Refresh" :loading="morphemeDetectRunning" :disabled="quotaExhausted('morpheme')" @click="runMorphemeDetect(true)">全量重扫</el-button>
               </el-tooltip>
+              <span v-if="quotaHint('morpheme')" class="ml-sm text-secondary" style="font-size:12px;align-self:center">{{ quotaHint('morpheme') }}</span>
             </div>
           </div>
           <!-- 手动选择拆解：与批量/视频编译同款「去单词库勾选」流程 -->
@@ -1851,7 +1934,7 @@
                 <el-tag v-for="w in morphemeSelWords" :key="w.id" closable @close="morphemeSelWords=morphemeSelWords.filter(x=>x.id!==w.id)" class="word-tag-item">{{ w.word }}</el-tag>
               </div>
               <div class="flex" style="margin-top:12px;align-items:center">
-                <el-button type="success" size="large" :icon="MagicStick" :loading="morphemeDetectRunning" @click="runMorphemeDetectSelected">
+                <el-button type="success" size="large" :icon="MagicStick" :loading="morphemeDetectRunning" :disabled="quotaExhausted('morpheme')" @click="runMorphemeDetectSelected">
                   开始 AI 拆解 ({{ morphemeSelWords.length }})
                 </el-button>
                 <span class="text-secondary" style="font-size:12px;margin-left:10px">最多 5 个 / 次，防止单批超时</span>
@@ -1970,33 +2053,50 @@
                 <el-icon><document-remove /></el-icon>
                 <p>暂无已拆词</p>
               </div>
-              <el-table v-else :data="morphemeWords" stripe row-key="id">
-                <el-table-column label="单词" min-width="140">
-                  <template #default="{row}"><span style="font-weight:600">{{ row.word }}</span></template>
-                </el-table-column>
-                <el-table-column label="结构" min-width="170">
-                  <template #default="{row}">
-                    <span v-if="row.structure_code" class="text-primary">{{ row.structure_code }}</span>
-                    <span v-else class="text-secondary">—</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="词族" min-width="200">
-                  <template #default="{row}">
-                    <el-tag v-for="f in row.word_family" :key="f" size="small" effect="plain" class="mr-xs">{{ f }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="频率" width="110">
-                  <template #default="{row}">
-                    <el-tag v-if="row.frequency_level" size="small" type="warning">{{ row.frequency_level }}</el-tag>
-                    <span v-else class="text-secondary">—</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="90" fixed="right">
-                  <template #default="{row}">
-                    <el-button link type="danger" :icon="Delete" @click="deleteMorphemeWord(row.word)">删除</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
+              <template v-else>
+                <el-table v-if="!isMobile" :data="morphemeWords" stripe row-key="id">
+                  <el-table-column label="单词" min-width="140">
+                    <template #default="{row}"><span style="font-weight:600">{{ row.word }}</span></template>
+                  </el-table-column>
+                  <el-table-column label="结构" min-width="170">
+                    <template #default="{row}">
+                      <span v-if="row.structure_code" class="text-primary">{{ row.structure_code }}</span>
+                      <span v-else class="text-secondary">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="词族" min-width="200">
+                    <template #default="{row}">
+                      <el-tag v-for="f in row.word_family" :key="f" size="small" effect="plain" class="mr-xs">{{ f }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="频率" width="110">
+                    <template #default="{row}">
+                      <el-tag v-if="row.frequency_level" size="small" type="warning">{{ row.frequency_level }}</el-tag>
+                      <span v-else class="text-secondary">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="90" fixed="right">
+                    <template #default="{row}">
+                      <el-button link type="danger" :icon="Delete" @click="deleteMorphemeWord(row.word)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div v-else class="resp-card-list">
+                  <div v-for="row in morphemeWords" :key="row.id" class="resp-card">
+                    <div class="resp-card-head">
+                      <span class="resp-card-word">{{ row.word }}</span>
+                      <el-tag v-if="row.frequency_level" size="small" type="warning" class="ml-xs">{{ row.frequency_level }}</el-tag>
+                      <span style="flex:1"></span>
+                      <el-button link type="danger" size="small" :icon="Delete" @click="deleteMorphemeWord(row.word)">删除</el-button>
+                    </div>
+                    <div v-if="row.structure_code" class="resp-card-line"><span class="resp-card-label">结构</span><span>{{ row.structure_code }}</span></div>
+                    <div v-if="row.word_family && row.word_family.length" class="resp-card-line">
+                      <span class="resp-card-label">词族</span>
+                      <span class="resp-card-tags"><el-tag v-for="f in row.word_family" :key="f" size="small" effect="plain">{{ f }}</el-tag></span>
+                    </div>
+                  </div>
+                </div>
+              </template>
               <div class="pagination-wrapper">
                 <el-pagination v-model:current-page="morphemeWordPage" :page-size="10" :total="morphemeWordTotal" layout="total, prev, pager, next" @current-change="loadMorphemeWords"></el-pagination>
               </div>
@@ -2033,7 +2133,7 @@
               <el-card shadow="never" class="mb-md">
                 <template #header>
                   <div class="flex-between">
-                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked }">{{ selfTestMasked ? '？？？' : resultSingleCard.word }}</span>
+                    <span class="card-title">记忆钩子卡片 · <span :class="{ 'word-masked': selfTestMasked, 'card-word-title': true }">{{ selfTestMasked ? '？？？' : resultSingleCard.word }}</span>
                       <span v-if="resultSingleCard.meaning_zh && !selfTestMasked" class="word-meaning">{{ resultSingleCard.meaning_zh }}</span>
                       <el-tag v-if="resultSingleCard.hook_type && !selfTestMasked" size="small" class="ml-sm" type="warning">{{ resultSingleCard.hook_type }}</el-tag>
                     </span>
@@ -2053,7 +2153,7 @@
                          class="mood-sticker" :class="moodClassOf(resultSingleCard.hook_type)">{{ moodTextOf(resultSingleCard.hook_type, resultSingleCard.scene_sentence?.mood) }}</div>
                     <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en"
                          class="single-caption" :class="{ 'is-masked': selfTestMasked }">
-                      <div class="single-caption-en">{{ resultSingleCard.scene_sentence.en }}</div>
+                      <div class="single-caption-en" v-html="highlightWord(resultSingleCard.scene_sentence.en, resultSingleCard.word)"></div>
                       <div class="single-caption-zh">{{ resultSingleCard.scene_sentence.zh }}</div>
                     </div>
                   </div>
@@ -2077,7 +2177,7 @@
                     <!-- ② 场景句中英（窄屏由图上字幕条替代，此处隐藏） -->
                     <div v-if="resultSingleCard.scene_sentence && resultSingleCard.scene_sentence.en" class="single-section single-scene-section">
                       <div class="single-section-title"><el-icon><chat-dot-round /></el-icon> 荒诞场景句</div>
-                      <div class="single-sentence-en">{{ resultSingleCard.scene_sentence.en }}</div>
+                      <div class="single-sentence-en" v-html="highlightWord(resultSingleCard.scene_sentence.en, resultSingleCard.word)"></div>
                       <div class="single-sentence-zh">{{ resultSingleCard.scene_sentence.zh }}</div>
                     </div>
 
@@ -2384,7 +2484,7 @@
                 <span class="text-secondary" style="font-size:12px">用量：LLM/TTS 为预估 tokens，文生图=张数，文生视频=秒数</span>
               </div>
             </template>
-            <el-table :data="modelSummary" size="small" stripe>
+            <el-table v-if="!isMobile" :data="modelSummary" size="small" stripe>
               <el-table-column label="类别" width="90">
                 <template #default="{ row }">
                   <el-tag size="small" :type="usageTag(row.category)">{{ usageLabel(row.category) }}</el-tag>
@@ -2407,6 +2507,71 @@
                 </template>
               </el-table-column>
             </el-table>
+            <div v-else class="resp-card-list">
+              <div v-for="row in modelSummary" :key="row.model" class="resp-card">
+                <div class="resp-card-head">
+                  <el-tag size="small" :type="usageTag(row.category)">{{ usageLabel(row.category) }}</el-tag>
+                  <span style="flex:1"></span>
+                  <span class="usage-tokens-cell" :style="{color: usageColor(row.category)}">{{ fmtUsage(row) }}</span>
+                </div>
+                <div class="resp-card-line resp-card-line-stacked"><span class="resp-card-word" style="font-size:13px">{{ row.model }}</span></div>
+                <div class="usage-bar-cell" style="padding:0 12px 12px">
+                  <div class="usage-bar-track">
+                    <div class="usage-bar-fill" :style="{width: modelBarWidth(row), background: usageColor(row.category)}"></div>
+                  </div>
+                  <span class="usage-tokens-cell" style="color:var(--text-secondary)">{{ row.cnt }} 次</span>
+                </div>
+              </div>
+            </div>
+          </el-card>
+
+          <!-- 用户用量排行榜（仅开发者/管理员：全站用户模型调用量排名） -->
+          <el-card v-if="isStaff" shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><Trophy /></el-icon>
+                <span style="font-weight:600">用户用量排行榜</span>
+                <span class="text-secondary" style="font-size:12px">全站累计模型调用量 · 按调用次数排名</span>
+              </div>
+            </template>
+            <el-table v-if="!isMobile" :data="usageRank" size="small" stripe>
+              <el-table-column type="index" label="#" width="56" align="center"></el-table-column>
+              <el-table-column label="用户" min-width="150">
+                <template #default="{ row }">
+                  <span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>
+                  <span class="ml-xs dash-user-name">{{ row.username }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="总调用" width="90" align="right">
+                <template #default="{ row }"><span style="font-weight:700">{{ row.calls }}</span></template>
+              </el-table-column>
+              <el-table-column label="LLM" width="70" align="right"><template #default="{ row }"><span class="text-secondary">{{ rankCalls(row,'llm') || '—' }}</span></template></el-table-column>
+              <el-table-column label="TTS" width="70" align="right"><template #default="{ row }"><span class="text-secondary">{{ rankCalls(row,'tts') || '—' }}</span></template></el-table-column>
+              <el-table-column label="文生图" width="80" align="right"><template #default="{ row }"><span class="text-secondary">{{ rankCalls(row,'image') || '—' }}</span></template></el-table-column>
+              <el-table-column label="文生视频" width="80" align="right"><template #default="{ row }"><span class="text-secondary">{{ rankCalls(row,'video') || '—' }}</span></template></el-table-column>
+              <el-table-column label="最近调用" min-width="200">
+                <template #default="{ row }">
+                  <span class="text-secondary" style="font-size:12px">{{ row.last_detail || '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="最近活跃" width="150">
+                <template #default="{ row }"><span class="text-secondary">{{ row.last_active ? formatDate(row.last_active) : '—' }}</span></template>
+              </el-table-column>
+            </el-table>
+            <div v-else class="resp-card-list">
+              <div v-for="(row, i) in usageRank" :key="row.uid" class="resp-card">
+                <div class="resp-card-head">
+                  <span class="rank-num" :class="{'is-top': i<3}">{{ i+1 }}</span>
+                  <span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>
+                  <span class="resp-card-word">{{ row.username }}</span>
+                  <span style="flex:1"></span>
+                  <span style="font-weight:700">{{ row.calls }} 次</span>
+                </div>
+                <div class="resp-card-line"><span class="resp-card-label">分类调用</span><span>LLM {{ rankCalls(row,'llm')||0 }} · TTS {{ rankCalls(row,'tts')||0 }} · 图 {{ rankCalls(row,'image')||0 }} · 视频 {{ rankCalls(row,'video')||0 }}</span></div>
+                <div v-if="row.last_detail" class="resp-card-line"><span class="resp-card-label">最近调用</span><span class="text-secondary" style="font-size:12px">{{ row.last_detail }}</span></div>
+                <div class="resp-card-line"><span class="resp-card-label">最近活跃</span><span class="text-secondary">{{ row.last_active ? formatDate(row.last_active) : '—' }}</span></div>
+              </div>
+            </div>
           </el-card>
 
           <!-- 最近模型调用（默认只显示最近 5 条，点击展开显示全部） -->
@@ -2415,18 +2580,27 @@
               <div class="flex align-center gap-sm">
                 <el-icon><Clock /></el-icon>
                 <span style="font-weight:600">最近模型调用</span>
-                <span class="text-secondary" style="font-size:12px">说明标注该次调用来自哪个编译功能</span>
+                <span class="text-secondary" style="font-size:12px">说明标注该次调用来自哪个编译功能<span v-if="isStaff"> · 已标调用用户</span></span>
                 <span style="flex:1"></span>
                 <el-button v-if="recentCalls.length > 5" link type="primary" size="small" @click="recentCallsExpanded = !recentCallsExpanded">
                   {{ recentCallsExpanded ? '收起全部（显示最近 5 条）' : `展开全部（共 ${recentCalls.length} 条）` }}
                 </el-button>
               </div>
             </template>
-            <el-table :data="recentCallsVisible" size="small" stripe>
+            <el-table v-if="!isMobile" :data="recentCallsVisible" size="small" stripe>
               <el-table-column prop="created_at" label="时间" width="160"></el-table-column>
               <el-table-column label="类别" width="90">
                 <template #default="{ row }">
                   <el-tag size="small" :type="usageTag(row.category)">{{ usageLabel(row.category) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="用户" v-if="isStaff" width="150">
+                <template #default="{ row }">
+                  <span v-if="row.username">
+                    <span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>
+                    <span class="ml-xs">{{ row.username }}</span>
+                  </span>
+                  <span v-else class="text-tertiary">—</span>
                 </template>
               </el-table-column>
               <el-table-column prop="model" label="模型" min-width="250"></el-table-column>
@@ -2441,6 +2615,22 @@
                 </template>
               </el-table-column>
             </el-table>
+            <div v-else class="resp-card-list">
+              <div v-for="(row, i) in recentCallsVisible" :key="row.key || row.id || i" class="resp-card">
+                <div class="resp-card-head">
+                  <el-tag size="small" :type="usageTag(row.category)">{{ usageLabel(row.category) }}</el-tag>
+                  <span class="resp-card-word" style="font-size:13px;flex:1;margin-left:8px">{{ row.model }}</span>
+                  <span class="usage-tokens-cell" :style="{color: usageColor(row.category)}">{{ fmtUsage(row) }}</span>
+                </div>
+                <div class="resp-card-line"><span class="resp-card-label">时间</span><span class="text-secondary">{{ row.created_at }}</span></div>
+                <div v-if="isStaff" class="resp-card-line">
+                  <span class="resp-card-label">用户</span>
+                  <span v-if="row.username"><span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>{{ row.username }}</span>
+                  <span v-else class="text-tertiary">—</span>
+                </div>
+                <div v-if="usageDetail(row)" class="resp-card-line"><span class="resp-card-label">说明</span><span>{{ usageDetail(row) }}</span></div>
+              </div>
+            </div>
           </el-card>
         </div>
 
@@ -2461,7 +2651,7 @@
                 <span style="font-weight:600">可用 LLM 模型（{{ llmModels.length }} 个候选）</span>
               </div>
             </template>
-            <el-table :data="llmModels" size="small" stripe>
+            <el-table v-if="!isMobile" :data="llmModels" size="small" stripe>
               <el-table-column label="模型" min-width="240">
                 <template #default="{ row }">
                   <div class="flex align-center gap-sm">
@@ -2477,6 +2667,19 @@
               <el-table-column prop="price" label="价格（每百万token）" min-width="190"></el-table-column>
               <el-table-column prop="note" label="说明" min-width="280"></el-table-column>
             </el-table>
+            <div v-else class="resp-card-list">
+              <div v-for="row in llmModels" :key="row.value" class="resp-card">
+                <div class="resp-card-head">
+                  <span class="resp-card-word">{{ row.label }}</span>
+                  <el-tag v-if="row.recommended" type="success" size="small" effect="plain" class="ml-xs">推荐</el-tag>
+                  <el-tag v-if="!row.configured" type="warning" size="small" effect="plain" class="ml-xs">未配置 Key</el-tag>
+                  <span style="flex:1"></span>
+                  <el-tag size="small">{{ row.tier }}</el-tag>
+                </div>
+                <div class="resp-card-line"><span class="resp-card-label">价格</span><span>{{ row.price }}</span></div>
+                <div v-if="row.note" class="resp-card-line resp-card-note">{{ row.note }}</div>
+              </div>
+            </div>
           </el-card>
 
           <!-- LLM 调用点模型选择 -->
@@ -2488,7 +2691,7 @@
                 <span class="text-secondary" style="font-size:12px">保存后立即对后续生成生效</span>
               </div>
             </template>
-            <el-table :data="llmRouteList" size="small" stripe>
+            <el-table v-if="!isMobile" :data="llmRouteList" size="small" stripe>
               <el-table-column label="调用点" min-width="130">
                 <template #default="{ row }"><span style="font-weight:600">{{ row.label }}</span></template>
               </el-table-column>
@@ -2504,6 +2707,24 @@
                 </template>
               </el-table-column>
             </el-table>
+            <div v-else class="resp-card-list">
+              <div v-for="row in llmRouteList" :key="row.key" class="resp-card">
+                <div class="resp-card-head">
+                  <span class="resp-card-word">{{ row.label }}</span>
+                  <span style="flex:1"></span>
+                </div>
+                <div v-if="row.desc" class="resp-card-line"><span class="resp-card-label">用途</span><span>{{ row.desc }}</span></div>
+                <div class="resp-card-line">
+                  <span class="resp-card-label">模型</span>
+                  <el-select v-model="llmRouteForm[row.key]" placeholder="选择模型" size="small" style="width:100%;max-width:320px">
+                    <el-option v-for="m in llmModels" :key="m.value" :label="m.label" :value="m.value">
+                      <span>{{ m.label }}</span>
+                      <span class="text-secondary" style="float:right;font-size:12px">{{ m.tier }}</span>
+                    </el-option>
+                  </el-select>
+                </div>
+              </div>
+            </div>
             <div class="flex gap-sm mt-md">
               <el-button type="primary" :loading="llmSaving" @click="saveLlmSettings">保存设置</el-button>
               <el-button @click="loadLlmSettings">重置为当前值</el-button>
@@ -2552,6 +2773,316 @@
             </p>
           </el-card>
         </div>
+
+        <!-- 反馈看板（仅开发者/管理员可见：全站运维视图） -->
+        <div v-if="currentPage==='dashboard'" class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 class="page-title"><span class="title-accent"></span>反馈看板</h2>
+              <p class="page-subtitle">全站运维视图 · 所有用户的生成 / 反馈 / 活跃度一屏纵览</p>
+            </div>
+            <div class="flex gap-sm">
+              <el-radio-group v-model="dashDays" size="small" @change="loadDashboard">
+                <el-radio-button :value="7">近 7 天</el-radio-button>
+                <el-radio-button :value="30">近 30 天</el-radio-button>
+                <el-radio-button :value="90">近 90 天</el-radio-button>
+              </el-radio-group>
+              <el-button :icon="Refresh" :loading="dashLoading" @click="loadDashboard">刷新</el-button>
+            </div>
+          </div>
+
+          <div v-loading="dashLoading">
+            <template v-if="dashData">
+              <!-- 核心统计卡 -->
+              <div class="dash-grid">
+                <div class="dash-card">
+                  <span class="dash-card-label">用户总数</span>
+                  <span class="dash-card-num">{{ dashStats.users_total }}</span>
+                  <span class="dash-card-sub">注册账号（含游客）</span>
+                </div>
+                <div class="dash-card">
+                  <span class="dash-card-label">今日活跃</span>
+                  <span class="dash-card-num is-accent">{{ dashStats.users_active_1d }}</span>
+                  <span class="dash-card-sub">近 7 天 {{ dashStats.users_active_7d }} 人</span>
+                </div>
+                <div class="dash-card">
+                  <span class="dash-card-label">累计生成</span>
+                  <span class="dash-card-num">{{ dashStats.generations_total }}</span>
+                  <span class="dash-card-sub">剧情连环画 / 视频 / 单点卡片</span>
+                </div>
+                <div class="dash-card">
+                  <span class="dash-card-label">反馈总数</span>
+                  <span class="dash-card-num">{{ dashStats.feedback.total }}</span>
+                  <span class="dash-card-sub">👍 {{ dashStats.feedback.up }} · 👎 {{ dashStats.feedback.down }}</span>
+                </div>
+                <div class="dash-card">
+                  <span class="dash-card-label">满意度</span>
+                  <span class="dash-card-num is-gold">{{ dashFbPct }}%</span>
+                  <span class="dash-card-sub">「有帮助」占已反馈比例</span>
+                </div>
+                <div class="dash-card">
+                  <span class="dash-card-label">音视频资产</span>
+                  <span class="dash-card-num is-dim">{{ dashStats.audios_total + dashStats.videos_total }}</span>
+                  <span class="dash-card-sub">音频 {{ dashStats.audios_total }} · 视频 {{ dashStats.videos_total }}</span>
+                </div>
+              </div>
+
+              <!-- 活跃度趋势（近 N 天：生成 / 反馈 / 活跃用户） -->
+              <el-card shadow="never" class="mb-md">
+                <template #header>
+                  <div class="flex align-center gap-sm">
+                    <el-icon><TrendCharts /></el-icon>
+                    <span style="font-weight:600">活跃度趋势（近 {{ dashData.days }} 天）</span>
+                    <span class="text-secondary" style="font-size:12px">折线 = 当日生成/反馈量，悬停查看逐日数据</span>
+                    <span style="flex:1"></span>
+                    <span class="dash-legend"><i class="dash-dot is-gen"></i>生成</span>
+                    <span class="dash-legend"><i class="dash-dot is-fb"></i>反馈</span>
+                    <span class="dash-legend"><i class="dash-dot is-act"></i>活跃用户</span>
+                  </div>
+                </template>
+                <div class="dash-chart-wrap">
+                  <svg v-if="dashActivity.length" viewBox="0 0 760 240" preserveAspectRatio="xMidYMid meet" role="img" aria-label="活跃度趋势图">
+                    <defs>
+                      <linearGradient id="dashGradGen" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" class="dash-grad-from"></stop>
+                        <stop offset="100%" class="dash-grad-to"></stop>
+                      </linearGradient>
+                    </defs>
+                    <!-- 悬停提示（逐日数据） -->
+                    <g v-for="(a,i) in dashActivity" :key="a.day">
+                      <title>{{ a.day }} 生成 {{ a.generations }} · 反馈 {{ a.feedback }} · 活跃 {{ a.active_users }} 人</title>
+                    </g>
+                    <!-- 生成量：渐变面积 + 折线 -->
+                    <path :d="dashAreaPath" class="dash-area-gen"></path>
+                    <polyline :points="dashSeriesPoints('generations')" class="dash-line-gen"></polyline>
+                    <!-- 反馈量 / 活跃用户：折线 -->
+                    <polyline :points="dashSeriesPoints('feedback')" class="dash-line-fb"></polyline>
+                    <polyline :points="dashSeriesPoints('active_users')" class="dash-line-act"></polyline>
+                    <!-- 数据点 -->
+                    <g v-for="(p,i) in dashLinePoints('generations')" :key="'g'+i"><title>{{ p.v }} 条生成</title><circle :cx="p.x" :cy="p.y" r="3.4" class="dash-pt is-gen"></circle></g>
+                    <g v-for="(p,i) in dashLinePoints('feedback')" :key="'f'+i"><title>{{ p.v }} 条反馈</title><circle :cx="p.x" :cy="p.y" r="3.4" class="dash-pt is-fb"></circle></g>
+                    <g v-for="(p,i) in dashLinePoints('active_users')" :key="'a'+i"><title>{{ p.v }} 位活跃用户</title><circle :cx="p.x" :cy="p.y" r="3" class="dash-pt is-act"></circle></g>
+                    <!-- 数值标注（稀疏数据时直接标在点上） -->
+                    <text v-for="(p,i) in dashAnnot('generations')" :key="'ga'+i" :x="p.x" :y="p.y - 9" text-anchor="middle" class="dash-val-label">{{ p.v }}</text>
+                    <text v-for="(p,i) in dashAnnot('feedback')" :key="'fa'+i" :x="p.x" :y="p.y - 9" text-anchor="middle" class="dash-val-label is-fb">{{ p.v }}</text>
+                    <!-- 基线 + 日期刻度（间隔采样） -->
+                    <line x1="8" y1="206" x2="752" y2="206" class="dash-baseline"></line>
+                    <g v-for="(a,i) in dashActivity" :key="'x'+a.day">
+                      <text v-if="i % dashLabelStep === 0" :x="dashBarX(i)" y="228" text-anchor="middle" class="dash-xlabel">{{ a.day.slice(5) }}</text>
+                    </g>
+                    <text v-if="dashMaxVal()>1" x="752" y="12" text-anchor="end" class="dash-maxlabel">峰值 {{ dashMaxVal() }}</text>
+                  </svg>
+                  <div v-else class="empty-state">
+                    <el-icon><data-line /></el-icon>
+                    <p>所选时间范围内暂无数据</p>
+                  </div>
+                </div>
+              </el-card>
+
+              <!-- 生成类型分布 + 用户概况 -->
+              <el-row :gutter="12" class="mb-md">
+                <el-col :xs="24" :sm="24" :md="9">
+                  <el-card shadow="never" class="dash-type-card">
+                    <template #header>
+                      <div class="flex align-center gap-sm">
+                        <el-icon><PieChart /></el-icon>
+                        <span style="font-weight:600">生成类型分布</span>
+                      </div>
+                    </template>
+                    <div v-for="t in (dashData.type_dist||[])" :key="t.type" class="dash-type-row">
+                      <div class="dash-type-head">
+                        <span>{{ t.label }}</span>
+                        <span class="usage-tokens-cell" style="color:var(--text-secondary)">{{ t.cnt }} 条</span>
+                      </div>
+                      <div class="usage-bar-track">
+                        <div class="usage-bar-fill" :style="{width: dashTypeW(t.cnt), background: dashTypeColor(t.type)}"></div>
+                      </div>
+                    </div>
+                    <div v-if="!(dashData.type_dist||[]).length" class="empty-state" style="padding:16px 0">
+                      <el-icon><document-remove /></el-icon>
+                      <p>暂无生成记录</p>
+                    </div>
+                  </el-card>
+                </el-col>
+                <el-col :xs="24" :sm="24" :md="15">
+                  <el-card shadow="never">
+                    <template #header>
+                      <div class="flex align-center gap-sm">
+                        <el-icon><User /></el-icon>
+                        <span style="font-weight:600">用户概况（按生成量排序）</span>
+                        <span class="text-secondary" style="font-size:12px" v-if="dashUserRows.length>5">已收起，点「展开全部」查看完整名单</span>
+                        <span style="flex:1"></span>
+                        <el-button v-if="dashUserRows.length>5" link type="primary" size="small" @click="dashUserExpanded = !dashUserExpanded">
+                          {{ dashUserExpanded ? '收起' : `展开全部（共 ${dashUserRows.length} 人）` }}
+                        </el-button>
+                        <el-input v-model="dashUserSearch" placeholder="搜索用户名" :prefix-icon="Search" clearable size="small" style="width:180px"></el-input>
+                      </div>
+                    </template>
+                    <el-table v-if="!isMobile" :data="dashUserRowsVisible" size="small" stripe>
+                      <el-table-column label="用户" min-width="140">
+                        <template #default="{ row }">
+                          <span class="dash-user-name"><span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>{{ row.username }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="生成" width="70" align="right"><template #default="{ row }">{{ row.generations }}</template></el-table-column>
+                      <el-table-column label="音频/视频" width="110" align="right"><template #default="{ row }">{{ row.audios }} / {{ row.videos }}</template></el-table-column>
+                      <el-table-column label="👍" width="60" align="right"><template #default="{ row }"><span class="dash-up">{{ row.feedback_up }}</span></template></el-table-column>
+                      <el-table-column label="👎" width="60" align="right"><template #default="{ row }"><span class="dash-down">{{ row.feedback_down }}</span></template></el-table-column>
+                      <el-table-column label="满意度" width="90" align="right">
+                        <template #default="{ row }">
+                          <span v-if="row.feedback_rated>0" class="dash-sat" :class="{ 'is-low': row.satisfaction < 0.5 }">{{ Math.round(row.satisfaction*100) }}%</span>
+                          <span v-else class="text-tertiary">—</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="最近活跃" min-width="140">
+                        <template #default="{ row }">
+                          <span class="text-secondary">{{ row.last_active ? formatDate(row.last_active) : '暂无' }}</span>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                    <div v-else class="resp-card-list">
+                      <div v-for="row in dashUserRowsVisible" :key="row.uid" class="resp-card">
+                        <div class="resp-card-head">
+                          <span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>
+                          <span class="resp-card-word">{{ row.username }}</span>
+                          <span style="flex:1"></span>
+                          <span class="dash-sat" :class="{ 'is-low': row.satisfaction < 0.5 }">{{ row.feedback_rated>0 ? Math.round(row.satisfaction*100)+'%' : '—' }}</span>
+                        </div>
+                        <div class="resp-card-line"><span class="resp-card-label">生成/音频/视频</span><span>{{ row.generations }} / {{ row.audios }} / {{ row.videos }}</span></div>
+                        <div class="resp-card-line">
+                          <span class="resp-card-label">反馈</span>
+                          <span><span class="dash-up">👍 {{ row.feedback_up }}</span> <span class="dash-down ml-sm">👎 {{ row.feedback_down }}</span></span>
+                        </div>
+                        <div class="resp-card-line"><span class="resp-card-label">最近活跃</span><span class="text-secondary">{{ row.last_active ? formatDate(row.last_active) : '暂无' }}</span></div>
+                      </div>
+                    </div>
+                  </el-card>
+                </el-col>
+              </el-row>
+
+              <!-- 最近反馈明细 -->
+              <el-card shadow="never" class="mb-md">
+                <template #header>
+                  <div class="flex align-center gap-sm">
+                    <el-icon><ChatDotSquare /></el-icon>
+                    <span style="font-weight:600">最近反馈明细</span>
+                    <span class="text-secondary" style="font-size:12px">谁对哪条生成结果点了 👍 / 👎</span>
+                  </div>
+                </template>
+                <div v-if="(dashData.recent_feedback||[]).length===0" class="empty-state">
+                  <el-icon><chat-dot-round /></el-icon>
+                  <p>还没有用户反馈</p>
+                </div>
+                <div v-else class="dash-fb-list">
+                  <div v-for="(f,i) in dashData.recent_feedback" :key="i" class="dash-fb-item">
+                    <span class="dash-fb-icon" :class="f.rating==='up'?'is-up':'is-down'">
+                      <el-icon><component :is="f.rating==='up'?ThumbsUp:ThumbsDown" /></el-icon>
+                    </span>
+                    <div class="dash-fb-body">
+                      <div class="dash-fb-title">
+                        <span class="dash-fb-user"><span class="role-badge" :class="'role-'+f.role">{{ dashRoleLabel(f.role) }}</span>{{ f.username }}</span>
+                        <span class="dash-fb-text">反馈了「{{ f.title || '未命名记录' }}」</span>
+                      </div>
+                      <div v-if="f.comment" class="dash-fb-comment">
+                        <el-icon style="font-size: 13px; margin-right: 4px;"><ChatDotSquare /></el-icon>
+                        <span>{{ f.comment }}</span>
+                      </div>
+                      <div class="dash-fb-meta">
+                        <el-tag size="small" :type="generationTypeTag(f.generation_type)" effect="plain">{{ generationTypeLabel(f.generation_type) }}</el-tag>
+                        <span class="text-secondary">{{ formatDate(f.created_at) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </el-card>
+
+              <!-- 全站历史记录 -->
+              <el-card shadow="never">
+                <template #header>
+                  <div class="flex align-center gap-sm" style="width:100%">
+                    <el-icon><Document /></el-icon>
+                    <span style="font-weight:600">全站历史记录</span>
+                    <span class="text-secondary" style="font-size:12px">所有用户的生成记录（共 {{ dashHistTotal }} 条）<span v-if="dashHistTotal>5 && !dashHistExpanded"> · 已收起</span></span>
+                    <span style="flex:1"></span>
+                    <el-button v-if="dashHistTotal>5" link type="primary" size="small" @click="dashHistExpanded = !dashHistExpanded">
+                      {{ dashHistExpanded ? '收起' : `展开全部（共 ${dashHistTotal} 条）` }}
+                    </el-button>
+                    <el-input v-model="dashHistQ" placeholder="搜索标题 / 单词..." :prefix-icon="Search" clearable size="small" style="width:200px" @keyup.enter="dashHistPage=1; loadDashHist()" @clear="dashHistPage=1; loadDashHist()"></el-input>
+                    <el-select v-model="dashHistRating" size="small" style="width:130px" @change="dashHistPage=1; loadDashHist()">
+                      <el-option label="全部反馈状态" value=""></el-option>
+                      <el-option label="有帮助 👍" value="up"></el-option>
+                      <el-option label="需改进 👎" value="down"></el-option>
+                      <el-option label="未反馈" value="none"></el-option>
+                    </el-select>
+                    <el-select v-model="dashHistRole" size="small" style="width:120px" @change="dashHistPage=1; loadDashHist()">
+                      <el-option label="全部角色" value=""></el-option>
+                      <el-option label="游客" value="guest"></el-option>
+                      <el-option label="管理员" value="admin"></el-option>
+                      <el-option label="开发者" value="dev"></el-option>
+                    </el-select>
+                    <el-button :icon="Refresh" size="small" @click="dashHistPage=1; loadDashHist()">刷新</el-button>
+                  </div>
+                </template>
+                <el-table v-if="!isMobile" :data="dashHistVisible" size="small" stripe v-loading="dashHistLoading">
+                  <el-table-column label="标题 / 类型" min-width="240">
+                    <template #default="{ row }">
+                      <div class="dash-hist-title">
+                        <span class="dash-hist-name">{{ row.story_title || 'Untitled' }}</span>
+                        <span class="dash-hist-type">
+                          <el-tag size="small" :type="generationTypeTag(row.generation_type)" effect="plain">{{ generationTypeLabel(row.generation_type) }}</el-tag>
+                          <el-tag v-if="row.style==='absurd'" size="small" type="warning" effect="plain">荒诞三连弹</el-tag>
+                          <el-tag v-else-if="row.style==='conflict'" size="small" type="danger" effect="plain">冲突连环</el-tag>
+                          <el-tag v-if="row.is_favorited" size="small" type="warning" :icon="StarFilled">已收藏</el-tag>
+                        </span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="用户" min-width="150">
+                    <template #default="{ row }">
+                      <span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>
+                      <span class="ml-xs">{{ row.username }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="反馈" width="110">
+                    <template #default="{ row }">
+                      <template v-if="row.has_feedback">
+                        <el-tag v-if="row.fb_up>0" size="small" type="success" effect="plain"><el-icon style="margin-right:2px"><component :is="ThumbsUp" /></el-icon>{{ row.fb_up }}</el-tag>
+                        <el-tag v-if="row.fb_down>0" size="small" type="danger" effect="plain" class="ml-xs"><el-icon style="margin-right:2px"><component :is="ThumbsDown" /></el-icon>{{ row.fb_down }}</el-tag>
+                      </template>
+                      <span v-else class="text-tertiary">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="画面" width="70" align="right"><template #default="{ row }">{{ row.panel_count }}</template></el-table-column>
+                  <el-table-column prop="created_at" label="生成时间" min-width="150"></el-table-column>
+                </el-table>
+                <div v-else class="resp-card-list" v-loading="dashHistLoading">
+                  <div v-for="row in dashHistVisible" :key="row.id" class="resp-card">
+                    <div class="resp-card-head">
+                      <span class="dash-hist-name" style="flex:1">{{ row.story_title || 'Untitled' }}</span>
+                      <el-tag size="small" :type="generationTypeTag(row.generation_type)" effect="plain">{{ generationTypeLabel(row.generation_type) }}</el-tag>
+                    </div>
+                    <div class="resp-card-line">
+                      <span class="resp-card-label">用户</span>
+                      <span><span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>{{ row.username }}</span>
+                    </div>
+                    <div class="resp-card-line">
+                      <span class="resp-card-label">反馈</span>
+                      <span v-if="row.has_feedback">
+                        <el-tag v-if="row.fb_up>0" size="small" type="success" effect="plain">👍 {{ row.fb_up }}</el-tag>
+                        <el-tag v-if="row.fb_down>0" size="small" type="danger" effect="plain" class="ml-xs">👎 {{ row.fb_down }}</el-tag>
+                      </span>
+                      <span v-else class="text-tertiary">—</span>
+                    </div>
+                    <div class="resp-card-line"><span class="resp-card-label">时间</span><span class="text-secondary">{{ row.created_at }}</span></div>
+                  </div>
+                </div>
+                <div v-if="dashHistExpanded && dashHistTotal>20" class="pagination-wrapper">
+                  <el-pagination v-model:current-page="dashHistPage" :page-size="20" :total="dashHistTotal" layout="total, prev, pager, next" @current-change="loadDashHist"></el-pagination>
+                </div>
+              </el-card>
+            </template>
+          </div>
+        </div>
       </main>
     </div>
   </div>
@@ -2587,9 +3118,241 @@
 
     <template #footer>
       <el-button @click="showAddWordDialog=false">取消</el-button>
-      <el-button type="primary" :loading="addWordLoading" @click="submitAddWord">添加</el-button>
+      <el-button type="primary" :loading="addWordLoading" :disabled="quotaExhausted('enrich')" @click="submitAddWord">添加</el-button>
     </template>
   </el-dialog>
+
+  <!-- 反馈改进意见对话框 -->
+  <el-dialog v-model="feedbackDialogVisible" title="告诉我们哪里需要改进" width="500px">
+    <div style="margin-bottom: 16px; color: var(--text-secondary); font-size: 14px;">
+      您的反馈将帮助我们改进生成质量，让内容更贴合您的学习需求。
+    </div>
+    <el-form>
+      <el-form-item label="改进意见">
+        <el-input
+          v-model="feedbackComment"
+          type="textarea"
+          :rows="5"
+          placeholder="例如：场景描述不够生动、例句与单词关联不强、图片风格不符合预期等..."
+          maxlength="500"
+          show-word-limit
+        ></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="feedbackDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="submitFeedbackWithComment">提交反馈</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- ======================== 词小屿 · 全局智能助手 ======================== -->
+  <div class="cxy-root" v-if="user">
+    <!-- 对话面板 -->
+    <transition name="cxy-panel">
+      <section v-if="assistant.state.open" class="cxy-panel"
+               :class="{'cxy-panel-mobile': isMobile, 'cxy-panel-max': assistant.state.maximized && !isMobile}"
+               :style="(!isMobile && !assistant.state.maximized) ? assistant.panelStyle() : null"
+               aria-label="词小屿对话面板">
+        <!-- 面板头部 -->
+        <header class="cxy-head">
+          <div class="cxy-head-avatar"><img src="/static/images/logo.png" alt="词小屿"></div>
+          <div class="cxy-head-info">
+            <div class="cxy-head-name">词小屿 <span class="cxy-head-tag">智能助手</span></div>
+            <div class="cxy-head-sub">{{ assistant.state.configured ? '向导 · 查词 · 复习 · 加词' : 'LLM 未配置，仅可用常见问答' }}</div>
+          </div>
+          <div class="cxy-head-actions">
+            <button class="cxy-hbtn" :class="{'cxy-hbtn-on': assistant.state.soundOn}"
+                    :title="assistant.state.soundOn ? '关闭打字音效' : '开启打字音效'" @click="assistant.toggleSound()">
+              <svg v-if="assistant.state.soundOn" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.6 5.4a9 9 0 0 1 0 13.2"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M22 9l-6 6M16 9l6 6"/></svg>
+            </button>
+            <button class="cxy-hbtn" title="导出会话为 Markdown" @click="assistant.exportChat()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            </button>
+            <button class="cxy-clear" title="清空会话" @click="assistant.clearConversation()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>
+            </button>
+            <button v-if="!isMobile" class="cxy-max" :title="assistant.state.maximized ? '还原尺寸' : '最大化'" @click="assistant.toggleMax()">
+              <svg v-if="!assistant.state.maximized" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>
+            </button>
+            <button class="cxy-close" title="收起" @click="assistant.closePanel()">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <!-- 快捷问题 -->
+        <div v-if="assistant.state.quick.length && !assistant.state.busy" class="cxy-quick">
+          <button v-for="(q, qi) in assistant.state.quick" :key="qi" class="cxy-chip"
+                  @click="assistant.askQuick(q)">{{ q }}</button>
+        </div>
+
+        <!-- 消息流 -->
+        <div class="cxy-msg-wrap">
+          <div class="cxy-messages" ref="cxyMessages" @scroll="assistant.onMessagesScroll($event)">
+          <template v-for="seg in assistant.segments()" :key="seg.key">
+            <!-- 日期分隔线（今天 / 昨天 / M月D日） -->
+            <div class="cxy-day"><span>{{ seg.label }}</span></div>
+            <template v-for="m in seg.items" :key="m.id">
+            <!-- 用户消息 -->
+            <div v-if="m.role === 'user'" class="cxy-row cxy-row-user">
+              <div class="cxy-bubble cxy-bubble-user">{{ m.text }}</div>
+            </div>
+            <!-- 助手消息 -->
+            <div v-else class="cxy-row cxy-row-ai">
+              <div class="cxy-avatar"><img src="/static/images/logo.png" alt="词小屿"></div>
+              <div class="cxy-bubble cxy-bubble-ai">
+                <!-- 查询工具结果卡片 -->
+                <div v-if="m.queryData" class="cxy-card">
+                  <div v-if="m.queryData.tool === 'search_words'" class="cxy-card-words">
+                    <template v-if="(m.queryData.data && m.queryData.data.items || []).length">
+                      <div v-for="(it, i) in m.queryData.data.items" :key="i" class="cxy-word-row">
+                        <span class="cxy-word">{{ it.word }}</span>
+                        <span class="cxy-word-meta">{{ it.pos || '' }} {{ it.meaning_zh || '' }}</span>
+                        <span v-if="it.phonetic" class="cxy-word-pho">{{ it.phonetic }}</span>
+                      </div>
+                      <div class="cxy-card-note">命中 {{ m.queryData.data.matched }} 个</div>
+                    </template>
+                    <div v-else class="cxy-card-note">词库里没有找到相关单词</div>
+                  </div>
+                  <div v-else-if="m.queryData.tool === 'get_review_due'" class="cxy-card-review">
+                    <div v-if="(m.queryData.data && m.queryData.data.items || []).length" class="cxy-review-tags">
+                      <span v-for="(it, i) in m.queryData.data.items" :key="i" class="cxy-review-tag">{{ it.word }}</span>
+                    </div>
+                    <div v-else class="cxy-card-note">今天没有到期的复习单词</div>
+                    <div class="cxy-card-note">
+                      待复习 {{ m.queryData.data.matched }} 个 · 今日上限 {{ m.queryData.data.daily_limit }} · 已答 {{ m.queryData.data.answered_today }}
+                    </div>
+                  </div>
+                </div>
+                <!-- 回答正文（Markdown 轻量渲染） -->
+                <div v-if="m.text" class="cxy-answer" v-html="assistant.md2html(m.text)"></div>
+                <span v-if="m.streaming" class="cxy-cursor"></span>
+                <!-- 复制回答 -->
+                <div v-if="m.text && !m.streaming" class="cxy-copy-row">
+                  <button class="cxy-copy" :class="{'cxy-copy-ok': m.copied}" @click="assistant.copyMsg(m)">
+                    <svg v-if="!m.copied" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+                    {{ m.copied ? '已复制' : '复制' }}
+                  </button>
+                  <!-- 朗读（speakingMsg 同条再点 = 停止） -->
+                  <button v-if="assistant.state.canSpeak" class="cxy-act"
+                          :class="{'cxy-act-on': assistant.state.speakingMsg === m}"
+                          :title="assistant.state.speakingMsg === m ? '停止朗读' : '朗读回答'"
+                          @click="assistant.state.speakingMsg === m ? assistant.stopSpeak() : assistant.speak(m)">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+                    {{ assistant.state.speakingMsg === m ? '停止' : '朗读' }}
+                  </button>
+                  <!-- 点赞点踩（同向再点 = 取消） -->
+                  <button class="cxy-act" :class="{'cxy-act-on': m.rating === 'up'}" title="有帮助" @click="assistant.rate(m, 'up')">
+                    <ThumbsUp />
+                  </button>
+                  <button class="cxy-act" :class="{'cxy-act-down': m.rating === 'down'}" title="没帮助" @click="assistant.rate(m, 'down')">
+                    <ThumbsDown />
+                  </button>
+                  <!-- 重新生成（仅最后一条助手消息，生成中不可用） -->
+                  <button v-if="assistant.isLastAi(m) && !assistant.state.busy" class="cxy-act" title="重新生成回答" @click="assistant.regenerate()">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+                    重新生成
+                  </button>
+                </div>
+                <!-- 等待首字时的思考指示器（流式 TTFB 期间给用户反馈） -->
+                <div v-if="m.streaming && !m.text" class="cxy-typing">
+                  <span class="cxy-typing-dots"><i></i><i></i><i></i></span>
+                  <span class="cxy-typing-label">{{ m.stepLabel ? m.stepLabel + '…' : '词小屿正在思考…' }}</span>
+                </div>
+                <!-- FAQ 跳转按钮 -->
+                <div v-if="m.navigate && m.navigate.page" class="cxy-nav">
+                  <button class="cxy-nav-btn" @click="assistant.goPage(m.navigate.page)">前往该页
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                  </button>
+                </div>
+                <!-- 错误 -->
+                <div v-if="m.errorChunk && !m.text" class="cxy-error">{{ m.errorChunk }}</div>
+                <!-- 结束态错误标注 -->
+                <div v-if="m.errorChunk && m.text" class="cxy-error-inline">（{{ m.errorChunk }}）</div>
+                <!-- 写操作确认卡片 -->
+                <div v-if="m.confirm" class="cxy-confirm">
+                  <div class="cxy-confirm-title">
+                    <span class="cxy-tag-write">{{ m.confirm.tool === 'add_words' ? '添加单词' : '删除单词' }}</span>
+                    {{ m.confirm.human.summary }}
+                  </div>
+                  <ul v-if="m.confirm.tool === 'add_words' && (m.confirm.human.will_add || []).length" class="cxy-confirm-list">
+                    <li v-for="(w, i) in m.confirm.human.will_add" :key="i">{{ w }}</li>
+                  </ul>
+                  <div v-if="m.confirm.tool === 'add_words' && (m.confirm.human.will_skip || []).length" class="cxy-confirm-note">
+                    以下单词已存在，将跳过：{{ m.confirm.human.will_skip.join('、') }}
+                  </div>
+                  <div v-if="m.confirm.tool === 'delete_word'" class="cxy-confirm-word">
+                    <span class="cxy-confirm-word-a">{{ m.confirm.human.word }}</span>
+                    <span v-if="m.confirm.human.meaning_zh" class="cxy-confirm-word-b">{{ m.confirm.human.meaning_zh }}</span>
+                    <span v-if="!m.confirm.human.exists" class="cxy-confirm-word-warn">词库中未找到</span>
+                  </div>
+                  <div class="cxy-confirm-risk">{{ m.confirm.human.risk }}</div>
+                  <div class="cxy-confirm-actions">
+                    <el-button size="small" @click="assistant.cancelAction(m)" :disabled="m.confirm.executing">取消</el-button>
+                    <el-button size="small" type="primary" :loading="m.confirm.executing" @click="assistant.confirmAction(m)">确认执行</el-button>
+                  </div>
+                </div>
+                <!-- 执行结果汇报 -->
+                <div v-else-if="m.executed" class="cxy-executed"><span class="cxy-dot"></span>{{ m.executed }}</div>
+              </div>
+            </div>
+            </template>
+          </template>
+          <!-- 建议追问（回答结束后出现，点击直接追问） -->
+          <div v-if="!assistant.state.busy && assistant.state.suggestions.length" class="cxy-suggest-row">
+            <span class="cxy-suggest-label">继续问：</span>
+            <button v-for="(s, si) in assistant.state.suggestions" :key="si" class="cxy-chip cxy-suggest"
+                    @click="assistant.askSuggest(s)">{{ s }}</button>
+          </div>
+          <div v-if="!assistant.state.messages.length && assistant.state.loadingHistory" class="cxy-loading">正在恢复上一次对话…</div>
+          </div>
+          <transition name="cxy-fade">
+            <button v-if="!assistant.state.atBottom" class="cxy-jump" title="回到底部" @click="assistant.jumpToBottom()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+            </button>
+          </transition>
+        </div>
+
+        <!-- 输入区 -->
+        <footer class="cxy-foot">
+          <div class="cxy-input-row">
+            <textarea v-model="assistant.state.input" class="cxy-input cxy-textarea" rows="1"
+                      placeholder="问问词小屿：功能怎么用 / 查词 / 今天复习哪些…（Enter 发送，Shift+Enter 换行）"
+                      :disabled="assistant.state.busy" @keydown="assistant.onInputKey($event)"
+                      @input="assistant.autoGrow($event)" maxlength="1000"></textarea>
+            <button v-if="assistant.state.canListen" class="cxy-mic"
+                    :class="{'cxy-mic-on': assistant.state.recording}"
+                    :disabled="assistant.state.busy"
+                    :title="assistant.state.recording ? '停止录音' : '语音输入'" @click="assistant.toggleListen()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>
+            </button>
+            <button v-if="assistant.state.busy" class="cxy-send cxy-stop" title="停止生成" @click="assistant.stop()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+            <button v-else class="cxy-send" :disabled="!assistant.state.input.trim() || !assistant.state.configured" title="发送" @click="assistant.send()">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h14M12 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <div v-if="!assistant.state.configured" class="cxy-foot-note">提示：LLM 未配置，只能回答知识库内的问题（去「设置」选择模型）</div>
+        </footer>
+
+        <!-- 尺寸调节手柄（左下角拖拽调宽高） -->
+        <div v-if="!isMobile && !assistant.state.maximized" class="cxy-resize" @pointerdown="assistant.onResizeDown($event)" title="拖拽调整面板大小"></div>
+      </section>
+    </transition>
+
+    <!-- 悬浮挂件（面板展开时隐藏，避免遮挡） -->
+    <button v-show="!assistant.state.open" class="cxy-widget" :class="{'cxy-busy': assistant.state.busy, 'cxy-off': !assistant.state.configured}"
+            :style="{ right: assistant.state.pos.right + 'px', bottom: assistant.state.pos.bottom + 'px' }"
+            @pointerdown="assistant.onPointerDown($event)" :title="assistant.state.configured ? '词小屿' : '词小屿（LLM 未配置）'" aria-label="打开词小屿">
+      <img src="/static/images/logo.png" alt="词小屿" class="cxy-widget-img">
+      <span v-if="assistant.state.unread > 0" class="cxy-dot-badge">{{ assistant.state.unread }}</span>
+      <span v-if="assistant.state.unread > 0 && assistant.state.unreadSnippet" class="cxy-unread-snippet">{{ assistant.state.unreadSnippet }}</span>
+    </button>
+  </div>
 
 </div>
 
@@ -2601,7 +3364,9 @@
 import { api, apiStream } from '/static/js/api.js'
 // 纯数据常量 + 纯函数工具（不依赖页面状态，可复用）
 import { TTS_MODELS } from '/static/js/constants.js'
-import { formatDate, sceneRoleText, getModelDefaultVoice, highlightPanelWords, humanizeError } from '/static/js/utils.js'
+import { formatDate, formatDateOnly, sceneRoleText, getModelDefaultVoice, highlightPanelWords, humanizeError } from '/static/js/utils.js'
+// 词小屿：全局智能助手（挂件 + 面板 + 确认卡片 + SSE 流式）
+import { createAssistant } from '/static/js/assistant.js'
 
 const {createApp, ref, reactive, computed, watch, nextTick, onMounted, h} = Vue
 const ElIcons = ElementPlusIconsVue
@@ -2622,15 +3387,101 @@ const app = createApp({
     for (const [k,v] of Object.entries(ElIcons)) {
       app.component(k, v)
     }
+    // CDN 版 @element-plus/icons-vue 缺 ThumbsUp/ThumbsDown，用内联 SVG 组件补全局注册
+    app.component('ThumbsUp', ThumbsUp)
+    app.component('ThumbsDown', ThumbsDown)
 
     const currentPage = ref('home')
 
-    // 用量情况页：统计概览 + 按模型汇总 + 最近模型调用（默认只显示最近 5 条，点击展开全部）
+    // ====== 词小屿 · 全局智能助手 ======
+    // 复用当前应用的 api/apiStream 请求层；getPage/goPage 让助手能感知当前页并跳页
+    const assistant = createAssistant({
+      api, apiStream,
+      getPage: () => currentPage.value,
+      goPage: (page) => { currentPage.value = page; closeMobileMenu?.() },
+    })
+    // 页面切换 → 刷新快捷问题（场景感知）；挂载后拉取助手配置状态
+    watch(currentPage, () => assistant.updateQuick())
+
+    // ====== 用户身份与每日配额 ======
+    const user = ref(null)          // {uid, username, role}
+    const limits = ref({})          // bucket -> {label, limit, used, remaining}
+    const roleLabel = computed(() => ({ dev: '开发者', admin: '管理员', guest: '游客' }[user.value?.role] || ''))
+    const isGuest = computed(() => user.value?.role === 'guest')
+    async function loadMe() {
+      try {
+        const res = await api('/api/me', {}, { withLoading: false })
+        user.value = res
+        limits.value = res.limits || {}
+      } catch (e) {
+        if (e.status === 401) { window.location.href = '/login' }
+      }
+    }
+    async function logout() {
+      try { await api('/api/logout', { method: 'POST' }, { withLoading: false }) } catch (_) {}
+      window.location.href = '/login'
+    }
+    /** 某 bucket 剩余次数；-1 = 不限量（dev/admin）。 */
+    function quotaLeft(bucket) {
+      const l = limits.value[bucket]
+      return l ? l.remaining : -1
+    }
+    /** 某 bucket 是否用尽（游客且剩余 0）。 */
+    function quotaExhausted(bucket) {
+      const l = limits.value[bucket]
+      return !!(l && l.limit >= 0 && l.remaining <= 0)
+    }
+    /** 生成按钮旁的配额提示文案：dev/admin 不显示，游客显示"今日剩余 N 次"。 */
+    function quotaHint(bucket) {
+      if (!user.value || user.value.role === 'dev' || user.value.role === 'admin') return ''
+      const l = limits.value[bucket]
+      if (!l || l.limit < 0) return ''
+      return `今日剩余 ${Math.max(0, l.remaining)} 次`
+    }
+    // ====== 数据治理：一键清理疑似测试残留词（仅开发者/管理员） ======
+    const cleaningData = ref(false)
+    async function cleanSuspicious() {
+      try {
+        const res = await api('/api/polysemy/clean-suspicious', { method: 'POST' })
+        const parts = []
+        if (res.deleted_count > 0) parts.push(`删除测试残留词 ${res.deleted_count} 个（${res.deleted.join('、')}）`)
+        if (res.fixed_count > 0) parts.push(`清理释义残留 ${res.fixed_count} 个（${res.fixed.join('、')}）`)
+        ElementPlus.ElMessage.success(parts.length ? parts.join('；') : '未发现疑似测试残留数据')
+        loadCandidates(); loadWords()
+      } catch (e) {
+        showModelError(e, '清理失败')
+      }
+    }
+
+    // ====== 移动端响应式：≤640px 时表格切换为卡片列表 ======
+    const isMobile = ref(window.innerWidth <= 640)
+    if (window.matchMedia) {
+      const mq = window.matchMedia('(max-width: 640px)')
+      const onMq = (e) => { isMobile.value = e.matches }
+      if (mq.addEventListener) mq.addEventListener('change', onMq)
+      else mq.addListener(onMq)
+    }
+    function isRowSelected(row) {
+      return selectedWords.value.some(w => w.id === row.id)
+    }
+    function toggleCardSelect(row) {
+      const i = selectedWords.value.findIndex(w => w.id === row.id)
+      if (i >= 0) selectedWords.value.splice(i, 1)
+      else selectedWords.value.push(row)
+    }
+
+    // 用量情况页：统计概览 + 按模型汇总 + 用户用量排行榜 + 最近模型调用
     const usageSummary = ref([])
     const modelSummary = ref([])
     const recentCalls = ref([])
     const recentCallsExpanded = ref(false)  // false = 只显示最近 5 条，true = 显示全部
     const modelMax = ref(1)
+    const usageRank = ref([])               // 用户用量排行榜（仅 dev/admin，后端聚合返回）
+    const isStaff = computed(() => user.value && (user.value.role === 'dev' || user.value.role === 'admin'))
+    /** 取排行页某用户某分类(model_usage.category)的调用次数。 */
+    function rankCalls(row, cat) {
+      return (row.per && row.per[cat] && row.per[cat].calls) || 0
+    }
     const recentCallsVisible = computed(() => recentCallsExpanded.value ? recentCalls.value : recentCalls.value.slice(0, 5))
     async function loadUsage() {
       try {
@@ -2646,6 +3497,7 @@ const app = createApp({
         modelSummary.value = res.models || []
         modelMax.value = Math.max(1, ...(res.models || []).map(m => m.cnt || 0))
         recentCalls.value = (res.recent || []).sort((a,b) => (a.created_at > b.created_at ? -1 : 1))
+        usageRank.value = (res.users_rank || []).sort((a,b) => (a.calls > b.calls ? -1 : (a.calls < b.calls ? 1 : 0)))
         usageSummary.value = [
           { key: 'llm', label: 'LLM 调用', count: total.llm, usage: tokens.llm, tag: 'primary' },
           { key: 'tts', label: 'TTS 合成', count: total.tts, usage: tokens.tts, tag: 'success' },
@@ -2683,6 +3535,112 @@ const app = createApp({
     }
     function modelBarWidth(row) {
       return Math.max(4, Math.round((row.cnt || 0) / modelMax.value * 100)) + '%'
+    }
+
+    // ====== 反馈看板（仅 dev/admin：跨用户库聚合的运维视图） ======
+    const dashDays = ref(30)
+    const dashData = ref(null)
+    const dashLoading = ref(false)
+    const dashUserSearch = ref('')
+    const dashUserExpanded = ref(false)          // 用户概况：收起/展开
+    const dashHistExpanded = ref(false)          // 全站历史：收起/展开
+    async function loadDashboard() {
+      dashLoading.value = true
+      try {
+        dashData.value = await api(`/api/admin/dashboard?days=${dashDays.value}`)
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '看板数据加载失败')
+      } finally {
+        dashLoading.value = false
+      }
+    }
+    const dashStats = computed(() => dashData.value?.stats || { feedback: {} })
+    const dashFbPct = computed(() => {
+      const fb = dashStats.value.feedback || {}
+      return fb.total ? Math.round((fb.up / fb.total) * 100) : 0
+    })
+    const dashActivity = computed(() => dashData.value?.activity || [])
+    // 图表几何：viewBox 760x240，基线 y=206，绘图区高度 190
+    const dashMaxVal = () => Math.max(1, ...dashActivity.value.map(a => Math.max(a.generations, a.feedback)))
+    const dashBand = () => dashActivity.value.length ? (740 / dashActivity.value.length) : 0
+    const dashBarX = (i) => 10 + i * dashBand() + dashBand() / 2
+    const dashLabelStep = computed(() => Math.max(1, Math.ceil(dashActivity.value.length / 12)))
+    // 折线图：值 → 高度（0 无柱），序列 → points，生成量 → 面积闭合 path
+    function dashValH(v) {
+      return v ? Math.max(3, Math.round(v / dashMaxVal() * 190)) : 0
+    }
+    function dashSeriesPoints(key) {
+      return dashActivity.value.map((a, i) =>
+        `${dashBarX(i).toFixed(1)},${(206 - dashValH(a[key])).toFixed(1)}`).join(' ')
+    }
+    const dashAreaPath = computed(() => {
+      const act = dashActivity.value
+      if (!act.length) return ''
+      let d = `M10,206`
+      act.forEach((a, i) => { d += ` L${dashBarX(i).toFixed(1)},${(206 - dashValH(a.generations)).toFixed(1)}` })
+      d += ` L${dashBarX(act.length - 1).toFixed(1)},206 Z`
+      return d
+    })
+    function dashLinePoints(key) {
+      const pts = []
+      dashActivity.value.forEach((a, i) => {
+        const v = a[key] || 0
+        if (v > 0) pts.push({ x: dashBarX(i), y: 206 - dashValH(v), v })
+      })
+      return pts
+    }
+    function dashAnnot(key) {
+      // 稀疏数据（非零点 ≤ 12）才把数值标到点上，避免拥挤
+      const pts = dashLinePoints(key)
+      if (pts.length > 12) return []
+      return pts.filter((p, i) => i % 2 === 0)
+    }
+    const dashUserRows = computed(() => {
+      const q = (dashUserSearch.value || '').trim().toLowerCase()
+      const rows = dashData.value?.users || []
+      if (!q) return rows
+      return rows.filter(u => String(u.username).toLowerCase().includes(q) || String(u.role).toLowerCase().includes(q))
+    })
+    const dashUserRowsVisible = computed(() =>
+      dashUserExpanded.value ? dashUserRows.value : dashUserRows.value.slice(0, 5))
+    function dashRoleLabel(role) {
+      return ({ dev: '开发者', admin: '管理员', guest: '游客' })[role] || role || ''
+    }
+    const dashTypeMax = computed(() => {
+      const t = dashData.value?.type_dist || []
+      return Math.max(1, ...t.map(x => x.cnt || 0))
+    })
+    function dashTypeW(cnt) {
+      return Math.max(4, Math.round((cnt || 0) / dashTypeMax.value * 100)) + '%'
+    }
+    function dashTypeColor(type) {
+      return { single: '#3a7d6a', batch: '#b8953a', scene: '#4a9a82', video: '#c24a3a' }[type] || '#8e8e9e'
+    }
+    // 全站历史（分页 + 搜索 + 反馈/角色筛选，默认收起只显示前 5 条）
+    const dashHistRows = ref([])
+    const dashHistTotal = ref(0)
+    const dashHistPage = ref(1)
+    const dashHistQ = ref('')
+    const dashHistRating = ref('')
+    const dashHistRole = ref('')
+    const dashHistLoading = ref(false)
+    const dashHistVisible = computed(() =>
+      dashHistExpanded.value ? dashHistRows.value : dashHistRows.value.slice(0, 5))
+    async function loadDashHist() {
+      dashHistLoading.value = true
+      try {
+        const params = new URLSearchParams({ page: dashHistPage.value, page_size: 20 })
+        if (dashHistQ.value.trim()) params.set('q', dashHistQ.value.trim())
+        if (dashHistRating.value) params.set('rating', dashHistRating.value)
+        if (dashHistRole.value) params.set('role', dashHistRole.value)
+        const res = await api(`/api/admin/history?${params.toString()}`)
+        dashHistRows.value = res.rows || []
+        dashHistTotal.value = res.total || 0
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '历史记录加载失败')
+      } finally {
+        dashHistLoading.value = false
+      }
     }
 
     // 生成进度（SSE 流式：展示每步实际调用的模型、状态与耗时，统一温馨提示）
@@ -2780,6 +3738,7 @@ const app = createApp({
       const label = genFeatureLabel.value || 'AI'
       genProgress.value.visible = false
       genProgress.value.controller = null
+      loadMe()  // 刷新当日剩余配额（一次生成/检测会消耗 1 次）
       if (!wasVisible) return
       const stateText = cancelled ? '已取消' : (success ? '完成' : '失败')
       const emoji = cancelled ? '⏹' : (success ? '✅' : '❌')
@@ -2821,6 +3780,11 @@ const app = createApp({
 
     // AI 结果反馈（有帮助 / 需改进）
     const feedbackGiven = ref('')
+    const feedbackDialogVisible = ref(false)
+    const feedbackComment = ref('')
+    const feedbackTargetGenId = ref('')
+    const feedbackTargetRating = ref('')
+
     function giveFeedback(v) {
       // 从当前结果获取 generation_id
       let genId = ''
@@ -2829,17 +3793,37 @@ const app = createApp({
       else if (videoResult.value) genId = videoResult.value.id
       if (!genId) { ElementPlus.ElMessage.warning('无相关生成记录'); return }
 
+      // 点击"待改进"时弹出反馈对话框
+      if (v === 'down') {
+        feedbackTargetGenId.value = genId
+        feedbackTargetRating.value = v
+        feedbackComment.value = ''
+        feedbackDialogVisible.value = true
+        return
+      }
+
+      // 点击"有帮助"直接提交
+      submitFeedbackToApi(genId, v, '')
+    }
+
+    function submitFeedbackWithComment() {
+      const comment = feedbackComment.value.trim()
+      feedbackDialogVisible.value = false
+      submitFeedbackToApi(feedbackTargetGenId.value, feedbackTargetRating.value, comment)
+    }
+
+    function submitFeedbackToApi(genId, rating, comment) {
       api(`/api/generations/${genId}/feedback`, {
         method: 'POST',
-        body: JSON.stringify({ rating: v }),
+        body: JSON.stringify({ rating, comment }),
       }).then(res => {
         if (res.result === null) {
           feedbackGiven.value = ''
           ElementPlus.ElMessage.info('已取消反馈')
         } else {
-          feedbackGiven.value = v
-          if (v === 'up') ElementPlus.ElMessage.success('感谢反馈，将保持该方向')
-          else ElementPlus.ElMessage.info('已记录，后续将优化生成')
+          feedbackGiven.value = rating
+          if (rating === 'up') ElementPlus.ElMessage.success('感谢反馈，将保持该方向')
+          else ElementPlus.ElMessage.success('已记录改进意见，感谢反馈')
         }
         loadFeedbackStats()
       }).catch(e => ElementPlus.ElMessage.error(e.message))
@@ -3064,7 +4048,7 @@ const app = createApp({
 
     // ====== 遮词自测（第一层 · 测试效应）：看图回忆 → 揭晓 → 自我报告 ======
     // 生成页卡片与历史详情页卡片共用同一套自测状态（按词记录，finishSelfTest 由模板传入当前词）
-    const SELFTEST_KEY = 'toeic_selftest_v1'
+    const SELFTEST_KEY = 'wordisle_selftest_v1'
     const selfTest = reactive({ active: false, revealed: false, answered: '' })
     const selfTestRecord = ref(null)
     const selfTestMasked = computed(() => selfTest.active && !selfTest.revealed)
@@ -3322,6 +4306,17 @@ const app = createApp({
       return ''
     }
 
+    // 荒诞场景句中高亮目标单词：先 HTML 转义再按词（忽略大小写）包 <span class="word-hl">
+    function highlightWord(text, word) {
+      if (!text) return ''
+      const esc = String(text).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ))
+      if (!word) return esc
+      const w = String(word).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return esc.replace(new RegExp('(' + w + ')', 'gi'), '<span class="word-hl">$1</span>')
+    }
+
     // 历史
     const historyData = ref([])
     const historyTotal = ref(0)
@@ -3483,7 +4478,7 @@ const app = createApp({
     const sceneCompileLoading = ref(false)
 
     // ---- 表单偏好记忆（localStorage）：记住各编译表单的模型/风格/画面数等，刷新不丢 ----
-    const FORM_PREFS_KEY = 'toeic_form_prefs_v1'
+    const FORM_PREFS_KEY = 'wordisle_form_prefs_v1'
     function saveFormPrefs() {
       try {
         const data = {
@@ -4474,8 +5469,43 @@ const app = createApp({
     }
 
     // ====== 菜单 ======
+    // 桌面端：侧边栏折叠为图标栏（记忆到 localStorage，刷新后保持）
+    const sidebarCollapsed = ref(localStorage.getItem('wi.sidebar') === '1')
+    function syncSidebarTitles() {
+      document.querySelectorAll('.app-sidebar .el-menu-item').forEach((item) => {
+        if (!sidebarCollapsed.value) { item.removeAttribute('title'); return }
+        const t = (item.querySelector('span')?.textContent || '').trim()
+        if (t) item.setAttribute('title', t)
+      })
+    }
+    function toggleSidebar() {
+      sidebarCollapsed.value = !sidebarCollapsed.value
+      localStorage.setItem('wi.sidebar', sidebarCollapsed.value ? '1' : '0')
+      syncSidebarTitles()
+    }
+    // 移动端抽屉开关：点击弹出 / 再次点击隐藏（开关）
+    function toggleMobileMenu() {
+      const open = document.body.classList.toggle('mobile-menu-open')
+      const btn = document.querySelector('.mobile-menu-btn')
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false')
+    }
+    // 辅助关闭：点遮罩 / 选菜单项 / 路由切换
+    function closeMobileMenu() {
+      document.body.classList.remove('mobile-menu-open')
+      const btn = document.querySelector('.mobile-menu-btn')
+      if (btn) btn.setAttribute('aria-expanded', 'false')
+    }
+    // 遮罩是 body::after 伪元素，无法直接绑定 click——用事件委托：
+    // 抽屉开着时，点击落在侧边栏与汉堡按钮之外（即遮罩上）就关闭
+    document.addEventListener('click', (e) => {
+      if (!document.body.classList.contains('mobile-menu-open')) return
+      if (e.target.closest('.app-sidebar') || e.target.closest('.mobile-menu-btn')) return
+      closeMobileMenu()
+    })
+
     function handleMenuSelect(idx) {
       currentPage.value = idx
+      closeMobileMenu()  // 移动端：选择菜单项后自动收起抽屉
       if (idx==='home') { loadRecentItems(); loadHomeStats(); loadIslandStats() }
       if (idx==='words') loadWords()
       if (idx==='review') loadReviewStats()
@@ -4485,11 +5515,14 @@ const app = createApp({
       if (idx==='morphemes') { loadMorphemeRoots(); loadMorphemeWords(); loadMorphemeCandidates() }
       if (idx==='scenes') { sceneView.value='list'; loadScenes() }
       if (idx==='usage') loadUsage()
+      if (idx==='dashboard') { loadDashboard(); loadDashHist() }
       if (idx==='settings') { loadLlmSettings(); loadTtsSettings() }
     }
 
     // ====== 初始化 ======
     onMounted(() => {
+      syncSidebarTitles()  // 恢复折叠态时为图标栏补 title 提示
+      loadMe()
       loadWords()
       loadPolysemyHot()
       loadCandidates()
@@ -4501,6 +5534,7 @@ const app = createApp({
       loadUsage()
       migrateSelfTestToReview()
       loadTtsSettings()  // 编译表单音色下拉依赖该数据，需在启动时一并加载
+      assistant.init()   // 词小屿：拉取配置状态（LLM 是否可用）
     })
 
     // 模型选项加载完成后，恢复表单偏好（严格校验模型仍存在，避免失效模型）
@@ -4562,7 +5596,16 @@ const app = createApp({
       usageSummary, modelSummary, recentCalls, recentCallsVisible, recentCallsExpanded, modelMax,
       loadUsage, usageLabel, usageTag, usageColor, usageUnit,
       fmtUsage, usageDetail, modelBarWidth,
+      usageRank, isStaff, rankCalls,
+      dashDays, dashData, dashLoading, loadDashboard,
+      dashStats, dashFbPct, dashActivity, dashMaxVal, dashBarX,
+      dashValH, dashSeriesPoints, dashAreaPath, dashLinePoints, dashAnnot, dashLabelStep,
+      dashUserSearch, dashUserRows, dashUserRowsVisible, dashUserExpanded, dashRoleLabel,
+      dashTypeMax, dashTypeW, dashTypeColor,
+      dashHistRows, dashHistTotal, dashHistPage, dashHistQ, dashHistRating, dashHistRole, dashHistLoading, loadDashHist,
+      dashHistExpanded, dashHistVisible,
       genProgress, genFeatureLabel, genFeatureHint, cancelGenProgress, menuBusy, feedbackGiven, giveFeedback,
+      feedbackDialogVisible, feedbackComment, submitFeedbackWithComment,
       ThumbsUp, ThumbsDown,
       feedbackStats,
       TTS_MODELS, groupedTtsModels, imageModels,
@@ -4573,7 +5616,7 @@ const app = createApp({
       importText, parsing, parseResult, importing, fileInputRef,
       compileWords, compileForm, compiling,
       singleForm, singleCompiling, singleResult, singleAudioLoading,
-      selfTest, selfTestRecord, selfTestMasked, moodClassOf, moodTextOf,
+      selfTest, selfTestRecord, selfTestMasked, moodClassOf, moodTextOf, highlightWord,
       // 记忆测试（独立测试页）
       reviewStats, reviewSession, reviewAnswerInput, reviewQuestion, reviewAccuracyPct, loadReviewStats,
       questionTypeLabel, questionTypeHint, reviewOptionState,
@@ -4582,6 +5625,11 @@ const app = createApp({
       healedData, healedLoading, loadHealed, therapyTags, unhealWord,
       startSelfTest, revealSelfTest, finishSelfTest,
       artStyleOptions,
+      user, limits, roleLabel, isGuest, loadMe, logout, quotaLeft, quotaExhausted, quotaHint,
+      assistant,
+      cleaningData, cleanSuspicious,
+      isMobile, isRowSelected, toggleCardSelect,
+      sidebarCollapsed, toggleSidebar,
       wordPickerVisible, wordPickerValue, wordPickerOptions, wordPickerLoading,
       openWordPicker, searchWords, confirmWordPick,
       historyData, historyTotal, historyPage, historyLoading, historySearch, historyFilter,
@@ -4598,7 +5646,7 @@ const app = createApp({
       sceneView, scenes, scenesLoading, sceneDetail, sceneDetailLoading,
       sceneDetectLoading, sceneDetectResult, sceneSuggestions, sceneAdoptingIdx,
       sceneCompileForm, sceneCompileLoading, sceneEditVisible, sceneEditForm, sceneEditFormRef, sceneEditRules, sceneEditAddWord, sceneEditLoading,
-      formatDate, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
+      formatDate, formatDateOnly, sceneRoleText, getImageModelNote, getImageModelPrice, highlightPanelWords, getModelDefaultVoice,
       loadWords, updateWord, deleteWord, submitAddWord, goCompile, batchDeleteWords,
       fetchPhonetic, playWordAudio, toggleWordHealed,
       handleParse, doImport, triggerFileInput, handleFileChange,
@@ -4609,7 +5657,7 @@ const app = createApp({
       toggleSelectPolysemy, toggleSelectAllPolysemy, clearPolysemySelection, batchDeletePolysemy,
       loadMorphemeCandidates, loadMorphemeRoots, searchMorphemeRoots, openMorphemeRoot,
       runMorphemeDetect, expandMorphemeRoot, loadMorphemeWords, deleteMorphemeWord,
-      toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect,
+      toggleFavorite, deleteCurrentResult, regenerateAudio, handleMenuSelect, toggleMobileMenu, closeMobileMenu,
       loadScenes, openSceneDetail, runSceneDetect, adoptScene,
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,
       llmModels, llmRouteList, llmRouteForm, llmSaving, loadLlmSettings, saveLlmSettings,

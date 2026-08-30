@@ -13,6 +13,14 @@ export function formatDate(d) {
   return dt.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 }
 
+/** 仅日期（单词库导入时间用，不显示时分） */
+export function formatDateOnly(d) {
+  if (!d) return '-'
+  const dt = new Date(d)
+  if (isNaN(dt)) return '-'
+  return dt.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'})
+}
+
 /** 场景角色代号转中文：setup→起 / development→承 / climax→转 / resolution→合 */
 export function sceneRoleText(v) {
   const m = {setup:'起',development:'承',climax:'转',resolution:'合'}

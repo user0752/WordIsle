@@ -1,5 +1,5 @@
 """
-TOEIC MVP 配置
+WordIsle MVP 配置
 ==============
 所有环境变量、路径、模型常量统一在此管理。
 """
@@ -373,13 +373,14 @@ LLM_ROUTES = [
     {"key": "batch",  "label": "批量编译",      "desc": "剧情连环画生成（荒诞/冲突/场景/微电影）", "default": "bailian-qwen3.7-flash"},
     {"key": "single", "label": "单点深耕",      "desc": "单词语义记忆卡片生成", "default": "bailian-qwen3.7-flash"},
     {"key": "video",  "label": "视频脚本",      "desc": "视频编译的旁白与提示词", "default": "bailian-qwen3.7-flash"},
-    {"key": "polysemy", "label": "熟词僻意检测", "desc": "批量判断是否为托业高频熟词僻意", "default": "bailian-qwen3.7-flash"},
+    {"key": "polysemy", "label": "熟词僻意检测", "desc": "批量判断是否为高频熟词僻意（含商务义）", "default": "bailian-qwen3.7-flash"},
     {"key": "enrich", "label": "单词补充",       "desc": "词性/释义自动补全（失败降级默认模型）", "default": "bailian-qwen3.7-flash"},
     {"key": "scene_detect", "label": "场景检测", "desc": "单词自动归类到场景", "default": "bailian-qwen3.7-flash"},
     {"key": "scene_collocations", "label": "场景词伙", "desc": "场景内词伙搭配生成", "default": "bailian-qwen3.7-flash"},
     {"key": "morpheme", "label": "构词拆解",     "desc": "单词构词拆解判定 / 词根推荐词生成", "default": "bailian-qwen3.7-flash"},
     {"key": "morpheme_seed", "label": "构词拆解·词根推荐", "desc": "为词根树推荐同构词（懒填充/添加成员）", "default": "bailian-qwen3.7-flash"},
     {"key": "extract", "label": "文章提词", "desc": "从粘贴的文章/文档中提取值得学习的单词", "default": "bailian-qwen3.7-flash"},
+    {"key": "assistant", "label": "智能助手词小屿", "desc": "词小屿意图识别与回复生成（设置页可切换模型）", "default": "bailian-qwen3.7-flash"},
 ]
 
 LLM_ROUTE_DEFAULT = {r["key"]: r["default"] for r in LLM_ROUTES}
@@ -408,3 +409,51 @@ def hit_common_morpheme(word: str) -> bool:
         if pre[:-1] and w.startswith(pre[:-1]):  # "re-" → 匹配头部 "re"
             return True
     return False
+
+
+# ========================================================================
+# 用户系统（认证 + 每用户分库 + 每日配额）
+# ========================================================================
+
+# 会话签名密钥（.env 必配；本地开发留空时使用内置降级密钥）
+AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-insecure-secret-change-me")
+
+# 每用户独立数据库目录（业务库按 uid 分文件）与全局库（users / quotas）
+USER_DATA_DIR = DATA_DIR / "user"
+SYSTEM_DB_PATH = DATA_DIR / "system.db"
+
+# 开发者账号：沿用原 Nginx Basic Auth 账号，密码从 .env 读取（不落明文文档）
+DEV_USERNAME = os.getenv("DEV_USERNAME", "dev")
+DEV_PASSWORD  = os.getenv("DEV_PASSWORD", "")
+
+# 管理员固定账号：ADMIN_USERS=admin1:pass1,admin2:pass2（逗号分隔 username:password）
+ADMIN_USERS: list[tuple[str, str]] = []
+for _pair in os.getenv("ADMIN_USERS", "").split(","):
+    _pair = _pair.strip()
+    if ":" in _pair:
+        _u, _p = _pair.split(":", 1)
+        ADMIN_USERS.append((_u.strip(), _p.strip()))
+
+# 游客每日配额：bucket 名与 LLM_ROUTES 键保持一致，避免两套命名
+#   video 视频编译 2 次/日；其余内容编译类（batch/single/scene/polysemy/morpheme/extract/enrich）各 5 次/日
+GUEST_LIMITS = {
+    "video": 2, "batch": 5, "single": 5, "scene": 5,
+    "polysemy": 5, "morpheme": 5, "extract": 5, "enrich": 5,
+    "assistant": 50,  # 词小屿每日对话上限（FAQ 命中与 LLM 回复均计入；dev/admin 不限）
+}
+# bucket → 中文名（用于前端提示 / 后端 429 文案）
+QUOTA_BUCKET_LABELS = {
+    "video": "视频编译", "batch": "批量编译", "single": "单点深耕", "scene": "场景检测/编译",
+    "polysemy": "熟词僻意检测", "morpheme": "构词拆解", "extract": "文章提词", "enrich": "单词补充",
+    "assistant": "智能助手对话",
+}
+
+# 每日复习量上限（防堆积，Anki 式，routes 与词小屿共用）
+REVIEW_DAILY_LIMIT = 20
+
+# 会话 Cookie
+AUTH_COOKIE = "wordisle_session"
+AUTH_MAX_AGE = 30 * 24 * 3600  # 30 天
+
+# 本地开发/回归测试可整体关闭认证（中间件放行、/api/me 返回默认开发者身份）
+AUTH_DISABLED = os.getenv("AUTH_DISABLED", "") == "1"
