@@ -37,6 +37,7 @@ BASE_DIR = Path(__file__).resolve().parent
 APP_LOG = BASE_DIR / "logs" / "app.log"
 STATE_FILE = BASE_DIR / "data" / "ops_state.json"
 NGINX_ACCESS = Path("/var/log/nginx/access.log")
+AUTH_LOG = Path("/var/log/auth.log")
 SVC_NAME = "wordisle"
 HEALTH_URL = "http://127.0.0.1:8000/"
 PUSH_URL = "https://sctapi.ftqq.com/{}.send"
@@ -230,23 +231,38 @@ def collect_llm(issues, out):
 
 def collect_security(issues, out):
     th = THRESHOLDS
-    # SSH 失败登录
+    # SSH 失败登录：优先 /var/log/auth.log（本机 sshd 走 rsyslog，journald 几乎收不到）
+    # 只取末尾若干行控制采集成本（覆盖最近数小时，足以判定爆破）
     ssh_fail = -1
-    for unit in ("ssh", "sshd"):
-        rc, text = run([bin("journalctl"), "-u", unit, "--since", "24 hours ago", "--no-pager"])
+    if AUTH_LOG.exists():
+        rc, text = run([bin("tail"), "-n", "200000", str(AUTH_LOG)], timeout=120)
+        if rc != 0:
+            # deploy 不在 adm 组时用 sudo 免密读（服务器已配 NOPASSWD）
+            rc, text = run(["sudo", "-n", bin("tail"), "-n", "200000", str(AUTH_LOG)], timeout=120)
         if rc == 0 and text:
-            ssh_fail = len(re.findall(r"Failed password", text))
-            break
-        if rc != 0 and "Permission denied" in text:
-            break
+            fails = re.findall(r"Failed password .*?from (\S+)", text)
+            ssh_fail = len(fails)
+            if fails:
+                src_ips = sorted(set(fails))
+                out.append(("SSH 失败来源 IP 数", str(len(src_ips))))
+                out.append(("SSH 高频来源(%d)" % min(len(src_ips), 5), "、".join(src_ips[:5])))
+    if ssh_fail < 0:
+        # 降级：journald 路径（部分发行版）
+        for unit in ("sshd", "ssh"):
+            rc, text = run([bin("journalctl"), "-u", unit, "--since", "24 hours ago", "--no-pager"])
+            if rc == 0 and text:
+                ssh_fail = len(re.findall(r"Failed password", text))
+                break
+            if rc != 0 and "Permission denied" in text:
+                break
     if ssh_fail >= 0:
-        out.append(("SSH 失败登录 (24h)", str(ssh_fail)))
+        out.append(("SSH 失败登录 (近段)", f"{ssh_fail} 次"))
         if ssh_fail >= th["ssh_crit"]:
-            issues.append(issue("critical", "ssh_brute", f"24h 内 SSH 失败登录 {ssh_fail} 次，疑似暴力破解"))
+            issues.append(issue("critical", "ssh_brute", f"SSH 失败登录 {ssh_fail} 次，疑似暴力破解（fail2ban 已自动封禁高频 IP）"))
         elif ssh_fail >= th["ssh_warn"]:
-            issues.append(issue("warn", "ssh_brute_low", f"24h 内 SSH 失败登录 {ssh_fail} 次"))
+            issues.append(issue("warn", "ssh_brute_low", f"SSH 失败登录 {ssh_fail} 次"))
     else:
-        out.append(("SSH 失败登录 (24h)", "无权限/无日志 (可将 deploy 加入 adm 组)"))
+        out.append(("SSH 失败登录", "无权限/无日志 (可将 deploy 加入 adm 组)"))
 
     # nginx 访问日志：扫描特征 / 401 / 4xx、5xx / 高频 IP
     if NGINX_ACCESS.exists():
