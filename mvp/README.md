@@ -89,3 +89,34 @@ Windows GUI 模式不受影响。
 
 * [ ] 未授权来源无法触达应用（限源 IP / Basic Auth / 隧道）
 
+## 7. 运维巡检（可选，ops_monitor.py）
+
+内置的服务器巡检脚本，每日通过 **Server酱** 把早报与高危告警推到手机微信：
+
+| 模式 | 用途 |
+| --- | --- |
+| `--check` | 高危项巡检，**15 分钟一次**（cron），异常即时推送、每日去重 |
+| `--report` | 每日早报：全量指标 + LLM 通俗总结（默认每天 07:30） |
+| `--dry-run` | 只采集打印不推送，上线前先跑一次看效果 |
+| `--test` | 发送一条测试推送，验证 SendKey |
+
+**监控维度**：系统资源（磁盘/内存/负载）、systemd 服务与 HTTP 探活、模型调用失败率（解析 app.log）、安全审计（auth.log SSH 爆破、nginx 扫描特征与 401 暴破、fail2ban 状态）、TLS 证书有效期。
+
+**配置**（.env，勿入库）：
+
+```bash
+SERVERCHAN_SENDKEY=SCTxxxxxxxx            # sct.ftqq.com 免费注册，每天 5 条
+# 可选：OPS_DISK_WARN=80、OPS_SSH_CRIT=100 … 阈值见脚本 THRESHOLDS
+```
+
+**cron 安装**（deploy 用户）：
+
+```bash
+crontab -e
+# PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# */15 * * * * cd /opt/wordisle/mvp && venv/bin/python ops_monitor.py --check >> /opt/wordisle/logs/ops_check.log 2>&1
+# 30 7  * * * cd /opt/wordisle/mvp && venv/bin/python ops_monitor.py --report >> /opt/wordisle/logs/ops_report.log 2>&1
+```
+
+**注意**：公网服务器 SSH 爆破高发，建议安装 fail2ban 并启用 sshd jail 自动封禁；巡检脚本可直接读取 `/var/log/auth.log` 统计爆破（journald 收不到 syslog 路径的 sshd 日志）。
+

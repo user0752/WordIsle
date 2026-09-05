@@ -4,3 +4,8 @@ httpx==0.28.1
 python-dotenv==1.0.1
 dashscope
 imageio-ffmpeg>=0.4.9
+# MCP Server（mcp_server.py）。mcp==1.2.0 需要 sse-starlette/starlette 版本与 fastapi 对齐，
+# 勿单独升级这三个包，否则会破坏 fastapi（starlette 必须 <0.42）
+mcp==1.2.0
+sse-starlette==1.8.2
+starlette==0.41.3
