@@ -45,6 +45,8 @@
 
 * 💰 **多模型成本阶梯** — LLM / TTS / 文生图均支持多档模型，设置页一键切换，按任务按成本择优
 
+* 🛡️ **服务器运维巡检** — 内置巡检助手：每日早报 + 高危告警自动推送手机（Server酱），甄别模型调用异常、SSH 爆破与攻击扫描，联动 fail2ban 自动封禁
+
 ## 🛠️ 技术栈
 
 | 层   | 选型                                             | 选择理由                                     |
@@ -134,6 +136,7 @@ WordIsle/
 │   ├── auth.py              # 认证 + 角色 + 每日配额
 │   ├── config.py            # 配置（env / 模型常量 / 配额）
 │   ├── middleware.py        # 日志与中间件
+│   ├── ops_monitor.py       # 服务器运维巡检（cron + Server酱 推送）
 │   ├── templates/           # 落地页 / 登录页 / 主应用（Vue3）
 │   ├── static/              # JS（api/assistant/utils/constants）+ CSS + 图片
 │   ├── test_*.py            # 93 个自动化测试用例
