@@ -8,12 +8,13 @@
 <title>词屿 WordIsle · 顽固词疗养岛</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/static/vendor/element-plus.index.css">
 <link rel="stylesheet" href="/static/css/main.css">
+<style>[v-cloak]{display:none!important}</style>
 </head>
 <body>
-<div id="app">
+<div id="app" v-cloak>
   <!-- 移动端汉堡按钮：位于 app-layout 之外，fixed 独立层级（在 header/遮罩之上），不受 header 层叠上下文影响 -->
   <button class="mobile-menu-btn" @click="toggleMobileMenu" aria-label="切换菜单" aria-expanded="false">
     <svg class="icon-burger" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -3356,9 +3357,9 @@
 
 </div>
 
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script src="https://unpkg.com/element-plus"></script>
-<script src="https://unpkg.com/@element-plus/icons-vue"></script>
+<script src="/static/vendor/vue.global.prod.js"></script>
+<script src="/static/vendor/element-plus.full.min.js"></script>
+<script src="/static/vendor/element-plus-icons.iife.min.js"></script>
 <script type="module">
 // 统一 HTTP 请求层（错误规范化 / loading 计数 / 超时 / 重试 / SSE 流式）
 import { api, apiStream } from '/static/js/api.js'
