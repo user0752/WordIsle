@@ -3245,21 +3245,7 @@
     <el-alert type="info" :closable="false" show-icon style="margin-bottom:14px;"
       title="为保障账号安全，需验证原手机验证码与新手机验证码"></el-alert>
     <el-form label-width="90px">
-      <el-form-item label="图形验证码">
-        <div style="width:100%;">
-          <div class="slider-box" id="rebind-slider-box">
-            <img class="slider-bg" id="rebind-slider-bg" alt="滑块验证码背景" draggable="false">
-            <img class="slider-piece" id="rebind-slider-piece" alt="" draggable="false">
-            <button type="button" class="slider-refresh" @click="refreshRebindCaptcha" title="刷新" tabindex="-1">↻</button>
-          </div>
-          <div class="slider-track" style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-            <input type="range" id="rebind-slider-input" min="0" max="244" value="0" aria-label="拖动滑块" style="flex:1;accent-color:#3a7d6a;cursor:pointer;">
-            <span class="slider-hint" id="rebind-slider-x" style="font-size:12px;color:#4c6355;">0</span>
-          </div>
-          <div style="font-size:12px;color:#4c6355;margin-top:6px;">拖动滑块将拼图块对准缺口后，再点击「发送验证码」</div>
-        </div>
-      </el-form-item>
-      <el-form-item v-if="user" label="原手机">
+      <el-form-item label="原手机">
         <span class="text-secondary">{{ user.phone }}</span>
         <el-button link type="primary" style="margin-left:10px" :loading="rebindSendingOld" @click="sendRebindSms('old')">
           发送验证码
@@ -3537,6 +3523,7 @@
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/vendor/element-plus.full.min.js"></script>
 <script src="/static/vendor/element-plus-icons.iife.min.js"></script>
+<script src="/static/js/captcha.js"></script>
 <script type="module">
 // 统一 HTTP 请求层（错误规范化 / loading 计数 / 超时 / 重试 / SSE 流式）
 import { api, apiStream } from '/static/js/api.js'
@@ -3710,62 +3697,44 @@ const app = createApp({
     const rebindSendingOld = ref(false)
     const rebindSendingNew = ref(false)
     const rebindSubmitting = ref(false)
-    let rebindSlider = null   // 换绑弹窗滑块实例（原生 DOM，非响应式）
-    function _createRebindSlider() {
-      // 复用滑块渲染（index.html 无独立 createSlider，内联一份）
-      const bg = document.getElementById('rebind-slider-bg')
-      const piece = document.getElementById('rebind-slider-piece')
-      const input = document.getElementById('rebind-slider-input')
-      const xLabel = document.getElementById('rebind-slider-x')
-      const state = { captchaId: '', x: 0 }
-      function applyX() {
-        state.x = parseInt(input.value, 10) || 0
-        if (piece) { piece.style.left = state.x + 'px'; piece.style.top = '22px' }
-        if (xLabel) xLabel.textContent = state.x
-      }
-      if (input) input.addEventListener('input', applyX)
-      state.refresh = async function () {
-        try {
-          const res = await api('/api/captcha', {}, { withLoading: false })
-          state.captchaId = res.captcha_id
-          if (bg) bg.src = res.bg
-          if (piece) piece.src = res.piece
-          input.max = (res.width - res.piece_size) || 244
-          input.value = 0
-          applyX()
-        } catch (_) {}
-      }
-      return state
-    }
-    async function refreshRebindCaptcha() {
-      if (!rebindSlider) { rebindSlider = _createRebindSlider() }
-      await rebindSlider.refresh()
+    // 弹窗滑块验证（极验交互：点击「发送验证码」才弹出，通过后才发短信）
+    async function openCaptchaModal() {
+      return window.Captcha.open({
+        getCaptcha: () => api('/api/captcha', {}, { withLoading: false }),
+        async verify(captchaId, x) {
+          const d = await api('/api/captcha/verify', {
+            method: 'POST',
+            body: JSON.stringify({ captcha_id: captchaId, captcha_x: String(x) }),
+          }, { withLoading: false })
+          return !!d.ok
+        },
+      })
     }
     function openRebind() {
       rebindOldCode.value = ''
       rebindNewPhone.value = ''
       rebindNewCode.value = ''
       rebindVisible.value = true
-      // 等弹窗渲染完成后初始化滑块
-      setTimeout(() => refreshRebindCaptcha(), 50)
     }
     async function sendRebindSms(which) {
       const phone = which === 'old' ? user.value?.phone : (rebindNewPhone.value || '').trim()
       if (!/^1[3-9]\d{9}$/.test(phone || '')) { ElementPlus.ElMessage.warning('请输入正确的手机号'); return }
-      if (!rebindSlider || !rebindSlider.captchaId || rebindSlider.x < 0) { ElementPlus.ElMessage.warning('请先拖动滑块完成拼图'); return }
+      // 1) 先弹窗完成滑块拼图（失败/取消则中断，不发短信）
+      let got = null
+      try { got = await openCaptchaModal() } catch (_) { got = null }
+      if (!got) return
+      // 2) 滑块通过 → 发送短信
       if (which === 'old') rebindSendingOld.value = true; else rebindSendingNew.value = true
       try {
         const res = await api('/api/sms/send', {
           method: 'POST',
           body: JSON.stringify({
-            phone, captcha_id: rebindSlider.captchaId, captcha_x: String(rebindSlider.x), type: 'rebind',
+            phone, captcha_id: got.captchaId, captcha_x: String(got.x), type: 'rebind',
           }),
         }, { withLoading: false })
         ElementPlus.ElMessage.success('验证码已发送' + (res.test_mode ? '（测试模式：123456）' : ''))
-        await refreshRebindCaptcha()
       } catch (e) {
         ElementPlus.ElMessage.error(e.message || '发送失败')
-        await refreshRebindCaptcha()
       } finally {
         if (which === 'old') rebindSendingOld.value = false; else rebindSendingNew.value = false
       }
@@ -6093,7 +6062,7 @@ const app = createApp({
       ttsWordModel, ttsWordDefault, ttsWordModels, ttsWordVoice, ttsWordVoiceOptions, ttsSaving, loadTtsSettings, saveTtsSettings, onTtsWordModelChange, getVoiceOptions,
       nicknameForm, nicknameSaving, saveNickname,
       pwdChangeVisible, pwdOld, pwdNew, pwdChanging, openPwdChange, doChangePassword,
-      rebindVisible, rebindOldCode, rebindNewPhone, rebindNewCode, refreshRebindCaptcha,
+      rebindVisible, rebindOldCode, rebindNewPhone, rebindNewCode,
       rebindSendingOld, rebindSendingNew, rebindSubmitting, openRebind, sendRebindSms, doRebind,
       ...Icons,
     }

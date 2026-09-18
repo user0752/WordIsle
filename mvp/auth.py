@@ -896,10 +896,25 @@ def _hash_code(code: str) -> str:
 
 @router.get("/api/captcha")
 async def captcha():
-    """滑块拼图验证码：返回 {captcha_id, width, height, piece_size, bg(带洞背景), piece(拼图块)}。
-    目标 x 坐标仅存服务端内存，不下发前端（位图无法被脚本直接解析缺口）。"""
+    """滑块拼图验证码：返回 {captcha_id, width, height, piece_size, bg(带缺口背景), piece(拼图块)}。
+    目标 x 坐标仅存服务端内存，绝不下发前端（位图无法被脚本直接解析缺口）。"""
     from verification import generate_captcha
     return generate_captcha()
+
+
+@router.post("/api/captcha/verify")
+async def captcha_verify(req: Request):
+    """滑块松手校验（弹窗内的即时反馈）：坐标容差内 → 标记 verified（不消费，可同图重试）；
+    失败累积试错次数，超过上限作废。真正的消费在 /api/sms/send（一次性），
+    保证「必须先通过图形验证，才能进入短信发送」。"""
+    from verification import verify_release
+
+    body = await _read_json(req)
+    captcha_id = str(body.get("captcha_id", "")).strip()
+    captcha_x = str(body.get("captcha_x", "")).strip()
+    if not captcha_id or captcha_x == "":
+        raise HTTPException(400, "缺少图形验证码参数")
+    return {"ok": verify_release(captcha_id, captcha_x)}
 
 
 def _sms_sent_count(phone: str, ip: str, since_ts: int) -> tuple[int, int, str]:
@@ -926,8 +941,7 @@ def _sms_sent_count(phone: str, ip: str, since_ts: int) -> tuple[int, int, str]:
 
 @router.post("/api/sms/send")
 async def sms_send(req: Request):
-    """短信验证码发送：图形码校验（一次性）+ 防刷（60s 冷却 / 手机日限 / IP 日限）。"""
-    from verification import verify_captcha
+    """短信验证码发送：滑块图形码校验（两阶段，先 verify 后 consume）+ 防刷（60s 冷却 / 手机日限 / IP 日限）。"""
     from sms import send_sms_code, TEST_MODE_CODE
 
     body = await _read_json(req)
@@ -941,9 +955,8 @@ async def sms_send(req: Request):
     _check_login_lock("ip", ip)   # 防图形验证码暴破短信通道：IP 级锁定同样拦截
     if not captcha_id or captcha_x == "":
         raise HTTPException(401, "缺少图形验证码")
-    if not verify_captcha(captcha_id, captcha_x):
-        raise HTTPException(400, "图形验证码错误或已过期")
 
+    # 业务限制（冷却/日限）先行：限流命中时不应消耗图形验证码，用户可复用同一次验证结果
     now = int(time.time())
     day_start = int(time.mktime(time.strptime(date.today().isoformat(), "%Y-%m-%d")))
     day_phone, day_ip, last_at = _sms_sent_count(phone, ip, day_start)
@@ -958,6 +971,12 @@ async def sms_send(req: Request):
             last_ts = 0
         if now - last_ts < SMS_COOLDOWN_SECONDS:
             raise HTTPException(429, "发送过于频繁，请稍后再试")
+
+    # 图形验证码消费（一次性）：必须已通过弹窗滑块（verified）且坐标在容差内，
+    # 与 /api/captcha/verify 共同构成「滑块通过 → 短信发送」的强制顺序
+    from verification import verify_captcha
+    if not verify_captcha(captcha_id, captcha_x):
+        raise HTTPException(400, "请先完成滑块验证，或验证已过期")
 
     # 生成 6 位验证码：测试模式（未配置短信）用固定码，仍走 sms_codes 落库与校验，
     # 保证注册/升级必须依赖「已发送短信」记录（图形码+频率限制），无法绕开直报。

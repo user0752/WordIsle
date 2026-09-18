@@ -246,19 +246,6 @@
   .sms-btn:disabled { opacity: 0.55; cursor: not-allowed; }
   .reg-hint { margin-top: 14px; font-size: 12px; line-height: 1.7; color: var(--ink-soft); }
   .reg-hint b { color: var(--gold); }
-  /* ---- 滑块拼图验证码 ---- */
-  .slider-box { position: relative; width: 300px; max-width: 100%; height: 100px; border-radius: 12px; overflow: hidden; border: 1px solid rgba(0,0,0,0.10); background: #fff; user-select: none; }
-  .slider-box .slider-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; display: block; }
-  .slider-box .slider-piece { position: absolute; top: 0; left: 0; width: 56px; height: 56px; border-radius: 4px; box-shadow: 0 1px 6px rgba(0,0,0,0.35); pointer-events: none; box-sizing: border-box; }
-  .slider-box .slider-refresh {
-    position: absolute; right: 6px; top: 6px; z-index: 3; cursor: pointer;
-    background: rgba(255,255,255,0.85); border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 8px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
-    font-size: 14px; color: var(--ink-soft);
-  }
-  .slider-track { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
-  .slider-track input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; }
-  .slider-hint { margin-top: 8px; font-size: 12px; color: var(--ink-soft); }
   .upgrade-tip {
     margin-top: 16px; padding: 10px 13px; font-size: 12.5px; line-height: 1.7;
     color: var(--accent-deep); background: var(--accent-soft);
@@ -356,16 +343,6 @@
           <div class="field">
             <input type="text" id="reg-phone" inputmode="numeric" autocomplete="tel" placeholder="请输入手机号" required>
           </div>
-          <label for="reg-captcha">图形验证码 · 拖动滑块完成拼图</label>
-          <div class="slider-box" id="reg-slider-box">
-            <img class="slider-bg" id="reg-slider-bg" alt="滑块验证码背景" draggable="false">
-            <img class="slider-piece" id="reg-slider-piece" alt="" draggable="false">
-            <button type="button" class="slider-refresh" onclick="refreshCaptcha()" title="刷新" tabindex="-1">↻</button>
-          </div>
-          <div class="slider-track">
-            <input type="range" id="reg-slider-input" min="0" max="244" value="0" aria-label="拖动滑块">
-            <span class="slider-hint" id="reg-slider-x">0</span>
-          </div>
           <label for="reg-smscode">短信验证码</label>
           <div class="reg-row">
             <div class="field">
@@ -393,16 +370,6 @@
           <div class="field">
             <input type="text" id="reset-phone" inputmode="numeric" autocomplete="tel" placeholder="请输入绑定手机号" required>
           </div>
-          <label for="reset-captcha">图形验证码 · 拖动滑块完成拼图</label>
-          <div class="slider-box" id="reset-slider-box">
-            <img class="slider-bg" id="reset-slider-bg" alt="滑块验证码背景" draggable="false">
-            <img class="slider-piece" id="reset-slider-piece" alt="" draggable="false">
-            <button type="button" class="slider-refresh" onclick="refreshResetCaptcha()" title="刷新" tabindex="-1">↻</button>
-          </div>
-          <div class="slider-track">
-            <input type="range" id="reset-slider-input" min="0" max="244" value="0" aria-label="拖动滑块">
-            <span class="slider-hint" id="reset-slider-x">0</span>
-          </div>
           <label for="reset-smscode">短信验证码</label>
           <div class="reg-row">
             <div class="field">
@@ -422,11 +389,10 @@
   </main>
 </div>
 
+<script src="/static/js/captcha.js"></script>
 <script>
 // ---- 登录/注册 tab 切换 ----
 let isUpgrade = false   // 当前会话是否为游客（决定提交注册 or 游客升级）
-let regSlider = null    // 注册/游客升级滑块实例（声明须在 detectSession 之前，避免 TDZ）
-let resetSlider = null  // 忘记密码滑块实例
 
 function switchTab(tabName) {
   document.getElementById('tab-login').classList.toggle('active', tabName === 'login')
@@ -436,7 +402,6 @@ function switchTab(tabName) {
   document.getElementById('pane-register').style.display = tabName === 'register' ? '' : 'none'
   document.getElementById('pane-reset').style.display = tabName === 'reset' ? '' : 'none'
   if (tabName === 'register') {
-    refreshCaptcha()
     if (isUpgrade) {
       document.getElementById('reg-title').textContent = '游客升级'
       document.getElementById('upgrade-tip').style.display = 'block'
@@ -447,7 +412,6 @@ function switchTab(tabName) {
       document.getElementById('btn-register').textContent = '注 册'
     }
   }
-  if (tabName === 'reset') refreshResetCaptcha()
 }
 
 // ---- 忘记密码：滑块验证码 / 短信 / 重置 ----
@@ -468,20 +432,48 @@ function resetSmsCountdown(seconds) {
   }, 1000)
 }
 
+// ---- 弹窗滑块验证（极验交互：点击「获取验证码」才弹出，通过后才发短信） ----
+function openCaptchaModal() {
+  return window.Captcha.open({
+    getCaptcha() {
+      return fetch('/api/captcha', { cache: 'no-store' }).then((r) => {
+        if (!r.ok) throw new Error('获取验证码失败')
+        return r.json()
+      })
+    },
+    async verify(captchaId, x) {
+      const r = await fetch('/api/captcha/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ captcha_id: captchaId, captcha_x: String(x) }),
+      })
+      const d = await r.json().catch(() => ({}))
+      return !!d.ok
+    },
+  })
+}
+
 async function sendResetSms() {
   const phone = document.getElementById('reset-phone').value.trim()
   if (!/^1[3-9]\d{9}$/.test(phone)) { showErr('err-reset', '请输入正确的手机号'); return }
-  if (!resetSlider || resetSlider.x < 0 || !resetSlider.captchaId) { showErr('err-reset', '请先拖动滑块完成拼图'); return }
   showErr('err-reset', '')
   const btn = document.getElementById('btn-reset-sms')
-  const oldText = btn.textContent
+  btn.disabled = true
+  btn.textContent = '验证中…'
+  // 1) 先弹窗完成滑块拼图（失败/取消则中断，不发短信）
+  let got = null
+  try { got = await openCaptchaModal() } catch (_) { got = null }
+  btn.disabled = false
+  btn.textContent = '获取验证码'
+  if (!got) return  // 用户取消或加载失败：不发短信
+  // 2) 滑块通过 → 发送短信
   btn.disabled = true
   btn.textContent = '发送中…'
   try {
     const resp = await fetch('/api/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, captcha_id: resetSlider.captchaId, captcha_x: String(resetSlider.x), type: 'reset' }),
+      body: JSON.stringify({ phone, captcha_id: got.captchaId, captcha_x: String(got.x), type: 'reset' }),
     })
     const data = await resp.json().catch(() => ({}))
     if (resp.ok) {
@@ -489,16 +481,16 @@ async function sendResetSms() {
       document.getElementById('err-reset').style.color = 'var(--accent-deep)'
       document.getElementById('err-reset').textContent = '验证码已发送' + (data.test_mode ? '（测试模式：123456）' : '，请查收短信')
       resetSmsCountdown(60)
+      btn.disabled = true
     } else {
       showErr('err-reset', data.detail || '发送失败，请稍后重试')
       btn.disabled = false
-      btn.textContent = oldText
-      refreshResetCaptcha()
+      btn.textContent = '获取验证码'
     }
   } catch (err) {
     showErr('err-reset', '网络错误，请稍后重试')
     btn.disabled = false
-    btn.textContent = oldText
+    btn.textContent = '获取验证码'
   }
 }
 
@@ -521,7 +513,6 @@ async function doReset(e) {
     if (resp.ok) { location.href = '/app'; return }
     const data = await resp.json().catch(() => ({}))
     showErr('err-reset', data.detail || '重置失败，请稍后重试')
-    refreshResetCaptcha()
   } catch (err) {
     showErr('err-reset', '网络错误，请稍后重试')
   } finally {
@@ -530,9 +521,8 @@ async function doReset(e) {
   }
 }
 
-// ---- 页面加载：探测当前会话是否为游客（游客可直接升级），并预创建注册页滑块 ----
+// ---- 页面加载：探测当前会话是否为游客（游客可直接升级） ----
 ;(async function detectSession() {
-  regSlider = createSlider('reg')     // 预生成注册滑块（切换 tab 时已就绪）
   try {
     const resp = await fetch('/api/me')
     if (!resp.ok) return
@@ -544,45 +534,6 @@ async function doReset(e) {
     }
   } catch (_) {}
 })()
-
-// ---- 滑块拼图验证码：通用渲染与控制 ----
-// 每个滑块一套状态：{captchaId, x}，通过闭包绑定到指定 DOM 容器
-function createSlider(prefix) {
-  const bg = document.getElementById(prefix + '-slider-bg')
-  const piece = document.getElementById(prefix + '-slider-piece')
-  const input = document.getElementById(prefix + '-slider-input')
-  const xLabel = document.getElementById(prefix + '-slider-x')
-  const state = { captchaId: '', x: 0 }
-
-  function applyX() {
-    state.x = parseInt(input.value, 10) || 0
-    piece.style.left = state.x + 'px'
-    piece.style.top = '22px'          // (100-56)/2 垂直居中
-    if (xLabel) xLabel.textContent = state.x
-  }
-  input.addEventListener('input', applyX)
-
-  async function refresh() {
-    try {
-      const resp = await fetch('/api/captcha', { cache: 'no-store' })
-      if (!resp.ok) return
-      const d = await resp.json()
-      state.captchaId = d.captcha_id
-      bg.src = d.bg
-      piece.src = d.piece
-      // 画布 300 宽、拼图 56，滑块 max = 300-56 = 244
-      input.max = (d.width - d.piece_size) || 244
-      input.value = 0
-      applyX()
-    } catch (_) {}
-  }
-  state.refresh = refresh     // 刷新由外部（refreshCaptcha/refreshResetCaptcha）调用
-  refresh()
-  return state
-}
-
-function refreshCaptcha() { if (regSlider) regSlider.refresh(); else regSlider = createSlider('reg') }
-function refreshResetCaptcha() { if (resetSlider) resetSlider.refresh(); else resetSlider = createSlider('reset') }
 
 let smsTimer = null
 function smsCountdown(seconds) {
@@ -604,17 +555,24 @@ function smsCountdown(seconds) {
 async function sendSmsCode() {
   const phone = document.getElementById('reg-phone').value.trim()
   if (!/^1[3-9]\d{9}$/.test(phone)) { showErr('err-register', '请输入正确的手机号'); return }
-  if (!regSlider || regSlider.x < 0 || !regSlider.captchaId) { showErr('err-register', '请先拖动滑块完成拼图'); return }
   showErr('err-register', '')
   const btn = document.getElementById('btn-sms')
-  const oldText = btn.textContent
+  btn.disabled = true
+  btn.textContent = '验证中…'
+  // 1) 先弹窗完成滑块拼图（失败/取消则中断，不发短信）
+  let got = null
+  try { got = await openCaptchaModal() } catch (_) { got = null }
+  btn.disabled = false
+  btn.textContent = '获取验证码'
+  if (!got) return  // 用户取消或加载失败：不发短信
+  // 2) 滑块通过 → 发送短信
   btn.disabled = true
   btn.textContent = '发送中…'
   try {
     const resp = await fetch('/api/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, captcha_id: regSlider.captchaId, captcha_x: String(regSlider.x),
+      body: JSON.stringify({ phone, captcha_id: got.captchaId, captcha_x: String(got.x),
                              type: isUpgrade ? 'guest_upgrade' : 'register' }),
     })
     const data = await resp.json().catch(() => ({}))
@@ -625,13 +583,12 @@ async function sendSmsCode() {
     } else {
       showErr('err-register', data.detail || '发送失败，请稍后重试')
       btn.disabled = false
-      btn.textContent = oldText
-      refreshCaptcha()
+      btn.textContent = '获取验证码'
     }
   } catch (err) {
     showErr('err-register', '网络错误，请稍后重试')
     btn.disabled = false
-    btn.textContent = oldText
+    btn.textContent = '获取验证码'
   }
 }
 
@@ -654,7 +611,6 @@ async function doRegister(e) {
     if (resp.ok) { location.href = '/app'; return }
     const data = await resp.json().catch(() => ({}))
     showErr('err-register', data.detail || '操作失败，请稍后重试')
-    refreshCaptcha()
   } catch (err) {
     showErr('err-register', '网络错误，请稍后重试')
   } finally {

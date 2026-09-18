@@ -2,7 +2,8 @@
 
 覆盖：
   1. 注册：手机号+短信码+密码 → 创建 user 账号、赠 50 币、自动登录；重复手机号 409
-  2. 验证码：缺图形码 401、图形码错 400、60s 冷却 429
+  2. 验证码（两阶段）：/api/captcha/verify 松手校验（通过标记不消费）；
+     /api/sms/send 消费（须先 verified，一次性）；未过滑块 400、缺码 401、60s 冷却 429
   3. 计费：注册用户生成扣费（流水 balance_after 正确）；余额不足 402；dev/admin 不扣费；
      guest 仍按每日配额
   4. 赠送：注册 +50、游客升级再 +50
@@ -96,6 +97,13 @@ class BillingTestCase(unittest.TestCase):
         cid = verification_module.new_captcha_id(str(target))
         return cid, str(target)
 
+    def _verify_captcha(self, cid, x):
+        """模拟前端弹窗松手：POST /api/captcha/verify，返回响应 JSON。"""
+        return self.client.post(
+            "/api/captcha/verify",
+            json={"captcha_id": cid, "captcha_x": str(x)},
+        ).json()
+
     # ---------------- 注册 ----------------
 
     def test_register_success_creates_user_with_balance(self):
@@ -135,44 +143,98 @@ class BillingTestCase(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("验证码", r.json()["detail"])
 
-    # ---------------- 验证码 ----------------
+    # ---------------- 图形验证码（两阶段：先 verify 标记，后 sms 消费） ----------------
+
+    def test_captcha_verify_endpoint(self):
+        """弹窗松手校验：正确坐标 → ok=True（不消费，可重复通过）；错误坐标 → ok=False。"""
+        cid, captcha_x = self._get_captcha()
+        r1 = self._verify_captcha(cid, captcha_x)
+        self.assertTrue(r1["ok"])
+        # 标记态不消费：同 id 重新校验仍通过
+        r2 = self._verify_captcha(cid, captcha_x)
+        self.assertTrue(r2["ok"])
+        # 错误坐标 → ok=False
+        cid2, _ = self._get_captcha()
+        r3 = self._verify_captcha(cid2, "10")
+        self.assertFalse(r3["ok"])
+        # 缺参数 → 400
+        r4 = self.client.post("/api/captcha/verify", json={"captcha_x": "10"})
+        self.assertEqual(r4.status_code, 400)
 
     def test_sms_send_requires_captcha(self):
         r = self.client.post("/api/sms/send", json={"phone": "13800000004"})
         self.assertEqual(r.status_code, 401)
 
-    def test_sms_send_wrong_captcha_400(self):
-        # captcha_id 不存在 / captcha_x 错误坐标均 400
+    def test_sms_send_rejects_unverified_captcha_400(self):
+        """未通过滑块直接要求发短信（绕过 /api/captcha/verify）→ 400。"""
+        cid, captcha_x = self._get_captcha()
         r = self.client.post(
+            "/api/sms/send",
+            json={"phone": "13800000004", "captcha_id": cid, "captcha_x": captcha_x},
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("滑块", r.json()["detail"])
+        # 不存在的 captcha_id 同样 400
+        r2 = self.client.post(
             "/api/sms/send",
             json={"phone": "13800000004", "captcha_id": "nope", "captcha_x": "150"},
         )
-        self.assertEqual(r.status_code, 400)
-        cid, _ = self._get_captcha()
+        self.assertEqual(r2.status_code, 400)
+
+    def test_sms_send_verified_captcha_then_consumes(self):
+        """通过滑块后发短信 200；同一 captcha_id 二次使用 → 400（一次性消费）。
+        第二次换手机号以绕开 60s 冷却（冷却在图形码消费之前判定），确保命中「验证码已消费」。"""
+        cid, captcha_x = self._get_captcha()
+        self._verify_captcha(cid, captcha_x)
+        body = {"phone": "13800000021", "captcha_id": cid, "captcha_x": captcha_x}
+        self.assertEqual(self.client.post("/api/sms/send", json=body).status_code, 200)
         r2 = self.client.post(
-            "/api/sms/send",
-            json={"phone": "13800000004", "captcha_id": cid, "captcha_x": "10"},
+            "/api/sms/send", json={"phone": "13800000022", "captcha_id": cid, "captcha_x": captcha_x}
         )
         self.assertEqual(r2.status_code, 400)
 
+    def test_sms_send_wrong_captcha_400(self):
+        # 错误坐标松手 → verify 失败 → 发短信 400
+        cid, _ = self._get_captcha()
+        self._verify_captcha(cid, "10")
+        r = self.client.post(
+            "/api/sms/send",
+            json={"phone": "13800000004", "captcha_id": cid, "captcha_x": "10"},
+        )
+        self.assertEqual(r.status_code, 400)
+
     def test_sms_send_cooldown_429(self):
         cid, captcha_x = self._get_captcha()
+        self._verify_captcha(cid, captcha_x)
         body = {"phone": "13800000005", "captcha_id": cid, "captcha_x": captcha_x}
         self.assertEqual(self.client.post("/api/sms/send", json=body).status_code, 200)
         cid2, captcha_x2 = self._get_captcha()
+        self._verify_captcha(cid2, captcha_x2)
         r2 = self.client.post(
             "/api/sms/send", json={"phone": "13800000005", "captcha_id": cid2, "captcha_x": captcha_x2}
         )
         self.assertEqual(r2.status_code, 429)
 
     def test_sms_send_tolerance_ok(self):
-        """容差内坐标（target±TOLERANCE）应通过，验证滑块容差语义（函数级，避免短信冷却）。"""
+        """容差内坐标（target±TOLERANCE）应通过：松手校验 + 最终消费（函数级，避免短信冷却）。"""
         target = 150
         for dx in (-TOLERANCE, 0, TOLERANCE):
             cid = verification_module.new_captcha_id(str(target))
-            self.assertTrue(verification_module.verify_captcha(cid, str(target + dx)), f"容差 {dx} 应通过")
+            self.assertTrue(
+                verification_module.verify_release(cid, str(target + dx)), f"松手容差 {dx} 应通过"
+            )
+            self.assertTrue(
+                verification_module.verify_captcha(cid, str(target + dx)), f"消费容差 {dx} 应通过"
+            )
+        # 未 verified 直接消费 → 拒绝（须先通过滑块）
+        cid_un = verification_module.new_captcha_id(str(target))
+        self.assertFalse(verification_module.verify_captcha(cid_un, str(target)))
+        # 超容差 → 松手拒绝且消费拒绝
         cid_out = verification_module.new_captcha_id(str(target))
-        self.assertFalse(verification_module.verify_captcha(cid_out, str(target + TOLERANCE + 1)), "超容差应拒绝")
+        self.assertFalse(
+            verification_module.verify_release(cid_out, str(target + TOLERANCE + 1)), "超容差应拒绝"
+        )
+        self.assertFalse(verification_module.verify_captcha(cid_out, str(target)), "未通过不应可消费")
 
     # ---------------- 计费 ----------------
 
