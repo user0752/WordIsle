@@ -48,6 +48,9 @@
         <el-tooltip v-if="isGuest" content="游客数据仅保存在当前浏览器（Cookie 30 天），清除缓存或换设备将无法找回" placement="bottom">
           <el-icon class="guest-warn" :size="14"><Warning /></el-icon>
         </el-tooltip>
+        <button v-if="isUser" class="coin-chip" @click="openBilling" title="岛屿币余额，点击查看明细/充值">
+          🪙 {{ balance }} 币
+        </button>
         <el-button link size="small" @click="logout">退出登录</el-button>
       </div>
     </header>
@@ -3146,6 +3149,45 @@
     </template>
   </el-dialog>
 
+  <!-- ======================== 岛屿币 · 余额明细与充值 ======================== -->
+  <el-dialog v-model="billingVisible" title="🪙 岛屿币账户" width="480px" @close="stopBillingTick">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <div style="flex:1;padding:14px 16px;border-radius:14px;background:linear-gradient(140deg,var(--accent-deep),var(--accent));color:#f7f2e6;">
+        <div style="font-size:12px;opacity:.82;letter-spacing:1px;">当前余额</div>
+        <div style="font-size:26px;font-weight:800;font-family:var(--serif,'Noto Serif SC',serif);margin-top:2px;">{{ balance }} 岛屿币</div>
+      </div>
+      <el-button type="primary" @click="openRedeem">卡密充值</el-button>
+    </div>
+
+    <div v-if="redeemVisible" style="display:flex;gap:8px;margin-bottom:14px;">
+      <el-input v-model="redeemCode" placeholder="输入 8 位充值卡密" maxlength="16" clearable @keyup.enter="doRedeem"/>
+      <el-button type="primary" @click="doRedeem" :loading="redeeming">兑换</el-button>
+    </div>
+
+    <div style="font-size:13px;font-weight:700;color:var(--text-secondary);margin-bottom:8px;">各功能单价</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;">
+      <div v-for="(price, bk) in billingPrices" :key="bk" style="padding:8px 10px;border-radius:10px;background:var(--bg-soft);border:1px solid var(--border-subtle);font-size:12.5px;text-align:center;">
+        <div style="color:var(--text-secondary);">{{ billingLabel(bk) }}</div>
+        <div style="font-weight:700;color:var(--accent-dark);margin-top:2px;">{{ price }} 币/次</div>
+      </div>
+    </div>
+
+    <div style="font-size:13px;font-weight:700;color:var(--text-secondary);margin-bottom:8px;">最近消费记录</div>
+    <el-table :data="billingTx" size="small" style="width:100%" max-height="220">
+      <el-table-column label="类型" width="110">
+        <template #default="{ row }">{{ billingTypeLabel(row.type) }}</template>
+      </el-table-column>
+      <el-table-column label="金额" width="90">
+        <template #default="{ row }">
+          <span :style="{color: row.amount >= 0 ? 'var(--accent)' : 'var(--danger)'}">{{ row.amount >= 0 ? '+' : '' }}{{ row.amount }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="时间" min-width="140">
+        <template #default="{ row }">{{ row.created_at }}</template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
+
   <!-- ======================== 词小屿 · 全局智能助手 ======================== -->
   <div class="cxy-root" v-if="user">
     <!-- 对话面板 -->
@@ -3407,15 +3449,74 @@ const app = createApp({
     // ====== 用户身份与每日配额 ======
     const user = ref(null)          // {uid, username, role}
     const limits = ref({})          // bucket -> {label, limit, used, remaining}
-    const roleLabel = computed(() => ({ dev: '开发者', admin: '管理员', guest: '游客' }[user.value?.role] || ''))
+    const balance = ref(0)          // 岛屿币余额（注册用户余额制）
+    const roleLabel = computed(() => ({ dev: '开发者', admin: '管理员', guest: '游客', user: '注册用户' }[user.value?.role] || ''))
     const isGuest = computed(() => user.value?.role === 'guest')
+    const isUser = computed(() => user.value?.role === 'user')
     async function loadMe() {
       try {
         const res = await api('/api/me', {}, { withLoading: false })
         user.value = res
         limits.value = res.limits || {}
+        balance.value = res.balance ?? 0
       } catch (e) {
         if (e.status === 401) { window.location.href = '/login' }
+      }
+    }
+
+    // ====== 岛屿币账户（余额明细 + 充值） ======
+    const billingVisible = ref(false)
+    const redeemVisible = ref(false)
+    const redeemCode = ref('')
+    const redeeming = ref(false)
+    const billingPrices = ref({})
+    const billingTx = ref([])
+    const billingTick = ref(null)
+    const BILLING_LABELS = {
+      video: '视频编译', scene: '场景编译', batch: '批量编译', single: '单点深耕',
+      polysemy: '熟词僻意', morpheme: '构词拆解', extract: '文章提词', enrich: '单词补充',
+      assistant: '词小屿对话',
+    }
+    const BILLING_TYPE_LABELS = {
+      register_gift: '注册赠送', upgrade_gift: '升级赠送', redeem: '卡密充值',
+      consume: '生成消费', admin_credit: '后台充值',
+    }
+    function billingLabel(bk) { return BILLING_LABELS[bk] || bk || '' }
+    function billingTypeLabel(t) { return BILLING_TYPE_LABELS[t] || t || '' }
+    async function openBilling() {
+      billingVisible.value = true
+      redeemVisible.value = false
+      if (billingTick.value) { clearInterval(billingTick.value); billingTick.value = null }  // 防重复叠加
+      refreshBilling()
+      billingTick.value = setInterval(refreshBilling, 30000)
+    }
+    async function refreshBilling() {
+      try {
+        const res = await api('/api/billing', {}, { withLoading: false })
+        balance.value = res.balance ?? balance.value
+        billingPrices.value = res.prices || {}
+        billingTx.value = res.transactions || []
+      } catch (_) { /* 关闭弹窗时静默 */ }
+    }
+    function stopBillingTick() {
+      if (billingTick.value) { clearInterval(billingTick.value); billingTick.value = null }
+    }
+    function openRedeem() { redeemVisible.value = true }
+    async function doRedeem() {
+      const code = (redeemCode.value || '').trim()
+      if (!code) { ElementPlus.ElMessage.warning('请输入充值卡密'); return }
+      redeeming.value = true
+      try {
+        const res = await api('/api/redeem', { method: 'POST', body: JSON.stringify({ code }) }, { withLoading: false })
+        balance.value = res.balance
+        redeemCode.value = ''
+        redeemVisible.value = false
+        ElementPlus.ElMessage.success(`充值成功，到账 ${res.amount} 岛屿币`)
+        refreshBilling()
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '兑换失败')
+      } finally {
+        redeeming.value = false
       }
     }
     async function logout() {
@@ -3432,11 +3533,18 @@ const app = createApp({
       const l = limits.value[bucket]
       return !!(l && l.limit >= 0 && l.remaining <= 0)
     }
-    /** 生成按钮旁的配额提示文案：dev/admin 不显示，游客显示"今日剩余 N 次"。 */
+    /** 生成按钮旁的额度提示文案：
+     *  - dev/admin 不显示
+     *  - 注册用户（user）余额制：显示"余额可生成 N 次"
+     *  - 游客显示"今日剩余 N 次" */
     function quotaHint(bucket) {
       if (!user.value || user.value.role === 'dev' || user.value.role === 'admin') return ''
       const l = limits.value[bucket]
-      if (!l || l.limit < 0) return ''
+      if (!l) return ''
+      if (user.value.role === 'user') {
+        return l.remaining >= 0 ? `可再生成 ${l.remaining} 次` : ''
+      }
+      if (l.limit < 0) return ''
       return `今日剩余 ${Math.max(0, l.remaining)} 次`
     }
     // ====== 数据治理：一键清理疑似测试残留词（仅开发者/管理员） ======
@@ -3605,7 +3713,7 @@ const app = createApp({
     const dashUserRowsVisible = computed(() =>
       dashUserExpanded.value ? dashUserRows.value : dashUserRows.value.slice(0, 5))
     function dashRoleLabel(role) {
-      return ({ dev: '开发者', admin: '管理员', guest: '游客' })[role] || role || ''
+      return ({ dev: '开发者', admin: '管理员', guest: '游客', user: '注册用户' })[role] || role || ''
     }
     const dashTypeMax = computed(() => {
       const t = dashData.value?.type_dist || []
@@ -5536,7 +5644,17 @@ const app = createApp({
       migrateSelfTestToReview()
       loadTtsSettings()  // 编译表单音色下拉依赖该数据，需在启动时一并加载
       assistant.init()   // 词小屿：拉取配置状态（LLM 是否可用）
+      // 余额不足（402）→ 自动弹出岛屿币充值引导
+      window.addEventListener('wordisle:insufficient-balance', handleInsufficientBalance)
     })
+
+    async function handleInsufficientBalance() {
+      if (!isUser.value) return
+      await refreshBilling()
+      billingVisible.value = true
+      redeemVisible.value = false
+      ElementPlus.ElMessage.warning('余额不足，本次操作未完成，请充值岛屿币')
+    }
 
     // 模型选项加载完成后，恢复表单偏好（严格校验模型仍存在，避免失效模型）
     let prefsRestored = false
@@ -5626,7 +5744,10 @@ const app = createApp({
       healedData, healedLoading, loadHealed, therapyTags, unhealWord,
       startSelfTest, revealSelfTest, finishSelfTest,
       artStyleOptions,
-      user, limits, roleLabel, isGuest, loadMe, logout, quotaLeft, quotaExhausted, quotaHint,
+      user, limits, roleLabel, isGuest, isUser, balance, loadMe, logout, quotaLeft, quotaExhausted, quotaHint,
+      billingVisible, billingPrices, billingTx, billingLabel, billingTypeLabel,
+      openBilling, stopBillingTick, openRedeem, redeemVisible, redeemCode, doRedeem, redeeming,
+      handleInsufficientBalance,
       assistant,
       cleaningData, cleanSuspicious,
       isMobile, isRowSelected, toggleCardSelect,

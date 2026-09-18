@@ -111,6 +111,72 @@ def ensure_db_initialized(uid: str):
     init_db(uid)
     _initialized_dbs.add(uid)
 
+
+def migrate_user_db(src_uid: str, dst_uid: str) -> int:
+    """把 src_uid 的业务库数据整体迁移到 dst_uid 库（游客升级为正式账号用）。
+
+    - 目标库不存在时先初始化（ensure_db_initialized）
+    - 用 ATTACH 挂 src 库，遍历业务表；自增主键表去掉 id 列让目标库重建
+    - UNIQUE 冲突直接跳过（INSERT OR IGNORE，如 words 全网唯一词）
+    - 迁移成功后删除 src 库文件并从进程缓存移除
+    返回成功迁移的 words 条数（供前端提示）；src 库不存在返回 0。
+    """
+    ensure_db_initialized(dst_uid)
+    src_path = _user_db_path(src_uid)
+    copied_words = 0
+    if not src_path.exists():
+        return copied_words
+    conn = get_db(dst_uid)
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("ATTACH DATABASE ? AS src", (str(src_path),))
+        tables = [
+            r["name"]
+            for r in conn.execute(
+                "SELECT name FROM src.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        ]
+        # 全列原样复制（含 id 主键）：目标库为新空库，无自增冲突；
+        # 保留原 id 才能维持外键引用的一致性（如 word_scenes.word_id ↔ words.id、
+        # audios.generation_id ↔ generations.id），否则自增重建后关联断裂、数据死链。
+        for t in tables:
+            if t == "sqlite_sequence":  # 自增计数器无关业务，不迁移
+                continue
+            try:
+                cols = [r["name"] for r in conn.execute(f"PRAGMA src.table_info('{t}')").fetchall()]
+            except Exception:
+                continue
+            if not cols:
+                continue
+            col_list = ",".join(cols)
+            cur = conn.execute(
+                f"INSERT OR IGNORE INTO {t} ({col_list}) SELECT {col_list} FROM src.{t}"
+            )
+            if t == "words":
+                copied_words = cur.rowcount
+        conn.commit()
+        conn.execute("DETACH DATABASE src")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        try:
+            conn.execute("DETACH DATABASE src")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+    # 迁移成功：清理缓存并删除旧库文件（保留 system.db 中的 guest 行做审计）
+    _initialized_dbs.discard(src_uid)
+    try:
+        src_path.unlink()
+    except OSError:
+        pass
+    return copied_words
+
+
 # ========================================================================
 # SQLite 数据库
 # ========================================================================

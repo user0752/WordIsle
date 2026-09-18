@@ -457,3 +457,41 @@ AUTH_MAX_AGE = 30 * 24 * 3600  # 30 天
 
 # 本地开发/回归测试可整体关闭认证（中间件放行、/api/me 返回默认开发者身份）
 AUTH_DISABLED = os.getenv("AUTH_DISABLED", "") == "1"
+
+# ========================================================================
+# 注册用户余额计费（按使用额度付费）
+#   - 游客：每日配额（GUEST_LIMITS）
+#   - 注册用户 role=user：账户余额制，每次生成按 bucket 单价扣减，不足 402
+#   - dev/admin：无限量
+# ========================================================================
+
+# bucket → 单价（岛屿币/次）。VIDEO 等重操作单价高
+BUCKET_PRICES = {
+    "video": 10, "scene": 5, "batch": 2, "single": 2,
+    "polysemy": 1, "morpheme": 1, "extract": 1, "enrich": 1, "assistant": 1,
+}
+
+# 新用户注册赠送 / 游客升级追加赠送（岛屿币）
+REGISTER_GIFT = 50
+UPGRADE_GIFT = 50
+
+# ========================================================================
+# 手机号注册 - 图形验证码（SVG，零依赖）+ 阿里云短信
+# ========================================================================
+
+# 图形验证码：内存态，一次性，300 秒过期，尝试 5 次作废
+CAPTCHA_TTL = 300
+CAPTCHA_MAX_TRIES = 5
+
+# 短信验证码：6 位数字，SHA256 存储，5 分钟有效，尝试 5 次作废
+SMS_CODE_TTL = 300
+SMS_MAX_TRIES = 5
+SMS_COOLDOWN_SECONDS = 60          # 同手机重发冷却
+SMS_DAILY_PER_PHONE = 5            # 同手机每日发送上限
+SMS_DAILY_PER_IP = 10              # 同 IP 每日发送上限
+
+# 阿里云短信（Dysmsapi）。未配置 KEY 时自动降级「测试模式」：验证码固定 123456 + 日志打码
+ALIYUN_SMS_ACCESS_KEY_ID = os.getenv("ALIYUN_SMS_ACCESS_KEY_ID", "")
+ALIYUN_SMS_ACCESS_KEY_SECRET = os.getenv("ALIYUN_SMS_ACCESS_KEY_SECRET", "")
+ALIYUN_SMS_SIGN_NAME = os.getenv("ALIYUN_SMS_SIGN_NAME", "")
+ALIYUN_SMS_TEMPLATE_CODE = os.getenv("ALIYUN_SMS_TEMPLATE_CODE", "")

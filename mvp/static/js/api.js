@@ -77,6 +77,11 @@ function _handle401(resp) {
   }
 }
 
+/** 402 余额不足（注册用户额度用尽）：派发全局事件，页面监听后弹出充值引导。 */
+function _handle402() {
+  window.dispatchEvent(new CustomEvent('wordisle:insufficient-balance'))
+}
+
 // ---------------------------------------------------------------------------
 // 通用请求
 //   签名与原 index.html 里的 api() 兼容，另支持可选配置：
@@ -103,6 +108,7 @@ export async function api(url, opts = {}, cfg = {}) {
         })
         if (!resp.ok) {
           _handle401(resp)
+          if (resp.status === 402) _handle402()
           const errObj = await _toError(resp)
           if (attempt < retries && _isRetryable(errObj)) {
             attempt++
@@ -161,6 +167,7 @@ export async function apiStream(url, opts = {}, { onStep, onResult, onTool, onDo
     })
     if (!resp.ok) {
       _handle401(resp)
+      if (resp.status === 402) _handle402()
       const errObj = await _toError(resp)
       throw new Error(errObj.msg)
     }

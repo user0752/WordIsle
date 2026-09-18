@@ -1,11 +1,14 @@
 """
 WordIsle MVP 用户系统
 ==================
-- 全局库 system.db：users（账号）+ quotas（每日配额，跨用户维度）
+- 全局库 system.db：users（账号）+ quotas（每日配额，跨用户维度）+
+  sms_codes（短信验证码）/ transactions（余额流水）/ redeem_codes（充值卡密）
 - 会话：HMAC 签名 HttpOnly Cookie（无状态，不建 session 表）
 - 认证依赖 get_current_user：解析 Cookie → 写入 current_uid contextvar → 返回用户信息
-- 每日配额：check/consume 原子 UPSERT，dev/admin 不限量
-- 认证 API：/api/login、/api/login-guest、/api/logout、/api/me + 登录页 /login
+- 配额/计费：游客按每日配额（GUEST_LIMITS）；注册用户（user）按账户余额
+  扣费（BUCKET_PRICES 单价，不足 402）；dev/admin 不限量
+- 认证 API：/api/login、/api/login-guest、/api/logout、/api/me、注册/升级/充值 +
+  登录页 /login
 
 设计依据：《优化方案_用户系统与移动端适配.md》第 3 节。
 """
@@ -13,6 +16,7 @@ WordIsle MVP 用户系统
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -24,11 +28,12 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
 from config import *
-from db import current_uid, current_user, ensure_db_initialized, setup_stream_logger
+from db import current_uid, current_user, ensure_db_initialized, migrate_user_db, setup_stream_logger
 
 ROLE_DEV = "dev"
 ROLE_ADMIN = "admin"
 ROLE_GUEST = "guest"
+ROLE_USER = "user"
 
 router = APIRouter()
 
@@ -83,6 +88,30 @@ def _seed_user(conn, username: str, password: str, role: str):
     )
 
 
+def _migrate_users_table(conn):
+    """幂等迁移 users 表：新增 phone / phone_verified / balance 列，role 扩为 user。
+    未迁移前迁移；已含 phone 列则跳过。对齐 _migrate_words_table 的建新表→搬运→切换风格。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "phone" in cols:
+        return
+    conn.executescript("""
+        CREATE TABLE users_new (
+            uid TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL CHECK (role IN ('dev','admin','guest','user')),
+            phone TEXT DEFAULT '',
+            phone_verified INTEGER DEFAULT 0,
+            balance INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        INSERT INTO users_new (uid, username, password_hash, role, created_at)
+            SELECT uid, username, password_hash, role, created_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+    """)
+
+
 def init_system_db():
     """初始化全局库：建表 + 播种开发者/管理员账号（幂等）。"""
     conn = get_system_conn()
@@ -92,7 +121,10 @@ def init_system_db():
                 uid TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL DEFAULT '',
-                role TEXT NOT NULL CHECK (role IN ('dev','admin','guest')),
+                role TEXT NOT NULL CHECK (role IN ('dev','admin','guest','user')),
+                phone TEXT DEFAULT '',
+                phone_verified INTEGER DEFAULT 0,
+                balance INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
             CREATE TABLE IF NOT EXISTS quotas (
@@ -102,7 +134,40 @@ def init_system_db():
                 cnt    INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (day, uid, bucket)
             );
+            CREATE TABLE IF NOT EXISTS sms_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                type TEXT DEFAULT 'register',
+                expire_at INTEGER NOT NULL,
+                used INTEGER DEFAULT 0,
+                try_count INTEGER DEFAULT 0,
+                ip TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sms_phone ON sms_codes(phone, id);
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid TEXT NOT NULL,
+                type TEXT NOT NULL,          -- register_gift/upgrade_gift/redeem/consume/admin_credit
+                bucket TEXT DEFAULT '',
+                amount INTEGER NOT NULL,     -- 正=收入 负=支出
+                balance_after INTEGER NOT NULL,
+                ref TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_txn_uid ON transactions(uid, id);
+            CREATE TABLE IF NOT EXISTS redeem_codes (
+                code TEXT PRIMARY KEY,
+                amount INTEGER NOT NULL,
+                used INTEGER DEFAULT 0,
+                used_by TEXT DEFAULT '',
+                used_at TEXT DEFAULT '',
+                batch TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
         """)
+        _migrate_users_table(conn)
         if DEV_PASSWORD:
             _seed_user(conn, DEV_USERNAME, DEV_PASSWORD, ROLE_DEV)
         for _username, _pwd in ADMIN_USERS:
@@ -115,20 +180,36 @@ def init_system_db():
 def get_user(uid: str) -> dict | None:
     conn = get_system_conn()
     try:
-        row = conn.execute("SELECT uid, username, role FROM users WHERE uid=?", (uid,)).fetchone()
+        row = conn.execute(
+            "SELECT uid, username, role, phone, balance FROM users WHERE uid=?", (uid,)
+        ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
 def get_user_by_username(username: str) -> dict | None:
-    """按用户名查开发者/管理员账号（游客不参与表单登录）。"""
+    """按用户名查开发者/管理员/注册用户账号（游客不参与表单登录）。"""
     conn = get_system_conn()
     try:
         row = conn.execute(
-            "SELECT uid, username, role, password_hash FROM users "
-            "WHERE username=? AND role IN ('dev','admin')",
+            "SELECT uid, username, role, password_hash, phone, balance FROM users "
+            "WHERE username=? AND role IN ('dev','admin','user')",
             (username,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_user_by_phone(phone: str) -> dict | None:
+    """按手机号查注册用户账号（admin/user 均可能，admin 播种无 phone）。"""
+    conn = get_system_conn()
+    try:
+        row = conn.execute(
+            "SELECT uid, username, role, password_hash, phone, balance, phone_verified FROM users "
+            "WHERE phone=? AND role IN ('admin','user')",
+            (phone,),
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -277,12 +358,109 @@ def _bump_quota(uid: str, bucket: str, limit: int) -> bool:
         conn.close()
 
 
+# ========================================================================
+# 账户余额（注册用户按使用额度付费）
+# ========================================================================
+
+def get_balance(uid: str) -> int:
+    """返回某用户当前余额（岛屿币）。用户不存在返回 0。"""
+    user = get_user(uid)
+    return int(user["balance"]) if user else 0
+
+
+def get_transactions(uid: str, limit: int = 20) -> list[dict]:
+    """返回某用户近期收支流水（倒序）。"""
+    conn = get_system_conn()
+    try:
+        rows = conn.execute(
+            "SELECT type, bucket, amount, balance_after, ref, created_at "
+            "FROM transactions WHERE uid=? ORDER BY id DESC LIMIT ?",
+            (uid, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def credit(uid: str, amount: int, type_: str, bucket: str = "", ref: str = ""):
+    """原子增加余额并写入流水（amount 正=收入 负=支出）。超出范围抛 400 防负余额。"""
+    if amount == 0:
+        return
+    conn = get_system_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT balance FROM users WHERE uid=?", (uid,)).fetchone()
+        if not row:
+            conn.execute("ROLLBACK")
+            raise HTTPException(404, "用户不存在")
+        new_balance = int(row["balance"]) + amount
+        if new_balance < 0:
+            conn.execute("ROLLBACK")
+            raise HTTPException(400, "余额不足")
+        conn.execute(
+            "UPDATE users SET balance=? WHERE uid=?", (new_balance, uid)
+        )
+        conn.execute(
+            "INSERT INTO transactions (uid, type, bucket, amount, balance_after, ref) "
+            "VALUES (?,?,?,?,?,?)",
+            (uid, type_, bucket, amount, new_balance, ref),
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def require_credit(bucket: str, count: int = 1):
+    """注册用户余额扣费：余额 < 单价*count 抛 402；否则原子扣减并写流水。"""
+    uid = current_uid.get(None) or DEV_USERNAME
+    price = BUCKET_PRICES.get(bucket, 1)
+    cost = price * count
+    conn = get_system_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT balance FROM users WHERE uid=?", (uid,)).fetchone()
+        balance = int(row["balance"]) if row else 0
+        if balance < cost:
+            conn.execute("ROLLBACK")
+            raise HTTPException(
+                402,
+                f"余额不足（本次需 {cost} 岛屿币，当前余额 {balance}），请前往充值",
+            )
+        new_balance = balance - cost
+        conn.execute("UPDATE users SET balance=? WHERE uid=?", (new_balance, uid))
+        conn.execute(
+            "INSERT INTO transactions (uid, type, bucket, amount, balance_after, ref) "
+            "VALUES (?,?,?,?,?,?)",
+            (uid, "consume", bucket, -cost, new_balance, ""),
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
 def require_quota(bucket: str):
-    """配额拦截（生成端点入口调用）：读当前请求 uid，超限抛 429，否则消耗 1 次。
-    dev/admin 不限量直接放行。"""
+    """配额/余额拦截（生成端点入口调用）：
+    - dev/admin 不限量直接放行
+    - 注册用户（user）按余额扣费（require_credit）
+    - 游客（guest）按每日配额消耗 1 次（超限 429）"""
     uid = current_uid.get(None) or DEV_USERNAME
     user = get_user(uid)
     role = user["role"] if user else ROLE_GUEST
+    if role == ROLE_USER:
+        require_credit(bucket)
+        return
     limit = quota_limit(role, bucket)
     if limit < 0:
         return
@@ -295,11 +473,23 @@ def require_quota(bucket: str):
 
 
 def get_quota_status(uid: str) -> dict:
-    """返回用户各 bucket 配额状态（limit/used/remaining），供 /api/me 与前端展示。"""
+    """返回用户各 bucket 配额状态（limit/used/remaining），供 /api/me 与前端展示。
+    注册用户（user）余额制：limit 展示为「按当前余额可生成的估算次数」（balance/单价），
+    不设每日配额；dev/admin 不限（-1）。"""
     user = get_user(uid)
     role = user["role"] if user else ROLE_GUEST
+    balance = int(user["balance"]) if user else 0
     out = {}
     for bucket in GUEST_LIMITS:
+        if role == ROLE_USER:
+            price = BUCKET_PRICES.get(bucket, 1)
+            out[bucket] = {
+                "label": QUOTA_BUCKET_LABELS.get(bucket, bucket),
+                "limit": -1 if price == 0 else balance // price,
+                "used": 0,
+                "remaining": -1 if price == 0 else balance // price,
+            }
+            continue
         limit = quota_limit(role, bucket)
         used = _get_quota_used(uid, bucket) if limit >= 0 else 0
         out[bucket] = {
@@ -331,14 +521,14 @@ async def _read_json(req: Request) -> dict:
 
 @router.post("/api/login")
 async def login(req: Request, resp: Response):
-    """账号登录：开发者 / 管理员。成功后写会话 Cookie。"""
+    """账号登录：开发者 / 管理员 / 注册用户（支持用户名或手机号）。成功后写会话 Cookie。"""
     body = await _read_json(req)
     username = str(body.get("username", "")).strip()
     password = str(body.get("password", ""))
     ip = _client_ip(req)
     if not username or not password:
         raise HTTPException(400, "请输入账号和密码")
-    user = get_user_by_username(username)
+    user = get_user_by_username(username) or get_user_by_phone(username)
     if not user or not user["password_hash"] or not _verify_password(password, user["password_hash"]):
         logger.warning("登录失败 user=%s ip=%s 原因=账号或密码错误", username, ip)
         raise HTTPException(401, "账号或密码错误")
@@ -378,7 +568,7 @@ async def logout(req: Request, resp: Response):
 
 @router.get("/api/me")
 async def me(request: Request):
-    """当前身份 + 当日剩余配额。AUTH_DISABLED 时返回默认开发者身份。"""
+    """当前身份 + 当日剩余配额 + 账户余额。AUTH_DISABLED 时返回默认开发者身份。"""
     if AUTH_DISABLED:
         user = _default_dev_user()
     else:
@@ -394,8 +584,399 @@ async def me(request: Request):
         "uid": user["uid"],
         "username": user["username"],
         "role": user["role"],
+        "balance": get_balance(user["uid"]),
         "limits": get_quota_status(user["uid"]),
     }
+
+
+# ========================================================================
+# 手机号注册 / 图形验证码 / 短信验证码 / 余额充值
+# ========================================================================
+
+_PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
+
+
+def _check_phone(phone: str) -> str:
+    """校验手机号格式，非法抛 400。"""
+    phone = (phone or "").strip()
+    if not _PHONE_RE.match(phone):
+        raise HTTPException(400, "手机号格式不正确")
+    return phone
+
+
+def _hash_code(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+@router.get("/api/captcha")
+async def captcha():
+    """图形验证码：返回 {captcha_id, svg}。验证答案仅存于服务端内存。"""
+    from verification import generate_captcha
+    captcha_id, svg = generate_captcha()
+    return {"captcha_id": captcha_id, "svg": svg}
+
+
+def _sms_sent_count(phone: str, ip: str, since_ts: int) -> tuple[int, int, str]:
+    """统计某手机/某 IP 在 since_ts 之后的发送次数，并返回最近一次发送时间（防冷却）。"""
+    conn = get_system_conn()
+    try:
+        phone_cnt = conn.execute(
+            "SELECT COUNT(*) c FROM sms_codes WHERE phone=? AND created_at>=?",
+            (phone, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since_ts))),
+        ).fetchone()["c"]
+        ip_cnt = conn.execute(
+            "SELECT COUNT(*) c FROM sms_codes WHERE ip=? AND created_at>=?",
+            (ip, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since_ts))),
+        ).fetchone()["c"]
+        last_row = conn.execute(
+            "SELECT MAX(created_at) t FROM sms_codes WHERE phone=? AND ip=?",
+            (phone, ip),
+        ).fetchone()
+        last_at = last_row["t"] or ""
+        return phone_cnt, ip_cnt, last_at
+    finally:
+        conn.close()
+
+
+@router.post("/api/sms/send")
+async def sms_send(req: Request):
+    """短信验证码发送：图形码校验（一次性）+ 防刷（60s 冷却 / 手机日限 / IP 日限）。"""
+    from verification import verify_captcha
+    from sms import send_sms_code, TEST_MODE_CODE
+
+    body = await _read_json(req)
+    phone = _check_phone(str(body.get("phone", "")))
+    captcha_id = str(body.get("captcha_id", "")).strip()
+    captcha_answer = str(body.get("captcha", "")).strip()
+    sms_type = str(body.get("type", "register")).strip() or "register"
+    if sms_type not in ("register", "guest_upgrade"):
+        sms_type = "register"
+    ip = _client_ip(req)
+    if not captcha_id or not captcha_answer:
+        raise HTTPException(401, "缺少图形验证码")
+    if not verify_captcha(captcha_id, captcha_answer):
+        raise HTTPException(400, "图形验证码错误或已过期")
+
+    now = int(time.time())
+    day_start = int(time.mktime(time.strptime(date.today().isoformat(), "%Y-%m-%d")))
+    day_phone, day_ip, last_at = _sms_sent_count(phone, ip, day_start)
+    if day_phone >= SMS_DAILY_PER_PHONE:
+        raise HTTPException(429, "该手机号今日短信发送次数已达上限")
+    if day_ip >= SMS_DAILY_PER_IP:
+        raise HTTPException(429, "今日短信发送次数已达上限，请稍后再试")
+    if last_at:
+        try:
+            last_ts = time.mktime(time.strptime(last_at, "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            last_ts = 0
+        if now - last_ts < SMS_COOLDOWN_SECONDS:
+            raise HTTPException(429, "发送过于频繁，请稍后再试")
+
+    # 生成 6 位验证码：测试模式（未配置短信）用固定码，仍走 sms_codes 落库与校验，
+    # 保证注册/升级必须依赖「已发送短信」记录（图形码+频率限制），无法绕开直报。
+    from sms import sms_configured
+    if sms_configured():
+        code = "".join(secrets.choice("0123456789") for _ in range(6))
+    else:
+        code = TEST_MODE_CODE
+    try:
+        real_sent = send_sms_code(phone, code)
+    except Exception as e:
+        logger.warning("短信发送异常 phone=%s err=%s ip=%s", phone, e, ip)
+        real_sent = False
+
+    conn = get_system_conn()
+    try:
+        conn.execute(
+            "INSERT INTO sms_codes (phone, code_hash, type, expire_at, try_count, ip) "
+            "VALUES (?,?,?,?,0,?)",
+            (phone, _hash_code(code), sms_type, now + SMS_CODE_TTL, ip),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info("短信验证码已生成 phone=%s ip=%s 真实发送=%s", phone, ip, real_sent)
+    return {"ok": True, "test_mode": not real_sent, "ttl": SMS_CODE_TTL}
+
+
+def _verify_sms_code(phone: str, code: str, expected_type: str = "register"):
+    """校验短信验证码：必须有发送记录（sms_codes），匹配未用、未过期、尝试未超限。
+    校验失败累积 try_count，超过上限作废。成功则标记 used=1 并返回 True。
+    统一走库校验（测试模式固定码 123456 也先由 /api/sms/send 落库），
+    无法绕过图形码/频率限制直接注册。"""
+    code = (code or "").strip()
+    if not code:
+        raise HTTPException(400, "请输入短信验证码")
+    conn = get_system_conn()
+    try:
+        # 单事务原子：读取+标记 used / 累积 try_count 防并发同码双用
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT id, code_hash, expire_at, used, try_count FROM sms_codes "
+            "WHERE phone=? AND type=? ORDER BY id DESC LIMIT 1",
+            (phone, expected_type),
+        ).fetchone()
+        if not row or row["used"]:
+            conn.execute("ROLLBACK")
+            raise HTTPException(400, "短信验证码不存在或已使用，请重新获取")
+        if int(time.time()) > row["expire_at"]:
+            conn.execute("ROLLBACK")
+            raise HTTPException(400, "短信验证码已过期，请重新获取")
+        if int(row["try_count"]) >= SMS_MAX_TRIES:
+            conn.execute("ROLLBACK")
+            raise HTTPException(400, "验证码尝试次数过多，请重新获取")
+        if row["code_hash"] != _hash_code(code):
+            conn.execute("UPDATE sms_codes SET try_count=try_count+1 WHERE id=?", (row["id"],))
+            conn.commit()
+            raise HTTPException(400, "短信验证码错误")
+        conn.execute("UPDATE sms_codes SET used=1 WHERE id=?", (row["id"],))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def _register_user(phone: str, password: str, role: str = ROLE_USER, upgrade_from: str | None = None) -> dict:
+    """创建正式账号（角色 user），初始化业务库，赠初始体验额度，返回用户信息。"""
+    if len(password) < 8:
+        raise HTTPException(400, "密码长度至少 8 位")
+    if get_user_by_phone(phone):
+        raise HTTPException(409, "该手机号已注册")
+    uid = f"u-{uuid.uuid4().hex[:12]}"
+    conn = get_system_conn()
+    try:
+        conn.execute(
+            "INSERT INTO users (uid, username, password_hash, role, phone, phone_verified, balance) "
+            "VALUES (?,?,?,?,?,1,0)",
+            (uid, phone, _hash_password(password), role, phone),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    ensure_db_initialized(uid)
+    migrated = False
+    try:
+        if upgrade_from:
+            migrate_user_db(upgrade_from, uid)
+            migrated = True
+            credit(uid, UPGRADE_GIFT, "upgrade_gift", ref=f"upgrade_from={upgrade_from}")
+            logger.info("游客升级 uid=%s 由 %s 迁移并赠 %s 币", uid, upgrade_from, UPGRADE_GIFT)
+        else:
+            credit(uid, REGISTER_GIFT, "register_gift")
+            logger.info("新用户注册 uid=%s phone=%s 赠 %s 币", uid, phone, REGISTER_GIFT)
+    except Exception:
+        if not migrated:
+            # 迁移尚未成功（旧库仍在）：补偿删除刚建账号，用户可重新发起注册/升级
+            try:
+                conn2 = get_system_conn()
+                try:
+                    conn2.execute("DELETE FROM users WHERE uid=?", (uid,))
+                    conn2.commit()
+                finally:
+                    conn2.close()
+            except Exception:
+                pass
+            logger.warning("注册/升级失败已补偿回滚 uid=%s phone=%s", uid, phone)
+            raise
+        # 迁移已成功（数据已落新库、旧库已删除）：保账号可登录，仅告警不删除避免数据孤儿
+        logger.warning("升级数据已迁移但赠币失败 uid=%s phone=%s", uid, phone)
+    user = get_user(uid) or {"uid": uid, "username": phone, "role": role}
+    return user
+
+
+@router.post("/api/register")
+async def register(req: Request, resp: Response):
+    """手机号注册：短信验证码 + 图形验证码校验通过后创建账号并登录。"""
+    body = await _read_json(req)
+    phone = _check_phone(str(body.get("phone", "")))
+    password = str(body.get("password", ""))
+    sms_code = str(body.get("sms_code", ""))
+    _verify_sms_code(phone, sms_code, "register")
+    user = _register_user(phone, password)
+    _set_session_cookie(resp, user["uid"])
+    current_uid.set(user["uid"])
+    current_user.set(user)
+    ensure_db_initialized(user["uid"])
+    return {"uid": user["uid"], "username": user["username"], "role": user["role"], "balance": get_balance(user["uid"])}
+
+
+@router.post("/api/guest/upgrade")
+async def guest_upgrade(req: Request, resp: Response):
+    """游客升级：当前会话游客 + 短信验证码 → 建立正式账号并迁移学习数据。"""
+    token = req.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not user or user["role"] != ROLE_GUEST:
+        raise HTTPException(403, "仅游客身份可升级")
+    body = await _read_json(req)
+    phone = _check_phone(str(body.get("phone", "")))
+    password = str(body.get("password", ""))
+    sms_code = str(body.get("sms_code", ""))
+    _verify_sms_code(phone, sms_code, "guest_upgrade")
+    new_user = _register_user(phone, password, upgrade_from=user["uid"])
+    _set_session_cookie(resp, new_user["uid"])
+    current_uid.set(new_user["uid"])
+    current_user.set(new_user)
+    ensure_db_initialized(new_user["uid"])
+    return {
+        "uid": new_user["uid"], "username": new_user["username"], "role": new_user["role"],
+        "balance": get_balance(new_user["uid"]),
+    }
+
+
+@router.post("/api/redeem")
+async def redeem(req: Request):
+    """卡密兑换：校验当前登录用户 + 未使用卡密 → 加余额、写流水、标记卡密。
+
+    单事务原子完成（BEGIN IMMEDIATE 持写锁，防并发同卡密双花）：
+    校验 used → 标记 used → 用户加余额 → 写流水，任一步失败整体回滚。
+    """
+    body = await _read_json(req)
+    code = str(body.get("code", "")).strip().upper()
+    if not code:
+        raise HTTPException(400, "请输入充值卡密")
+    token = req.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not user:
+        raise HTTPException(401, "未登录或登录已过期")
+    conn = get_system_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT amount, used FROM redeem_codes WHERE code=?", (code,)
+        ).fetchone()
+        if not row:
+            conn.execute("ROLLBACK")
+            raise HTTPException(404, "卡密不存在")
+        if row["used"]:
+            conn.execute("ROLLBACK")
+            raise HTTPException(400, "卡密已被使用")
+        bal_row = conn.execute("SELECT balance FROM users WHERE uid=?", (uid,)).fetchone()
+        if not bal_row:
+            conn.execute("ROLLBACK")
+            raise HTTPException(404, "用户不存在")
+        amount = int(row["amount"])
+        new_balance = int(bal_row["balance"]) + amount
+        conn.execute(
+            "UPDATE redeem_codes SET used=1, used_by=?, used_at=? WHERE code=?",
+            (uid, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), code),
+        )
+        conn.execute("UPDATE users SET balance=? WHERE uid=?", (new_balance, uid))
+        conn.execute(
+            "INSERT INTO transactions (uid, type, bucket, amount, balance_after, ref) "
+            "VALUES (?,?,?,?,?,?)",
+            # ref 只存卡密后 4 位便于对账，不落完整卡密防泄露复用
+            (uid, "redeem", "", amount, new_balance, f"redeem=****{code[-4:]}"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("卡密兑换 uid=%s code=****%s 充值%d币", user["uid"], code[-4:], amount)
+    return {"ok": True, "amount": amount, "balance": get_balance(user["uid"])}
+
+
+@router.get("/api/billing")
+async def billing(request: Request):
+    """当前用户余额 + 各 bucket 单价 + 近期流水。"""
+    token = request.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not user:
+        raise HTTPException(401, "未登录或登录已过期")
+    return {
+        "uid": user["uid"],
+        "role": user["role"],
+        "balance": get_balance(user["uid"]),
+        "prices": BUCKET_PRICES,
+        "transactions": get_transactions(user["uid"]),
+    }
+
+
+# ========================================================================
+# 管理员：充值卡密生成 / 手动充值 / 用户与账单查询
+# ========================================================================
+
+def _require_admin(request: Request) -> dict:
+    """要求当前会话为 dev/admin，否则 401/403。"""
+    token = request.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not uid or not user:
+        raise HTTPException(401, "未登录或登录已过期")
+    if user["role"] not in (ROLE_DEV, ROLE_ADMIN):
+        raise HTTPException(403, "无权限，仅开发者/管理员可操作")
+    return user
+
+
+@router.post("/api/admin/codes/generate")
+async def admin_generate_codes(req: Request):
+    """生成一批充值卡密：{batch, amount, count} → [{code}, ...]。"""
+    user = _require_admin(req)
+    body = await _read_json(req)
+    batch = str(body.get("batch", "")).strip() or "S"
+    try:
+        amount = int(body.get("amount", 0))
+        count = int(body.get("count", 0))
+    except ValueError:
+        raise HTTPException(400, "金额/数量必须为整数")
+    if amount <= 0 or count <= 0 or count > 500:
+        raise HTTPException(400, "金额>0 且数量 1~500")
+    codes = []
+    conn = get_system_conn()
+    try:
+        attempts = 0
+        while len(codes) < count and attempts < count * 20:  # 防极低概率碰撞导致死循环
+            attempts += 1
+            code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO redeem_codes (code, amount, batch) VALUES (?,?,?)",
+                (code, amount, batch),
+            )
+            if cur.rowcount > 0:
+                codes.append(code)
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("管理员生成卡密 user=%s batch=%s 金额=%d 数量=%d", user["uid"], batch, amount, count)
+    return {"ok": True, "codes": codes, "batch": batch, "amount": amount}
+
+
+@router.post("/api/admin/credit")
+async def admin_credit(req: Request):
+    """管理员给指定用户手动充值：{uid, amount, note}。"""
+    user = _require_admin(req)
+    body = await _read_json(req)
+    uid = str(body.get("uid", "")).strip()
+    try:
+        amount = int(body.get("amount", 0))
+    except ValueError:
+        raise HTTPException(400, "金额必须为整数")
+    note = str(body.get("note", "")).strip()
+    if not uid or amount == 0:
+        raise HTTPException(400, "缺少用户或金额为 0")
+    target = get_user(uid)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    credit(uid, amount, "admin_credit", ref=note)
+    logger.info("管理员充值 user=%s 目标=%s 金额=%d note=%s", user["uid"], uid, amount, note)
+    return {"ok": True, "uid": uid, "balance": get_balance(uid)}
+
+
+@router.get("/api/admin/users")
+async def admin_users(request: Request):
+    """管理员查看注册用户列表：uid/用户名/角色/手机号/余额/注册时间。"""
+    user = _require_admin(request)
+    conn = get_system_conn()
+    try:
+        rows = conn.execute(
+            "SELECT uid, username, role, phone, balance, created_at FROM users "
+            "WHERE role IN ('user','guest') ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+        return {"users": [dict(r) for r in rows]}
+    finally:
+        conn.close()
 
 
 # ========================================================================

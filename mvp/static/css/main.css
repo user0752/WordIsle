@@ -222,6 +222,16 @@
   }
   .app-header .guest-warn { color: #b8953a; cursor: help; }
 
+  .app-header .coin-chip {
+    flex: none; border: 1px solid rgba(184, 149, 58, 0.45); cursor: pointer;
+    background: var(--gold-soft-glow, rgba(212, 170, 74, 0.16));
+    color: var(--gold-dark, #8a6d1f); font-size: 12.5px; font-weight: 700;
+    padding: 3px 11px; border-radius: 999px; line-height: 1.55;
+    font-family: "Noto Serif SC", serif; letter-spacing: 0.3px;
+    transition: background .15s var(--ease, ease), transform .15s var(--ease, ease), box-shadow .15s var(--ease, ease);
+  }
+  .app-header .coin-chip:hover { background: rgba(212, 170, 74, 0.3); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(140, 105, 30, 0.18); }
+
   /* ===== 主体 ===== */
   .app-body { flex: 1; display: flex; overflow: hidden; }
 

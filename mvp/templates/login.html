@@ -210,6 +210,48 @@
     border-radius: 8px;
   }
 
+  /* ---- 登录/注册 tab ---- */
+  .tabbar {
+    display: flex; gap: 6px; margin-bottom: 18px;
+    background: rgba(35, 64, 47, 0.06); border-radius: 12px; padding: 4px;
+  }
+  .tabbar button {
+    flex: 1; border: none; background: transparent; cursor: pointer;
+    padding: 9px 0; font-size: 14px; font-weight: 700; font-family: var(--serif);
+    letter-spacing: 1px; color: var(--ink-soft); border-radius: 9px;
+    transition: background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease);
+  }
+  .tabbar button.active {
+    background: var(--card); color: var(--accent-deep);
+    box-shadow: 0 3px 10px rgba(30, 74, 60, 0.10);
+  }
+  .tabbar button.upgrade-badge::after {
+    content: "升级"; margin-left: 4px; font-size: 10px; letter-spacing: 0;
+    background: var(--gold); color: #fff; padding: 1px 6px; border-radius: 999px; vertical-align: 2px;
+  }
+  .reg-row { display: flex; gap: 8px; align-items: stretch; }
+  .reg-row .field { flex: 1; }
+  .captcha-img {
+    width: 108px; height: 46px; border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.10);
+    cursor: pointer; background: #fff; object-fit: cover; padding: 2px;
+  }
+  .sms-btn {
+    flex: none; padding: 0 14px; font-size: 13.5px; font-weight: 700;
+    border-radius: 12px; cursor: pointer; font-family: var(--serif);
+    color: var(--accent-deep); background: var(--gold-soft);
+    border: 1px solid rgba(184, 149, 58, 0.35);
+    transition: background .15s, opacity .15s;
+  }
+  .sms-btn:hover:not(:disabled) { background: rgba(212, 170, 74, 0.22); }
+  .sms-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .reg-hint { margin-top: 14px; font-size: 12px; line-height: 1.7; color: var(--ink-soft); }
+  .reg-hint b { color: var(--gold); }
+  .upgrade-tip {
+    margin-top: 16px; padding: 10px 13px; font-size: 12.5px; line-height: 1.7;
+    color: var(--accent-deep); background: var(--accent-soft);
+    border-left: 3px solid var(--accent); border-radius: 8px; display: none;
+  }
+
   /* ============ 响应式 ============ */
   @media (max-width: 480px) {
     .login-page { padding: 0 14px calc(20px + env(safe-area-inset-bottom)); }
@@ -253,36 +295,210 @@
 
   <!-- 主舞台 -->
   <main class="stage">
-    <section class="card" aria-label="登录">
+    <section class="card" aria-label="登录或注册">
       <span class="card-stamp">顽固词 · 上岛处</span>
-      <h1>欢迎回来</h1>
-      <p class="card-subtitle">开发者 / 管理员请使用账号密码登录</p>
 
-      <form id="form-account" onsubmit="return doLogin(event)">
-        <label for="username">账号</label>
-        <div class="field">
-          <input type="text" id="username" autocomplete="username" placeholder="请输入账号" required>
-        </div>
-        <label for="password">密码</label>
-        <div class="field">
-          <input type="password" id="password" autocomplete="current-password" placeholder="请输入密码" required>
-          <button type="button" class="eye" id="btn-eye" onclick="togglePassword()" aria-label="显示/隐藏密码" tabindex="-1">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-        <button class="btn-primary" id="btn-account" type="submit">登 录</button>
-        <div class="err" id="err-account"></div>
-      </form>
+      <div class="tabbar" role="tablist">
+        <button type="button" id="tab-login" class="active" onclick="switchTab('login')">登 录</button>
+        <button type="button" id="tab-register" onclick="switchTab('register')">注 册</button>
+      </div>
 
-      <div class="divider">或</div>
-      <button class="btn-guest" id="btn-guest" type="button" onclick="guestLogin()">🌴 游客直接进入</button>
-      <div class="err" id="err-guest"></div>
-      <p class="guest-tip">⚠ 游客数据保存在当前浏览器（Cookie 30 天有效），清除缓存或更换设备后将无法找回，重要数据请使用开发者 / 管理员账号。</p>
+      <!-- ============ 登录表单 ============ -->
+      <div id="pane-login">
+        <h1>欢迎回来</h1>
+        <p class="card-subtitle">账号 / 手机号 + 密码登录</p>
+
+        <form id="form-account" onsubmit="return doLogin(event)">
+          <label for="username">账号</label>
+          <div class="field">
+            <input type="text" id="username" autocomplete="username" placeholder="请输入账号或手机号" required>
+          </div>
+          <label for="password">密码</label>
+          <div class="field">
+            <input type="password" id="password" autocomplete="current-password" placeholder="请输入密码" required>
+            <button type="button" class="eye" id="btn-eye" onclick="togglePassword()" aria-label="显示/隐藏密码" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <button class="btn-primary" id="btn-account" type="submit">登 录</button>
+          <div class="err" id="err-account"></div>
+        </form>
+
+        <div class="divider">或</div>
+        <button class="btn-guest" id="btn-guest" type="button" onclick="guestLogin()">🌴 游客直接进入</button>
+        <div class="err" id="err-guest"></div>
+        <p class="guest-tip">⚠ 游客数据保存在当前浏览器（Cookie 30 天有效），清除缓存或更换设备后将无法找回。游客可随时在「注册」页升级为正式账号，保留全部学习数据。</p>
+      </div>
+
+      <!-- ============ 注册 / 游客升级表单 ============ -->
+      <div id="pane-register" style="display:none">
+        <h1 id="reg-title">注册账号</h1>
+        <p class="card-subtitle">手机号 + 短信验证码，注册即赠 <b style="color:var(--gold)">50 岛屿币</b></p>
+
+        <div class="upgrade-tip" id="upgrade-tip">检测到您正在使用游客身份，将升级为正式账号并<span style="font-weight:700">保留全部学习数据</span>，再赠 <b style="color:var(--gold)">50 岛屿币</b>。</div>
+
+        <form id="form-register" onsubmit="return doRegister(event)">
+          <label for="reg-phone">手机号</label>
+          <div class="field">
+            <input type="text" id="reg-phone" inputmode="numeric" autocomplete="tel" placeholder="请输入手机号" required>
+          </div>
+          <label for="reg-captcha">图形验证码</label>
+          <div class="reg-row">
+            <div class="field">
+              <input type="text" id="reg-captcha" placeholder="输入图中的 4 位字符" autocomplete="off" required>
+            </div>
+            <img id="reg-captcha-img" class="captcha-img" alt="图形验证码（点击刷新）" title="点击刷新"
+                 onclick="refreshCaptcha()" style="cursor:pointer">
+          </div>
+          <label for="reg-smscode">短信验证码</label>
+          <div class="reg-row">
+            <div class="field">
+              <input type="text" id="reg-smscode" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字验证码" required>
+            </div>
+            <button type="button" class="sms-btn" id="btn-sms" onclick="sendSmsCode()">获取验证码</button>
+          </div>
+          <label for="reg-password">密码</label>
+          <div class="field">
+            <input type="password" id="reg-password" autocomplete="new-password" placeholder="至少 8 位" required>
+          </div>
+          <button class="btn-primary" id="btn-register" type="submit">注 册</button>
+          <div class="err" id="err-register"></div>
+          <p class="reg-hint">注册即视为同意服务条款。每次生成（视频 / 单点深耕 / 词小屿等）按单价扣减岛屿币，余额不足将被引导充值，管理员可发放充值卡密。</p>
+        </form>
+      </div>
     </section>
   </main>
 </div>
 
 <script>
+// ---- 登录/注册 tab 切换 ----
+let isUpgrade = false   // 当前会话是否为游客（决定提交注册 or 游客升级）
+
+function switchTab(tabName) {
+  document.getElementById('tab-login').classList.toggle('active', tabName === 'login')
+  document.getElementById('tab-register').classList.toggle('active', tabName === 'register')
+  document.getElementById('pane-login').style.display = tabName === 'login' ? '' : 'none'
+  document.getElementById('pane-register').style.display = tabName === 'register' ? '' : 'none'
+  if (tabName === 'register') {
+    refreshCaptcha()
+    if (isUpgrade) {
+      document.getElementById('reg-title').textContent = '游客升级'
+      document.getElementById('upgrade-tip').style.display = 'block'
+      document.getElementById('btn-register').textContent = '确认升级'
+    } else {
+      document.getElementById('reg-title').textContent = '注册账号'
+      document.getElementById('upgrade-tip').style.display = 'none'
+      document.getElementById('btn-register').textContent = '注 册'
+    }
+  }
+}
+
+// ---- 页面加载：探测当前会话是否为游客（游客可直接升级） ----
+;(async function detectSession() {
+  try {
+    const resp = await fetch('/api/me')
+    if (!resp.ok) return
+    const data = await resp.json()
+    if (data.role === 'guest') {
+      isUpgrade = true
+      document.getElementById('tab-register').textContent = '注 册'
+      document.getElementById('tab-register').classList.add('upgrade-badge')
+    }
+  } catch (_) {}
+})()
+
+let captchaId = ''
+async function refreshCaptcha() {
+  try {
+    const resp = await fetch('/api/captcha', { cache: 'no-store' })
+    if (!resp.ok) return
+    const data = await resp.json()
+    captchaId = data.captcha_id
+    document.getElementById('reg-captcha-img').src = 'data:image/svg+xml;base64,' +
+      btoa(unescape(encodeURIComponent(data.svg)))
+  } catch (_) {}
+}
+
+let smsTimer = null
+function smsCountdown(seconds) {
+  const btn = document.getElementById('btn-sms')
+  btn.disabled = true
+  btn.textContent = seconds + 's 后重发'
+  smsTimer = setInterval(() => {
+    seconds -= 1
+    if (seconds <= 0) {
+      clearInterval(smsTimer)
+      btn.disabled = false
+      btn.textContent = '获取验证码'
+    } else {
+      btn.textContent = seconds + 's 后重发'
+    }
+  }, 1000)
+}
+
+async function sendSmsCode() {
+  const phone = document.getElementById('reg-phone').value.trim()
+  const answer = document.getElementById('reg-captcha').value.trim()
+  if (!/^1[3-9]\d{9}$/.test(phone)) { showErr('err-register', '请输入正确的手机号'); return }
+  if (!answer) { showErr('err-register', '请先输入图形验证码'); return }
+  showErr('err-register', '')
+  const btn = document.getElementById('btn-sms')
+  const oldText = btn.textContent
+  btn.disabled = true
+  btn.textContent = '发送中…'
+  try {
+    const resp = await fetch('/api/sms/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, captcha_id: captchaId, captcha: answer,
+                             type: isUpgrade ? 'guest_upgrade' : 'register' }),
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (resp.ok) {
+      showErr('err-register', '验证码已发送' + (data.test_mode ? '（测试模式：123456）' : '，请查收短信'))
+      document.getElementById('err-register').style.color = 'var(--accent-deep)'
+      smsCountdown(60)
+    } else {
+      showErr('err-register', data.detail || '发送失败，请稍后重试')
+      btn.disabled = false
+      btn.textContent = oldText
+      refreshCaptcha()
+    }
+  } catch (err) {
+    showErr('err-register', '网络错误，请稍后重试')
+    btn.disabled = false
+    btn.textContent = oldText
+  }
+}
+
+async function doRegister(e) {
+  e.preventDefault()
+  const payload = {
+    phone: document.getElementById('reg-phone').value.trim(),
+    sms_code: document.getElementById('reg-smscode').value.trim(),
+    password: document.getElementById('reg-password').value,
+  }
+  const btn = document.getElementById('btn-register')
+  btn.disabled = true
+  btn.textContent = isUpgrade ? '升级中…' : '注册中…'
+  try {
+    const resp = await fetch(isUpgrade ? '/api/guest/upgrade' : '/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (resp.ok) { location.href = '/app'; return }
+    const data = await resp.json().catch(() => ({}))
+    showErr('err-register', data.detail || '操作失败，请稍后重试')
+    refreshCaptcha()
+  } catch (err) {
+    showErr('err-register', '网络错误，请稍后重试')
+  } finally {
+    btn.disabled = false
+    btn.textContent = isUpgrade ? '确认升级' : '注 册'
+  }
+}
+
 // ---- 密码可见性切换 ----
 function togglePassword() {
   const input = document.getElementById('password')
@@ -296,6 +512,7 @@ function togglePassword() {
 function showErr(id, msg) {
   const el = document.getElementById(id);
   el.style.display = 'block';
+  el.style.color = 'var(--danger)';
   el.textContent = msg;
 }
 

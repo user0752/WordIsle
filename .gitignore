@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .env
 .workbuddy/
+.trae/
 mvp/venv/
 mvp/.deps/
 logs/
