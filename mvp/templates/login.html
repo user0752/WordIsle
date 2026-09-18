@@ -301,6 +301,7 @@
       <div class="tabbar" role="tablist">
         <button type="button" id="tab-login" class="active" onclick="switchTab('login')">登 录</button>
         <button type="button" id="tab-register" onclick="switchTab('register')">注 册</button>
+        <button type="button" id="tab-reset" onclick="switchTab('reset')">忘记密码</button>
       </div>
 
       <!-- ============ 登录表单 ============ -->
@@ -366,6 +367,40 @@
           <p class="reg-hint">注册即视为同意服务条款。每次生成（视频 / 单点深耕 / 词小屿等）按单价扣减岛屿币，余额不足将被引导充值，管理员可发放充值卡密。</p>
         </form>
       </div>
+
+      <!-- ============ 忘记密码表单 ============ -->
+      <div id="pane-reset" style="display:none">
+        <h1>重置密码</h1>
+        <p class="card-subtitle">通过绑定手机号 + 短信验证码重设密码</p>
+
+        <form id="form-reset" onsubmit="return doReset(event)">
+          <label for="reset-phone">手机号</label>
+          <div class="field">
+            <input type="text" id="reset-phone" inputmode="numeric" autocomplete="tel" placeholder="请输入绑定手机号" required>
+          </div>
+          <label for="reset-captcha">图形验证码</label>
+          <div class="reg-row">
+            <div class="field">
+              <input type="text" id="reset-captcha" placeholder="输入图中的 4 位字符" autocomplete="off" required>
+            </div>
+            <img id="reset-captcha-img" class="captcha-img" alt="图形验证码（点击刷新）" title="点击刷新"
+                 onclick="refreshResetCaptcha()" style="cursor:pointer">
+          </div>
+          <label for="reset-smscode">短信验证码</label>
+          <div class="reg-row">
+            <div class="field">
+              <input type="text" id="reset-smscode" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字验证码" required>
+            </div>
+            <button type="button" class="sms-btn" id="btn-reset-sms" onclick="sendResetSms()">获取验证码</button>
+          </div>
+          <label for="reset-password">新密码</label>
+          <div class="field">
+            <input type="password" id="reset-password" autocomplete="new-password" placeholder="至少 8 位" required>
+          </div>
+          <button class="btn-primary" id="btn-reset" type="submit">重置密码</button>
+          <div class="err" id="err-reset"></div>
+        </form>
+      </div>
     </section>
   </main>
 </div>
@@ -377,8 +412,10 @@ let isUpgrade = false   // 当前会话是否为游客（决定提交注册 or �
 function switchTab(tabName) {
   document.getElementById('tab-login').classList.toggle('active', tabName === 'login')
   document.getElementById('tab-register').classList.toggle('active', tabName === 'register')
+  document.getElementById('tab-reset').classList.toggle('active', tabName === 'reset')
   document.getElementById('pane-login').style.display = tabName === 'login' ? '' : 'none'
   document.getElementById('pane-register').style.display = tabName === 'register' ? '' : 'none'
+  document.getElementById('pane-reset').style.display = tabName === 'reset' ? '' : 'none'
   if (tabName === 'register') {
     refreshCaptcha()
     if (isUpgrade) {
@@ -390,6 +427,100 @@ function switchTab(tabName) {
       document.getElementById('upgrade-tip').style.display = 'none'
       document.getElementById('btn-register').textContent = '注 册'
     }
+  }
+  if (tabName === 'reset') refreshResetCaptcha()
+}
+
+// ---- 忘记密码：图形验证码 / 短信 / 重置 ----
+let resetCaptchaId = ''
+async function refreshResetCaptcha() {
+  try {
+    const resp = await fetch('/api/captcha', { cache: 'no-store' })
+    if (!resp.ok) return
+    const data = await resp.json()
+    resetCaptchaId = data.captcha_id
+    document.getElementById('reset-captcha-img').src = 'data:image/svg+xml;base64,' +
+      btoa(unescape(encodeURIComponent(data.svg)))
+  } catch (_) {}
+}
+
+let resetSmsTimer = null
+function resetSmsCountdown(seconds) {
+  const btn = document.getElementById('btn-reset-sms')
+  btn.disabled = true
+  btn.textContent = seconds + 's 后重发'
+  resetSmsTimer = setInterval(() => {
+    seconds -= 1
+    if (seconds <= 0) {
+      clearInterval(resetSmsTimer)
+      btn.disabled = false
+      btn.textContent = '获取验证码'
+    } else {
+      btn.textContent = seconds + 's 后重发'
+    }
+  }, 1000)
+}
+
+async function sendResetSms() {
+  const phone = document.getElementById('reset-phone').value.trim()
+  const answer = document.getElementById('reset-captcha').value.trim()
+  if (!/^1[3-9]\d{9}$/.test(phone)) { showErr('err-reset', '请输入正确的手机号'); return }
+  if (!answer) { showErr('err-reset', '请先输入图形验证码'); return }
+  showErr('err-reset', '')
+  const btn = document.getElementById('btn-reset-sms')
+  const oldText = btn.textContent
+  btn.disabled = true
+  btn.textContent = '发送中…'
+  try {
+    const resp = await fetch('/api/sms/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, captcha_id: resetCaptchaId, captcha: answer, type: 'reset' }),
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (resp.ok) {
+      document.getElementById('err-reset').style.display = 'block'
+      document.getElementById('err-reset').style.color = 'var(--accent-deep)'
+      document.getElementById('err-reset').textContent = '验证码已发送' + (data.test_mode ? '（测试模式：123456）' : '，请查收短信')
+      resetSmsCountdown(60)
+    } else {
+      showErr('err-reset', data.detail || '发送失败，请稍后重试')
+      btn.disabled = false
+      btn.textContent = oldText
+      refreshResetCaptcha()
+    }
+  } catch (err) {
+    showErr('err-reset', '网络错误，请稍后重试')
+    btn.disabled = false
+    btn.textContent = oldText
+  }
+}
+
+async function doReset(e) {
+  e.preventDefault()
+  const payload = {
+    phone: document.getElementById('reset-phone').value.trim(),
+    sms_code: document.getElementById('reset-smscode').value.trim(),
+    new_password: document.getElementById('reset-password').value,
+  }
+  const btn = document.getElementById('btn-reset')
+  btn.disabled = true
+  btn.textContent = '重置中…'
+  try {
+    const resp = await fetch('/api/password/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (resp.ok) { location.href = '/app'; return }
+    const data = await resp.json().catch(() => ({}))
+    showErr('err-reset', data.detail || '重置失败，请稍后重试')
+    refreshResetCaptcha()
+  } catch (err) {
+    showErr('err-reset', '网络错误，请稍后重试')
+  } finally {
+    btn.disabled = false
+    btn.textContent = '重置密码'
   }
 }
 

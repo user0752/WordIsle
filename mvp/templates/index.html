@@ -2643,9 +2643,47 @@
           <div class="page-header">
             <div>
               <h2 class="page-title"><span class="title-accent"></span>设置</h2>
-              <p class="page-subtitle">查看所有模型调用点，并为每个调用点选择使用的 LLM 模型</p>
+              <p class="page-subtitle">个人资料与账号安全、模型调用点配置</p>
             </div>
           </div>
+
+          <!-- 资料与安全 -->
+          <el-card shadow="never" class="mb-md">
+            <template #header>
+              <div class="flex align-center gap-sm">
+                <el-icon><User /></el-icon>
+                <span style="font-weight:600">资料与安全</span>
+                <el-tag v-if="user" size="small" effect="plain" :type="user.status==='active' ? 'success' : 'danger'">
+                  {{ user.status==='active' ? '正常' : '已封禁' }}
+                </el-tag>
+              </div>
+            </template>
+
+            <el-form label-width="90px" style="max-width:640px">
+              <!-- 资料区 -->
+              <el-form-item label="昵称">
+                <div style="display:flex;gap:8px;width:100%;">
+                  <el-input v-model="nicknameForm" maxlength="16" placeholder="1~16 字符"></el-input>
+                  <el-button type="primary" :loading="nicknameSaving" @click="saveNickname">保存</el-button>
+                </div>
+              </el-form-item>
+              <el-form-item label="账号">
+                <span class="text-secondary">{{ user?.username }}</span>
+              </el-form-item>
+              <el-form-item v-if="user?.role==='user'" label="绑定手机">
+                <span class="text-secondary">{{ user?.phone || '未绑定' }}</span>
+                <el-button v-if="user?.phone" link type="primary" style="margin-left:12px" @click="openRebind">换绑手机</el-button>
+              </el-form-item>
+              <el-form-item label="角色">
+                <span class="role-badge" :class="'role-'+user?.role">{{ roleLabel }}</span>
+              </el-form-item>
+
+              <!-- 安全区 -->
+              <el-form-item label="密码">
+                <el-button @click="openPwdChange">修改密码</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
 
           <!-- 可用 LLM 模型概览 -->
           <el-card shadow="never" class="mb-md">
@@ -2964,6 +3002,43 @@
                 </el-col>
               </el-row>
 
+              <!-- 账号管理（注册用户封禁/解封） -->
+              <el-card shadow="never" class="mb-md">
+                <template #header>
+                  <div class="flex align-center gap-sm">
+                    <el-icon><Lock /></el-icon>
+                    <span style="font-weight:600">账号管理</span>
+                    <span class="text-secondary" style="font-size:12px">注册用户封禁/解封（封禁后拒绝登录与生成）</span>
+                  </div>
+                </template>
+                <div v-if="!adminUserRows.length" class="empty-state">
+                  <el-icon><user /></el-icon>
+                  <p>暂无注册用户</p>
+                </div>
+                <el-table v-else :data="adminUserRows" size="small" stripe>
+                  <el-table-column label="用户" min-width="150">
+                    <template #default="{ row }">
+                      <span class="dash-user-name"><span class="role-badge" :class="'role-'+row.role">{{ dashRoleLabel(row.role) }}</span>{{ row.nickname || row.username }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="手机号" width="120"><template #default="{ row }">{{ row.phone || '—' }}</template></el-table-column>
+                  <el-table-column label="余额" width="80" align="right"><template #default="{ row }">{{ row.balance }}</template></el-table-column>
+                  <el-table-column label="状态" width="90">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="row.status==='banned' ? 'danger' : 'success'" effect="plain">
+                        {{ row.status==='banned' ? '已封禁' : '正常' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="100">
+                    <template #default="{ row }">
+                      <el-button v-if="row.status!=='banned'" size="small" type="danger" plain @click="banUser(row)">封禁</el-button>
+                      <el-button v-else size="small" type="success" plain @click="unbanUser(row)">解封</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+
               <!-- 最近反馈明细 -->
               <el-card shadow="never" class="mb-md">
                 <template #header>
@@ -3146,6 +3221,59 @@
     <template #footer>
       <el-button @click="feedbackDialogVisible = false">取消</el-button>
       <el-button type="primary" @click="submitFeedbackWithComment">提交反馈</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- ======================== 修改密码 ======================== -->
+  <el-dialog v-model="pwdChangeVisible" title="修改密码" width="420px">
+    <el-form label-width="90px">
+      <el-form-item label="旧密码">
+        <el-input v-model="pwdOld" type="password" show-password placeholder="请输入当前密码"></el-input>
+      </el-form-item>
+      <el-form-item label="新密码">
+        <el-input v-model="pwdNew" type="password" show-password placeholder="至少 8 位"></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="pwdChangeVisible=false">取消</el-button>
+      <el-button type="primary" :loading="pwdChanging" @click="doChangePassword">确认修改</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- ======================== 手机号换绑（旧+新双验证） ======================== -->
+  <el-dialog v-model="rebindVisible" title="换绑手机号" width="440px">
+    <el-alert type="info" :closable="false" show-icon style="margin-bottom:14px;"
+      title="为保障账号安全，需验证原手机验证码与新手机验证码"></el-alert>
+    <el-form label-width="90px">
+      <el-form-item label="图形验证码">
+        <div style="display:flex;gap:8px;width:100%;">
+          <el-input v-model="rebindCaptcha" placeholder="图中字符" maxlength="4" style="width:140px"></el-input>
+          <img :src="rebindCaptchaImg" alt="图形验证码（点击刷新）" title="点击刷新" @click="refreshRebindCaptcha"
+               style="width:108px;height:46px;object-fit:cover;border-radius:12px;border:1px solid rgba(0,0,0,.1);cursor:pointer;background:#fff">
+        </div>
+      </el-form-item>
+      <el-form-item v-if="user" label="原手机">
+        <span class="text-secondary">{{ user.phone }}</span>
+        <el-button link type="primary" style="margin-left:10px" :loading="rebindSendingOld" @click="sendRebindSms('old')">
+          发送验证码
+        </el-button>
+      </el-form-item>
+      <el-form-item label="原验证码">
+        <el-input v-model="rebindOldCode" placeholder="原手机收到的 6 位验证码" maxlength="6"></el-input>
+      </el-form-item>
+      <el-form-item label="新手机号">
+        <div style="display:flex;gap:8px;width:100%;">
+          <el-input v-model="rebindNewPhone" inputmode="numeric" placeholder="输入新手机号" maxlength="11"></el-input>
+          <el-button :loading="rebindSendingNew" @click="sendRebindSms('new')">发送验证码</el-button>
+        </div>
+      </el-form-item>
+      <el-form-item label="新验证码">
+        <el-input v-model="rebindNewCode" placeholder="新手机收到的 6 位验证码" maxlength="6"></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="rebindVisible=false">取消</el-button>
+      <el-button type="primary" :loading="rebindSubmitting" @click="doRebind">确认换绑</el-button>
     </template>
   </el-dialog>
 
@@ -3459,6 +3587,7 @@ const app = createApp({
         user.value = res
         limits.value = res.limits || {}
         balance.value = res.balance ?? 0
+        if (res.nickname) nicknameForm.value = res.nickname
       } catch (e) {
         if (e.status === 401) { window.location.href = '/login' }
       }
@@ -3517,6 +3646,122 @@ const app = createApp({
         ElementPlus.ElMessage.error(e.message || '兑换失败')
       } finally {
         redeeming.value = false
+      }
+    }
+    // ====== 个人中心：昵称 / 修改密码 / 手机换绑 ======
+    const nicknameForm = ref('')
+    const nicknameSaving = ref(false)
+    async function saveNickname() {
+      const v = (nicknameForm.value || '').trim()
+      if (!v || v.length > 16) { ElementPlus.ElMessage.warning('昵称 1~16 字符'); return }
+      nicknameSaving.value = true
+      try {
+        await api('/api/profile/nickname', { method: 'POST', body: JSON.stringify({ nickname: v }) }, { withLoading: false })
+        ElementPlus.ElMessage.success('昵称已更新')
+        await loadMe()
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '保存失败')
+      } finally {
+        nicknameSaving.value = false
+      }
+    }
+
+    // 修改密码
+    const pwdChangeVisible = ref(false)
+    const pwdOld = ref('')
+    const pwdNew = ref('')
+    const pwdChanging = ref(false)
+    function openPwdChange() {
+      pwdOld.value = ''
+      pwdNew.value = ''
+      pwdChangeVisible.value = true
+    }
+    async function doChangePassword() {
+      if ((pwdOld.value || '').length < 8 || (pwdNew.value || '').length < 8) {
+        ElementPlus.ElMessage.warning('密码至少 8 位'); return
+      }
+      pwdChanging.value = true
+      try {
+        await api('/api/password/change', {
+          method: 'POST',
+          body: JSON.stringify({ old_password: pwdOld.value, new_password: pwdNew.value }),
+        }, { withLoading: false })
+        ElementPlus.ElMessage.success('密码已修改')
+        pwdChangeVisible.value = false
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '修改失败')
+      } finally {
+        pwdChanging.value = false
+      }
+    }
+
+    // 手机号换绑（旧+新双码 + 图形码）
+    const rebindVisible = ref(false)
+    const rebindCaptcha = ref('')
+    const rebindCaptchaId = ref('')
+    const rebindCaptchaImg = ref('')
+    const rebindOldCode = ref('')
+    const rebindNewPhone = ref('')
+    const rebindNewCode = ref('')
+    const rebindSendingOld = ref(false)
+    const rebindSendingNew = ref(false)
+    const rebindSubmitting = ref(false)
+    async function refreshRebindCaptcha() {
+      try {
+        const res = await api('/api/captcha', {}, { withLoading: false })
+        rebindCaptchaId.value = res.captcha_id
+        rebindCaptchaImg.value = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(res.svg)))
+      } catch (_) {}
+    }
+    function openRebind() {
+      rebindOldCode.value = ''
+      rebindNewPhone.value = ''
+      rebindNewCode.value = ''
+      rebindCaptcha.value = ''
+      rebindVisible.value = true
+      refreshRebindCaptcha()
+    }
+    async function sendRebindSms(which) {
+      const phone = which === 'old' ? user.value?.phone : (rebindNewPhone.value || '').trim()
+      if (!/^1[3-9]\d{9}$/.test(phone || '')) { ElementPlus.ElMessage.warning('请输入正确的手机号'); return }
+      if (!rebindCaptchaId.value || !rebindCaptcha.value) { ElementPlus.ElMessage.warning('请先输入图形验证码'); return }
+      if (which === 'old') rebindSendingOld.value = true; else rebindSendingNew.value = true
+      try {
+        const res = await api('/api/sms/send', {
+          method: 'POST',
+          body: JSON.stringify({
+            phone, captcha_id: rebindCaptchaId.value, captcha: rebindCaptcha.value, type: 'rebind',
+          }),
+        }, { withLoading: false })
+        ElementPlus.ElMessage.success('验证码已发送' + (res.test_mode ? '（测试模式：123456）' : ''))
+        rebindCaptcha.value = ''
+        refreshRebindCaptcha()
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '发送失败')
+        refreshRebindCaptcha()
+      } finally {
+        if (which === 'old') rebindSendingOld.value = false; else rebindSendingNew.value = false
+      }
+    }
+    async function doRebind() {
+      const payload = {
+        old_sms_code: (rebindOldCode.value || '').trim(),
+        new_phone: (rebindNewPhone.value || '').trim(),
+        new_sms_code: (rebindNewCode.value || '').trim(),
+      }
+      if (!payload.old_sms_code || !payload.new_phone || !payload.new_sms_code) {
+        ElementPlus.ElMessage.warning('请完整填写原验证码 / 新手机号 / 新验证码'); return
+      }
+      rebindSubmitting.value = true
+      try {
+        await api('/api/phone/rebind', { method: 'POST', body: JSON.stringify(payload) }, { withLoading: false })
+        ElementPlus.ElMessage.success('手机号已更换')
+        rebindVisible.value = false
+        await loadMe()
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '换绑失败')
+      } finally {
+        rebindSubmitting.value = false
       }
     }
     async function logout() {
@@ -3657,10 +3902,44 @@ const app = createApp({
       dashLoading.value = true
       try {
         dashData.value = await api(`/api/admin/dashboard?days=${dashDays.value}`)
+        loadAdminUsers()
       } catch (e) {
         ElementPlus.ElMessage.error(e.message || '看板数据加载失败')
       } finally {
         dashLoading.value = false
+      }
+    }
+
+    // 账号管理：注册用户列表 + 封禁/解封
+    const adminUserRows = ref([])
+    async function loadAdminUsers() {
+      try {
+        const res = await api('/api/admin/users', {}, { withLoading: false })
+        adminUserRows.value = res.users || []
+      } catch (_) { /* 非 dev/admin 或接口失败时静默 */ }
+    }
+    async function banUser(row) {
+      try {
+        await ElementPlus.ElMessageBox.confirm(
+          `确认封禁「${row.nickname || row.username}」？封禁后该账号将无法登录和使用全部功能。`,
+          '封禁确认', { confirmButtonText: '封禁', cancelButtonText: '取消', type: 'warning' },
+        )
+      } catch (_) { return }
+      try {
+        await api(`/api/admin/users/${row.uid}/ban`, { method: 'POST' }, { withLoading: false })
+        ElementPlus.ElMessage.success('已封禁')
+        loadAdminUsers()
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '封禁失败')
+      }
+    }
+    async function unbanUser(row) {
+      try {
+        await api(`/api/admin/users/${row.uid}/unban`, { method: 'POST' }, { withLoading: false })
+        ElementPlus.ElMessage.success('已解封')
+        loadAdminUsers()
+      } catch (e) {
+        ElementPlus.ElMessage.error(e.message || '解封失败')
       }
     }
     const dashStats = computed(() => dashData.value?.stats || { feedback: {} })
@@ -5720,6 +5999,7 @@ const app = createApp({
       dashStats, dashFbPct, dashActivity, dashMaxVal, dashBarX,
       dashValH, dashSeriesPoints, dashAreaPath, dashLinePoints, dashAnnot, dashLabelStep,
       dashUserSearch, dashUserRows, dashUserRowsVisible, dashUserExpanded, dashRoleLabel,
+      adminUserRows, loadAdminUsers, banUser, unbanUser,
       dashTypeMax, dashTypeW, dashTypeColor,
       dashHistRows, dashHistTotal, dashHistPage, dashHistQ, dashHistRating, dashHistRole, dashHistLoading, loadDashHist,
       dashHistExpanded, dashHistVisible,
@@ -5784,6 +6064,10 @@ const app = createApp({
       openSceneEdit, addWordToSceneEdit, saveSceneEdit, deleteScene, compileScene,
       llmModels, llmRouteList, llmRouteForm, llmSaving, loadLlmSettings, saveLlmSettings,
       ttsWordModel, ttsWordDefault, ttsWordModels, ttsWordVoice, ttsWordVoiceOptions, ttsSaving, loadTtsSettings, saveTtsSettings, onTtsWordModelChange, getVoiceOptions,
+      nicknameForm, nicknameSaving, saveNickname,
+      pwdChangeVisible, pwdOld, pwdNew, pwdChanging, openPwdChange, doChangePassword,
+      rebindVisible, rebindCaptcha, rebindCaptchaImg, rebindOldCode, rebindNewPhone, rebindNewCode,
+      rebindSendingOld, rebindSendingNew, rebindSubmitting, openRebind, sendRebindSms, doRebind,
       ...Icons,
     }
   }

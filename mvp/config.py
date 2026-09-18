@@ -495,3 +495,13 @@ ALIYUN_SMS_ACCESS_KEY_ID = os.getenv("ALIYUN_SMS_ACCESS_KEY_ID", "")
 ALIYUN_SMS_ACCESS_KEY_SECRET = os.getenv("ALIYUN_SMS_ACCESS_KEY_SECRET", "")
 ALIYUN_SMS_SIGN_NAME = os.getenv("ALIYUN_SMS_SIGN_NAME", "")
 ALIYUN_SMS_TEMPLATE_CODE = os.getenv("ALIYUN_SMS_TEMPLATE_CODE", "")
+
+# 短信验证码允许的用途类型（发送时校验，防传任意值）
+SMS_SEND_TYPES = ("register", "guest_upgrade", "reset", "rebind")
+
+# ========================================================================
+# 登录安全：失败递进锁定（账号级 + IP 级双轨，落库可审计）
+# ========================================================================
+
+# 达到累计失败次数 → 锁定时长（秒）。5 次锁 5 分钟 → 10 次锁 30 分 → 20 次锁 2 小时
+LOGIN_LOCK_THRESHOLDS = [(5, 300), (10, 1800), (20, 7200)]

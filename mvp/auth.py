@@ -112,6 +112,33 @@ def _migrate_users_table(conn):
     """)
 
 
+def _migrate_users_account_cols(conn):
+    """幂等迁移 users 表：新增 status（active/banned）/ nickname / banned_at 列。
+    已含 status 列则跳过。与 _migrate_users_table 同风格。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "status" in cols:
+        return
+    conn.executescript("""
+        CREATE TABLE users_new (
+            uid TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL CHECK (role IN ('dev','admin','guest','user')),
+            phone TEXT DEFAULT '',
+            phone_verified INTEGER DEFAULT 0,
+            balance INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            status TEXT NOT NULL DEFAULT 'active',
+            nickname TEXT NOT NULL DEFAULT '',
+            banned_at TEXT DEFAULT ''
+        );
+        INSERT INTO users_new (uid, username, password_hash, role, phone, phone_verified, balance, created_at)
+            SELECT uid, username, password_hash, role, phone, phone_verified, balance, created_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+    """)
+
+
 def init_system_db():
     """初始化全局库：建表 + 播种开发者/管理员账号（幂等）。"""
     conn = get_system_conn()
@@ -125,7 +152,10 @@ def init_system_db():
                 phone TEXT DEFAULT '',
                 phone_verified INTEGER DEFAULT 0,
                 balance INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now','localtime'))
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                status TEXT NOT NULL DEFAULT 'active',
+                nickname TEXT NOT NULL DEFAULT '',
+                banned_at TEXT DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS quotas (
                 day    TEXT NOT NULL,   -- YYYY-MM-DD
@@ -166,8 +196,17 @@ def init_system_db():
                 batch TEXT DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS login_fails (
+                scope TEXT NOT NULL,          -- 'user' | 'ip'
+                scope_key TEXT NOT NULL,
+                fail_count INTEGER DEFAULT 0,
+                locked_until INTEGER DEFAULT 0,   -- epoch 秒
+                updated_at INTEGER DEFAULT 0,     -- epoch 秒
+                PRIMARY KEY (scope, scope_key)
+            );
         """)
         _migrate_users_table(conn)
+        _migrate_users_account_cols(conn)
         if DEV_PASSWORD:
             _seed_user(conn, DEV_USERNAME, DEV_PASSWORD, ROLE_DEV)
         for _username, _pwd in ADMIN_USERS:
@@ -181,7 +220,7 @@ def get_user(uid: str) -> dict | None:
     conn = get_system_conn()
     try:
         row = conn.execute(
-            "SELECT uid, username, role, phone, balance FROM users WHERE uid=?", (uid,)
+            "SELECT uid, username, role, phone, balance, status, nickname FROM users WHERE uid=?", (uid,)
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -193,7 +232,7 @@ def get_user_by_username(username: str) -> dict | None:
     conn = get_system_conn()
     try:
         row = conn.execute(
-            "SELECT uid, username, role, password_hash, phone, balance FROM users "
+            "SELECT uid, username, role, password_hash, phone, balance, status, nickname FROM users "
             "WHERE username=? AND role IN ('dev','admin','user')",
             (username,),
         ).fetchone()
@@ -207,13 +246,28 @@ def get_user_by_phone(phone: str) -> dict | None:
     conn = get_system_conn()
     try:
         row = conn.execute(
-            "SELECT uid, username, role, password_hash, phone, balance, phone_verified FROM users "
+            "SELECT uid, username, role, password_hash, phone, balance, phone_verified, status, nickname FROM users "
             "WHERE phone=? AND role IN ('admin','user')",
             (phone,),
         ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+# ========================================================================
+# 账户状态：封禁
+# ========================================================================
+
+def is_banned(user: dict | None) -> bool:
+    """用户是否被封禁。"""
+    return bool(user and user.get("status") == "banned")
+
+
+def require_not_banned(user: dict):
+    """封禁拦截：被封禁抛 403（持久、管理员可控，区别于临时 423 锁定）。"""
+    if is_banned(user):
+        raise HTTPException(403, "账号已被封禁，请联系管理员")
 
 
 def create_guest_user() -> dict:
@@ -297,6 +351,7 @@ async def get_current_user(request: Request) -> dict:
     user = get_user(uid)
     if not user:
         raise HTTPException(401, "用户不存在")
+    require_not_banned(user)   # 封禁用户所有认证端点 403
     current_uid.set(uid)
     current_user.set(user)
     ensure_db_initialized(uid)
@@ -452,11 +507,13 @@ def require_credit(bucket: str, count: int = 1):
 
 def require_quota(bucket: str):
     """配额/余额拦截（生成端点入口调用）：
+    - 封禁用户（banned）一律 403 拒绝
     - dev/admin 不限量直接放行
     - 注册用户（user）按余额扣费（require_credit）
     - 游客（guest）按每日配额消耗 1 次（超限 429）"""
     uid = current_uid.get(None) or DEV_USERNAME
     user = get_user(uid)
+    require_not_banned(user)   # 纵深防御：封禁用户在生成入口被拦（认证依赖已拦一次）
     role = user["role"] if user else ROLE_GUEST
     if role == ROLE_USER:
         require_credit(bucket)
@@ -502,6 +559,94 @@ def get_quota_status(uid: str) -> dict:
 
 
 # ========================================================================
+# 登录安全：失败递进锁定（账号级 + IP 级，落库可审计）
+# ========================================================================
+
+def _lock_duration(fail_count: int) -> int:
+    """按累计失败次数返回锁定时长（秒）；未达任何阈值返回 0。"""
+    duration = 0
+    for threshold, lock_sec in LOGIN_LOCK_THRESHOLDS:
+        if fail_count >= threshold:
+            duration = lock_sec
+    return duration
+
+
+def _lock_remaining(scope: str, scope_key: str) -> int:
+    """返回 scope 条目剩余锁定秒数；未锁定/已过期返回 0。"""
+    now = int(time.time())
+    try:
+        conn = get_system_conn()
+        try:
+            row = conn.execute(
+                "SELECT locked_until, fail_count FROM login_fails WHERE scope=? AND scope_key=?",
+                (scope, scope_key),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    if not row or not row["locked_until"]:
+        return 0
+    remaining = int(row["locked_until"]) - now
+    return max(remaining, 0)
+
+
+def _record_login_fail(scope: str, scope_key: str):
+    """累计一次失败并写入用量计数；达阈值则设置 locked_until。"""
+    now = int(time.time())
+    try:
+        conn = get_system_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT fail_count, locked_until FROM login_fails WHERE scope=? AND scope_key=?",
+                (scope, scope_key),
+            ).fetchone()
+            fail_count = int(row["fail_count"]) + 1 if row else 1
+            locked_until = 0
+            duration = _lock_duration(fail_count)
+            if duration:
+                locked_until = now + duration
+            conn.execute(
+                "INSERT INTO login_fails (scope, scope_key, fail_count, locked_until, updated_at) "
+                "VALUES (?,?,?,?,?) "
+                "ON CONFLICT(scope, scope_key) DO UPDATE SET "
+                "fail_count=excluded.fail_count, locked_until=excluded.locked_until, updated_at=excluded.updated_at",
+                (scope, scope_key, fail_count, locked_until, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _clear_login_fail(scope: str, scope_key: str):
+    """成功后清零记录（幂等）。"""
+    try:
+        conn = get_system_conn()
+        try:
+            conn.execute("DELETE FROM login_fails WHERE scope=? AND scope_key=?", (scope, scope_key))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _check_login_lock(scope: str, scope_key: str):
+    """入口锁定检查：剩余锁定时长 > 0 抛 423 + Retry-After 头。
+    锁定期间的每一次尝试也累计失败次数（防攻击者等锁期结束后从低档重新开始）。"""
+    remaining = _lock_remaining(scope, scope_key)
+    if remaining > 0:
+        _record_login_fail(scope, scope_key)  # 锁期内继续累计，递进到更高档
+        remaining = _lock_remaining(scope, scope_key)
+        exc = HTTPException(423, f"尝试次数过多，已临时锁定，请 {remaining // 60 + 1} 分钟后再试")
+        exc.headers = {"Retry-After": str(max(remaining, 1)), "X-Lock-Remaining": str(remaining)}
+        raise exc
+
+
+# ========================================================================
 # 认证 API
 # ========================================================================
 
@@ -521,17 +666,27 @@ async def _read_json(req: Request) -> dict:
 
 @router.post("/api/login")
 async def login(req: Request, resp: Response):
-    """账号登录：开发者 / 管理员 / 注册用户（支持用户名或手机号）。成功后写会话 Cookie。"""
+    """账号登录：开发者 / 管理员 / 注册用户（支持用户名或手机号）。成功后写会话 Cookie。
+    安全：失败递进锁定（账号级 + IP 级），封禁用户拒绝登录。"""
     body = await _read_json(req)
     username = str(body.get("username", "")).strip()
     password = str(body.get("password", ""))
     ip = _client_ip(req)
     if not username or not password:
         raise HTTPException(400, "请输入账号和密码")
+    _check_login_lock("ip", ip)
+    _check_login_lock("user", username)
     user = get_user_by_username(username) or get_user_by_phone(username)
+    if is_banned(user):
+        logger.warning("封禁账号尝试登录 user=%s ip=%s", username, ip)
+        raise HTTPException(403, "账号已被封禁，请联系管理员")
     if not user or not user["password_hash"] or not _verify_password(password, user["password_hash"]):
+        _record_login_fail("user", username)
+        _record_login_fail("ip", ip)
         logger.warning("登录失败 user=%s ip=%s 原因=账号或密码错误", username, ip)
         raise HTTPException(401, "账号或密码错误")
+    _clear_login_fail("user", username)
+    _clear_login_fail("ip", ip)
     _set_session_cookie(resp, user["uid"])
     current_uid.set(user["uid"])
     current_user.set(user)
@@ -577,6 +732,7 @@ async def me(request: Request):
         if not uid:
             raise HTTPException(401, "未登录或登录已过期")
         user = get_user(uid) or _default_dev_user()
+        require_not_banned(user)
         ensure_db_initialized(user["uid"])
     current_uid.set(user["uid"])
     current_user.set(user)
@@ -584,9 +740,139 @@ async def me(request: Request):
         "uid": user["uid"],
         "username": user["username"],
         "role": user["role"],
+        "status": user.get("status", "active"),
+        "nickname": user.get("nickname", ""),
+        "phone": user.get("phone", ""),
         "balance": get_balance(user["uid"]),
         "limits": get_quota_status(user["uid"]),
     }
+
+
+# ========================================================================
+# 个人中心：密码 / 换绑 / 昵称
+# ========================================================================
+
+@router.post("/api/password/change")
+async def password_change(req: Request):
+    """登录态修改密码：旧密码校验 + 新密码（≥8 位）。"""
+    token = req.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not user:
+        raise HTTPException(401, "未登录或登录已过期")
+    require_not_banned(user)
+    body = await _read_json(req)
+    old_password = str(body.get("old_password", ""))
+    new_password = str(body.get("new_password", ""))
+    if not old_password or not new_password:
+        raise HTTPException(400, "请输入旧密码和新密码")
+    if len(new_password) < 8:
+        raise HTTPException(400, "新密码长度至少 8 位")
+    if new_password == old_password:
+        raise HTTPException(400, "新密码不能与旧密码相同")
+    # get_user 不返回 password_hash（避免审计日志误带出），单独取哈希
+    detail = get_user_by_username(user["username"]) or get_user_by_phone(user.get("phone", "")) or {}
+    if not detail.get("password_hash") or not _verify_password(old_password, detail["password_hash"]):
+        raise HTTPException(401, "旧密码错误")
+    conn = get_system_conn()
+    try:
+        conn.execute("UPDATE users SET password_hash=? WHERE uid=?", (_hash_password(new_password), uid))
+        conn.commit()
+    finally:
+        conn.close()
+    _clear_login_fail("user", user["username"])
+    logger.info("修改密码 uid=%s", uid)
+    return {"ok": True}
+
+
+@router.post("/api/password/reset")
+async def password_reset(req: Request, resp: Response):
+    """忘记密码：短信验证码（type=reset）重置密码。不需登录态。"""
+    body = await _read_json(req)
+    phone = _check_phone(str(body.get("phone", "")))
+    sms_code = str(body.get("sms_code", ""))
+    new_password = str(body.get("new_password", ""))
+    if len(new_password) < 8:
+        raise HTTPException(400, "新密码长度至少 8 位")
+    _verify_sms_code(phone, sms_code, "reset")
+    user = get_user_by_phone(phone)
+    if not user:
+        raise HTTPException(404, "该手机号未注册")
+    conn = get_system_conn()
+    try:
+        conn.execute(
+            "UPDATE users SET password_hash=?, phone_verified=1, status='active' WHERE uid=?",
+            (_hash_password(new_password), user["uid"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    _clear_login_fail("user", user["username"])
+    _set_session_cookie(resp, user["uid"])
+    current_uid.set(user["uid"])
+    current_user.set(user)
+    logger.info("短信重置密码 uid=%s phone=%s", user["uid"], phone)
+    return {"ok": True, "uid": user["uid"]}
+
+
+@router.post("/api/phone/rebind")
+async def phone_rebind(req: Request):
+    """登录态手机号换绑：旧手机码 + 新手机码双验证（type=rebind）。"""
+    token = req.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not user:
+        raise HTTPException(401, "未登录或登录已过期")
+    require_not_banned(user)
+    if not user.get("phone"):
+        raise HTTPException(400, "当前账号未绑定手机号")
+    body = await _read_json(req)
+    old_sms_code = str(body.get("old_sms_code", ""))
+    new_phone = str(body.get("new_phone", "")).strip()
+    new_sms_code = str(body.get("new_sms_code", ""))
+    new_phone = _check_phone(new_phone)
+    if new_phone == user["phone"]:
+        raise HTTPException(400, "新手机号与当前一致")
+    if get_user_by_phone(new_phone):
+        raise HTTPException(409, "该手机号已被其他账号绑定")
+    _verify_sms_code(user["phone"], old_sms_code, "rebind")
+    _verify_sms_code(new_phone, new_sms_code, "rebind")
+    conn = get_system_conn()
+    try:
+        # username 同步为新手机号（注册时 username=phone，换绑应一并更新，
+        # 否则旧手机号仍可作为登录账号使用）
+        conn.execute(
+            "UPDATE users SET phone=?, username=?, phone_verified=1 WHERE uid=?",
+            (new_phone, new_phone, uid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("手机号换绑 uid=%s 旧=%s 新=%s", uid, user["phone"], new_phone)
+    return {"ok": True, "phone": new_phone}
+
+
+@router.post("/api/profile/nickname")
+async def profile_nickname(req: Request):
+    """登录态修改昵称（1~16 字符）。"""
+    token = req.cookies.get(AUTH_COOKIE)
+    uid = verify_session_token(token) if token else None
+    user = get_user(uid) if uid else None
+    if not user:
+        raise HTTPException(401, "未登录或登录已过期")
+    require_not_banned(user)
+    body = await _read_json(req)
+    nickname = str(body.get("nickname", "")).strip()
+    if not (1 <= len(nickname) <= 16):
+        raise HTTPException(400, "昵称长度需为 1~16 字符")
+    conn = get_system_conn()
+    try:
+        conn.execute("UPDATE users SET nickname=? WHERE uid=?", (nickname, uid))
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("修改昵称 uid=%s nickname=%s", uid, nickname)
+    return {"ok": True, "nickname": nickname}
 
 
 # ========================================================================
@@ -649,9 +935,10 @@ async def sms_send(req: Request):
     captcha_id = str(body.get("captcha_id", "")).strip()
     captcha_answer = str(body.get("captcha", "")).strip()
     sms_type = str(body.get("type", "register")).strip() or "register"
-    if sms_type not in ("register", "guest_upgrade"):
+    if sms_type not in SMS_SEND_TYPES:
         sms_type = "register"
     ip = _client_ip(req)
+    _check_login_lock("ip", ip)   # 防图形验证码暴破短信通道：IP 级锁定同样拦截
     if not captcha_id or not captcha_answer:
         raise HTTPException(401, "缺少图形验证码")
     if not verify_captcha(captcha_id, captcha_answer):
@@ -744,12 +1031,13 @@ def _register_user(phone: str, password: str, role: str = ROLE_USER, upgrade_fro
     if get_user_by_phone(phone):
         raise HTTPException(409, "该手机号已注册")
     uid = f"u-{uuid.uuid4().hex[:12]}"
+    nickname = f"用户{phone[-4:]}"
     conn = get_system_conn()
     try:
         conn.execute(
-            "INSERT INTO users (uid, username, password_hash, role, phone, phone_verified, balance) "
-            "VALUES (?,?,?,?,?,1,0)",
-            (uid, phone, _hash_password(password), role, phone),
+            "INSERT INTO users (uid, username, password_hash, role, phone, phone_verified, balance, nickname) "
+            "VALUES (?,?,?,?,?,1,0,?)",
+            (uid, phone, _hash_password(password), role, phone, nickname),
         )
         conn.commit()
     finally:
@@ -966,17 +1254,59 @@ async def admin_credit(req: Request):
 
 @router.get("/api/admin/users")
 async def admin_users(request: Request):
-    """管理员查看注册用户列表：uid/用户名/角色/手机号/余额/注册时间。"""
+    """管理员查看注册用户列表：uid/用户名/角色/手机号/余额/状态/注册时间。"""
     user = _require_admin(request)
     conn = get_system_conn()
     try:
         rows = conn.execute(
-            "SELECT uid, username, role, phone, balance, created_at FROM users "
+            "SELECT uid, username, role, phone, balance, status, nickname, created_at FROM users "
             "WHERE role IN ('user','guest') ORDER BY created_at DESC LIMIT 200"
         ).fetchall()
         return {"users": [dict(r) for r in rows]}
     finally:
         conn.close()
+
+
+@router.post("/api/admin/users/{target_uid}/ban")
+async def admin_ban_user(target_uid: str, req: Request):
+    """管理员封禁账号（仅 dev/admin）。封禁后拒绝登录与全部生成请求。"""
+    operator = _require_admin(req)
+    target = get_user(target_uid)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    if target["role"] in (ROLE_DEV, ROLE_ADMIN):
+        raise HTTPException(400, "不能封禁开发者/管理员账号")
+    conn = get_system_conn()
+    try:
+        conn.execute(
+            "UPDATE users SET status='banned', banned_at=? WHERE uid=?",
+            (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), target_uid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("封禁账号 operator=%s target=%s(%s)", operator["uid"], target_uid, target.get("username"))
+    return {"ok": True, "uid": target_uid, "status": "banned"}
+
+
+@router.post("/api/admin/users/{target_uid}/unban")
+async def admin_unban_user(target_uid: str, req: Request):
+    """管理员解封账号（仅 dev/admin）。"""
+    operator = _require_admin(req)
+    target = get_user(target_uid)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    conn = get_system_conn()
+    try:
+        conn.execute(
+            "UPDATE users SET status='active', banned_at='' WHERE uid=?",
+            (target_uid,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("解封账号 operator=%s target=%s(%s)", operator["uid"], target_uid, target.get("username"))
+    return {"ok": True, "uid": target_uid, "status": "active"}
 
 
 # ========================================================================
