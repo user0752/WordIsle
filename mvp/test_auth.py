@@ -41,6 +41,8 @@ class AuthTestCase(unittest.TestCase):
         main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "dev-wordisle.db"
         auth_module.SYSTEM_DB_PATH = routes_module.SYSTEM_DB_PATH = db_module.SYSTEM_DB_PATH = cls._tmp_path / "system.db"
         db_module.USER_DATA_DIR = cls._tmp_path
+        # 联合跑时前面模块已把 uid 加入 _initialized_dbs 缓存，换目录后会跳过建库
+        db_module._initialized_dbs.clear()
         main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
         db_module.AUDIOS_DIR.mkdir(exist_ok=True)
         main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"

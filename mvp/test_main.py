@@ -92,9 +92,15 @@ def _patch_test_paths(cls):
     业务库对齐 get_db("dev") 的实际路径（USER_DATA_DIR/dev-wordisle.db）。"""
     os.environ["MIGRATE_LEGACY_DB"] = "0"
     auth_module.AUTH_DISABLED = True
+    # 联合跑时前面模块（test_auth/test_admin/test_billing）会把 auth.DEV_USERNAME 改成
+    # "dev" 且不恢复，导致默认身份落到 dev.db，与 lifespan 建的 dev-wordisle.db 不一致；
+    # 这里钉回 config 原值，保证 AUTH_DISABLED 时 get_current_user 走 dev-wordisle.db。
+    from config import DEV_USERNAME
+    auth_module.DEV_USERNAME = DEV_USERNAME
     main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "dev-wordisle.db"
     auth_module.SYSTEM_DB_PATH = routes_module.SYSTEM_DB_PATH = db_module.SYSTEM_DB_PATH = cls._tmp_path / "system.db"
     db_module.USER_DATA_DIR = cls._tmp_path
+    db_module._initialized_dbs.clear()
     main.AUDIOS_DIR = db_module.AUDIOS_DIR = routes_module.AUDIOS_DIR = cls._tmp_path / "audios"
     db_module.AUDIOS_DIR.mkdir(exist_ok=True)
     main.VIDEOS_DIR = routes_module.VIDEOS_DIR = cls._tmp_path / "videos"

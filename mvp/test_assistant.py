@@ -34,6 +34,7 @@ def _patch_test_paths(cls):
     main.DB_PATH = db_module.DB_PATH = cls._tmp_path / "dev-wordisle.db"
     auth_module.SYSTEM_DB_PATH = db_module.SYSTEM_DB_PATH = cls._tmp_path / "system.db"
     db_module.USER_DATA_DIR = cls._tmp_path
+    db_module._initialized_dbs.clear()
 
 
 class _TempDBCase(unittest.TestCase):
