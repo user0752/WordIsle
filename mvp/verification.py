@@ -1,41 +1,133 @@
-"""图形验证码（零依赖 SVG）+ 短信验证码共用工具。
+"""滑块拼图图形验证码（Pillow 位图渲染）。
 
-- SVG 验证码：4 位字符 + 干扰线，内存态存储（单进程 uvicorn 足够），
-  一次性、300s 过期、尝试 5 次作废。
-- 提供 phone / captcha 校验辅助函数，供 auth.py 端点使用。
+- 主流滑块拼图交互（极验/腾讯云同款）：随机位图背景 + 拼图块，
+  前端拖滑块把拼图块对准缺口，服务端比对 x 坐标（容差内通过）。
+- 位图而非 SVG：矢量缺口坐标可被脚本直接解析，位图只有 CV 才能定位，
+  达到主流验证码同等防护。
+- 答案=目标 x 坐标（服务端内存态存储，不下发前端）；内存态一次性，TTL 过期、
+  尝试次数作废、待校验数量上限防内存刷爆。
 """
-import hashlib
+import base64
+import io
+import random
 import secrets
 import threading
 import time
 
+from PIL import Image, ImageDraw
+
 from config import CAPTCHA_MAX_TRIES, CAPTCHA_TTL
 
-# 验证码存储：{captcha_id: {"answer_hash": str, "created_at": float, "try_count": int}}
+# secrets 无 randrange（那是 random 的），用 SystemRandom 做加密安全随机
+_rand = random.SystemRandom()
+
+# 验证码存储：{captcha_id: {"target": int|None, "created_at": float, "try_count": int}}
 _captcha_store: dict[str, dict] = {}
 _store_lock = threading.Lock()
 
 # 防止内存被刷爆：未过期待校验验证码上限，超限时淘汰最旧一条
 CAPTCHA_MAX_PENDING = 10000
 
-# 可读字符集（去掉易混淆的 0/O、1/l/I）
-CAPTCHA_CHARS = "23456789abcdefghjkmnpqrstuvwxyz"
+# 画布与拼图参数（px）
+CAPTCHA_W = 300
+CAPTCHA_H = 100
+PIECE_SIZE = 56          # 拼图块边长（方形）
+PIECE_Y = (CAPTCHA_H - PIECE_SIZE) // 2   # 垂直居中放置
+TOLERANCE = 12           # x 偏差容差（px）
 
-# 验证码画布
-_WIDTH, _HEIGHT = 150, 50
+# 背景随机色板（读起来舒适的浅色系，深浅各一套便于随机组合）
+_PALETTES = [
+    ((120, 190, 180), (235, 245, 240)),   # 绿
+    ((150, 170, 220), (240, 244, 252)),   # 蓝
+    ((215, 165, 120), (252, 244, 234)),   # 橙
+    ((170, 150, 205), (246, 242, 252)),   # 紫
+    ((200, 150, 150), (250, 242, 242)),   # 红
+]
 
 
-def _hex_color(seed: int) -> str:
-    """由整数种子生成一个可读的深色前景色。"""
-    r = 30 + (seed * 37) % 160
-    g = 30 + (seed * 71) % 160
-    b = 30 + (seed * 113) % 160
-    return f"#{r:02x}{g:02x}{b:02x}"
+def _rand_color(base, spread=28):
+    """在基准色附近随机抖动，避免每次都同色。"""
+    return tuple(
+        max(0, min(255, c + _rand.randrange(-spread, spread + 1))) for c in base
+    )
+
+
+def _rand_background() -> Image.Image:
+    """生成随机位图背景：渐变底色 + 若干几何色块 + 干扰线/噪点。"""
+    deep, light = secrets.choice(_PALETTES)
+    img = Image.new("RGB", (CAPTCHA_W, CAPTCHA_H), _rand_color(light))
+    draw = ImageDraw.Draw(img)
+    # 对角渐变：整幅叠加一条半透明深色带，增加纹理
+    for i in range(CAPTCHA_W // 2):
+        alpha = int(14 * (1 - i / (CAPTCHA_W / 2)))
+        draw.line(
+            [(i, 0), (i + CAPTCHA_H, CAPTCHA_H)], fill=(*_rand_color(deep, 10), alpha), width=1,
+        )
+    # 随机几何色块（圆/椭圆/矩形），颜色取自深色系
+    for _ in range(_rand.randrange(6, 11)):
+        x = _rand.randrange(0, CAPTCHA_W)
+        y = _rand.randrange(0, CAPTCHA_H)
+        w = _rand.randrange(18, 70)
+        h = _rand.randrange(12, 40)
+        color = _rand_color(deep, 14)
+        kind = _rand.randrange(3)
+        if kind == 0:
+            draw.ellipse([x, y, x + w, y + h], fill=color)
+        else:
+            draw.rectangle([x, y, x + w, y + h], fill=color)
+    # 干扰线
+    for _ in range(6):
+        draw.line(
+            [(_rand.randrange(0, CAPTCHA_W), _rand.randrange(0, CAPTCHA_H)),
+             (_rand.randrange(0, CAPTCHA_W), _rand.randrange(0, CAPTCHA_H))],
+            fill=(*_rand_color(deep, 20), 0), width=1,
+        )
+    # 噪点
+    for _ in range(60):
+        draw.point(
+            (_rand.randrange(0, CAPTCHA_W), _rand.randrange(0, CAPTCHA_H)),
+            fill=_rand_color(deep, 40),
+        )
+    return img
+
+
+def _draw_hole(bg: Image.Image, target_x: int) -> Image.Image:
+    """在目标位置挖方形洞：填充偏白/同底色并加深色描边，形成可见缺口。"""
+    img = bg.copy()
+    draw = ImageDraw.Draw(img)
+    # 先取该区域平均色做洞底（接近背景，缺口自然）
+    crop = bg.crop((target_x, PIECE_Y, target_x + PIECE_SIZE, PIECE_Y + PIECE_SIZE))
+    pixels = list(crop.convert("RGB").getdata())
+    if pixels:
+        avg = tuple(sum(ch) // len(pixels) for ch in zip(*pixels))
+    else:
+        avg = (245, 245, 245)
+    hole = tuple(min(255, c + 26) for c in avg)  # 略提亮，显洞
+    draw.rectangle(
+        [target_x, PIECE_Y, target_x + PIECE_SIZE, PIECE_Y + PIECE_SIZE], fill=hole,
+    )
+    # 深色描边（缺口轮廓）
+    draw.rectangle(
+        [target_x, PIECE_Y, target_x + PIECE_SIZE, PIECE_Y + PIECE_SIZE],
+        outline=_rand_color((40, 60, 55), 12), width=2,
+    )
+    return img
+
+
+def _img_to_data_uri(img: Image.Image, fmt: str = "PNG") -> str:
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return f"data:image/{fmt.lower()};base64,{b64}"
 
 
 def new_captcha_id(answer: str) -> str:
-    """生成新验证码：预存答案哈希，返回 captcha_id。"""
+    """生成新验证码：存储目标 x 坐标（服务端内存态，不下发前端），返回 captcha_id。"""
     captcha_id = secrets.token_hex(16)
+    try:
+        target = int(str(answer).strip())
+    except (TypeError, ValueError):
+        target = None   # 非法坐标：生成的验证码永远校验不过（测试契约要求坐标字符串）
     with _store_lock:
         _purge_expired_locked()
         # 超限保护：未过期待校验验证码超过上限时，依次淘汰最旧的
@@ -43,7 +135,7 @@ def new_captcha_id(answer: str) -> str:
             oldest = next(iter(_captcha_store))
             _captcha_store.pop(oldest, None)
         _captcha_store[captcha_id] = {
-            "answer_hash": hashlib.sha256(answer.encode()).hexdigest(),
+            "target": target,
             "created_at": time.time(),
             "try_count": 0,
         }
@@ -58,9 +150,13 @@ def _purge_expired_locked():
         _captcha_store.pop(cid, None)
 
 
-def verify_captcha(captcha_id: str, answer: str) -> bool:
-    """校验图形验证码：一次性（无论对错均删除），尝试 5 次作废。
-    返回是否通过。answer 需先转小写（生成时即小写）。"""
+def verify_captcha(captcha_id: str, x: str) -> bool:
+    """校验滑块验证码：|x - target| <= TOLERANCE 且一次性/未过期/次数未超限。
+    无论对错均删除（一次性）；尝试超 5 次作废。返回是否通过。"""
+    try:
+        x_num = int(str(x).strip())
+    except (TypeError, ValueError):
+        return False
     with _store_lock:
         rec = _captcha_store.pop(captcha_id, None)
         if not rec:
@@ -70,113 +166,31 @@ def verify_captcha(captcha_id: str, answer: str) -> bool:
             return False
         if time.time() - rec["created_at"] > CAPTCHA_TTL:
             return False
-        expected = rec["answer_hash"]
-    return hashlib.sha256(answer.strip().lower().encode()).hexdigest() == expected
+        target = rec.get("target")
+    if target is None:
+        return False
+    return abs(x_num - target) <= TOLERANCE
 
 
-# 5x7 点阵字体（验证码字符集）。每字符 5 列 x 7 行，'#' 表示该格点亮。
-# 用点阵渲染而非 <text>，避免机器直接解析明文文本绕过图形验证码。
-_CAPTCHA_DOT_FONT = {
-    "2": ("01110", "10001", "00001", "00110", "01000", "10000", "11111"),
-    "3": ("11111", "00001", "00010", "00110", "00001", "10001", "01110"),
-    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
-    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
-    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
-    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
-    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
-    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
-    "a": ("01110", "00001", "01111", "10001", "10011", "01101", "00000"),
-    "b": ("10000", "10000", "10110", "11001", "10001", "10001", "01110"),
-    "c": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
-    "d": ("00001", "00001", "01101", "10011", "10001", "10001", "01111"),
-    "e": ("01110", "10001", "10001", "11111", "10000", "10000", "01110"),
-    "f": ("00110", "01001", "01000", "11100", "01000", "01000", "01000"),
-    "g": ("01110", "10001", "10001", "01111", "00001", "10001", "01110"),
-    "h": ("10000", "10000", "10110", "11001", "10001", "10001", "10001"),
-    "j": ("00010", "00010", "00010", "00010", "00010", "10010", "01100"),
-    "k": ("10000", "10000", "10010", "10100", "11000", "10100", "10010"),
-    "m": ("00000", "00000", "11011", "10101", "10101", "10101", "10101"),
-    "n": ("00000", "00000", "10110", "11001", "10001", "10001", "10001"),
-    "p": ("00000", "00000", "01110", "10001", "10001", "10001", "01110"),
-    "q": ("00000", "00000", "01101", "10011", "10001", "10001", "01111"),
-    "r": ("00000", "00000", "10110", "11001", "10000", "10000", "10000"),
-    "s": ("00000", "00000", "01111", "10000", "01110", "00001", "11110"),
-    "t": ("01000", "01000", "11100", "01000", "01000", "01001", "00110"),
-    "u": ("00000", "00000", "10001", "10001", "10001", "10011", "01101"),
-    "v": ("00000", "00000", "10001", "10001", "10001", "01010", "00100"),
-    "w": ("00000", "00000", "10101", "10101", "10101", "10101", "01010"),
-    "x": ("00000", "00000", "10001", "01010", "00100", "01010", "10001"),
-    "y": ("00000", "10001", "10001", "01010", "00100", "01000", "10000"),
-    "z": ("00000", "00000", "11111", "00010", "00100", "01000", "11111"),
-}
+def generate_captcha() -> dict:
+    """生成一组滑块拼图验证码。
 
-# 5x7 点阵的格子像素尺寸（放大后）
-_DOT_SCALE = 4
-_DOT_W = 5 * _DOT_SCALE      # 35
-_DOT_H = 7 * _DOT_SCALE      # 28
+    返回 {captcha_id, width, height, piece_size, bg(带洞背景), piece(拼图块)}；
+    目标 x 坐标仅存服务端（new_captcha_id 时记录 target），不下发前端。
+    """
+    bg = _rand_background()
+    target_x = _rand.randrange(20, CAPTCHA_W - PIECE_SIZE - 20)
+    # 拼图块：背景上与缺口对应位置的原图案
+    piece = bg.crop((target_x, PIECE_Y, target_x + PIECE_SIZE, PIECE_Y + PIECE_SIZE))
+    bg_hole = _draw_hole(bg, target_x)
 
+    captcha_id = new_captcha_id(str(target_x))
 
-def _render_char_dots(ch: str, offset_x: float, offset_y: float, color: str, seed: int, rects: list[str]):
-    """把一个字符渲染为 point 方块矩形（无文本），可整体旋转。"""
-    rows = _CAPTCHA_DOT_FONT.get(ch, _CAPTCHA_DOT_FONT["a"])
-    for r_i, row in enumerate(rows):
-        for c_i, cell in enumerate(row):
-            if cell != "1":   # 字体表用 '1' 表示点亮格
-                continue
-            # 每个点亮格做轻微抖动，打破整齐网格、干扰机器识别
-            jx = hash(f"jx-{ch}-{r_i}-{c_i}-{seed}") % 3 - 1
-            jy = hash(f"jy-{ch}-{r_i}-{c_i}-{seed}") % 3 - 1
-            x = offset_x + c_i * _DOT_SCALE + jx
-            y = offset_y + r_i * _DOT_SCALE + jy
-            rects.append(
-                f'<rect x="{x:.1f}" y="{y:.1f}" width="{_DOT_SCALE - 0.6:.2f}" '
-                f'height="{_DOT_SCALE - 0.6:.2f}" fill="{color}"/>'
-            )
-
-
-def generate_captcha_svg(text: str) -> str:
-    """把 4 位字符渲染为 5x7 点阵 SVG（无明文文本，干扰线+旋转抗机器解析）。"""
-    if len(text) != 4:
-        text = (text + "abcd")[:4]
-    seed = sum(ord(c) for c in text)
-    color = _hex_color(seed)
-    width = _WIDTH
-
-    char_w = _DOT_W + 6          # 每个字符左右留白
-    start_x = (width - 4 * char_w) / 2 + 3
-    # 用 <g> 分组逐个字符轻微旋转
-    g_parts = []
-    for i, ch in enumerate(text):
-        cx = start_x + i * char_w
-        cy = (_HEIGHT - _DOT_H) / 2
-        rot = (hash(f"r-{ch}-{i}-{seed}") % 26) - 13
-        cx_c, cy_c = cx + _DOT_W / 2, cy + _DOT_H / 2
-        inner: list[str] = []
-        _render_char_dots(ch, cx, cy, color, seed, inner)
-        g_parts.append(
-            f'<g transform="rotate({rot} {cx_c:.1f} {cy_c:.1f})">{"".join(inner)}</g>'
-        )
-    # 干扰线
-    lines = []
-    for k in range(6):
-        x1 = hash(f"a-{k}-{seed}") % width
-        y1 = hash(f"b-{k}-{seed}") % _HEIGHT
-        x2 = hash(f"c-{k}-{seed}") % width
-        y2 = hash(f"d-{k}-{seed}") % _HEIGHT
-        lines.append(
-            f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
-            f'stroke="rgba(0,0,0,0.18)" stroke-width="1.1"/>'
-        )
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{_HEIGHT}" '
-        f'viewBox="0 0 {width} {_HEIGHT}"><rect width="100%" height="100%" fill="#f5efe2"/>'
-        + "".join(lines + g_parts)
-        + "</svg>"
-    )
-
-
-def generate_captcha() -> tuple[str, str]:
-    """生成一组验证码。返回 (captcha_id, svg_html)。"""
-    answer = "".join(secrets.choice(CAPTCHA_CHARS) for _ in range(4))
-    captcha_id = new_captcha_id(answer)
-    return captcha_id, generate_captcha_svg(answer)
+    return {
+        "captcha_id": captcha_id,
+        "width": CAPTCHA_W,
+        "height": CAPTCHA_H,
+        "piece_size": PIECE_SIZE,
+        "bg": _img_to_data_uri(bg_hole),
+        "piece": _img_to_data_uri(piece),
+    }

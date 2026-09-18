@@ -896,10 +896,10 @@ def _hash_code(code: str) -> str:
 
 @router.get("/api/captcha")
 async def captcha():
-    """图形验证码：返回 {captcha_id, svg}。验证答案仅存于服务端内存。"""
+    """滑块拼图验证码：返回 {captcha_id, width, height, piece_size, bg(带洞背景), piece(拼图块)}。
+    目标 x 坐标仅存服务端内存，不下发前端（位图无法被脚本直接解析缺口）。"""
     from verification import generate_captcha
-    captcha_id, svg = generate_captcha()
-    return {"captcha_id": captcha_id, "svg": svg}
+    return generate_captcha()
 
 
 def _sms_sent_count(phone: str, ip: str, since_ts: int) -> tuple[int, int, str]:
@@ -933,15 +933,15 @@ async def sms_send(req: Request):
     body = await _read_json(req)
     phone = _check_phone(str(body.get("phone", "")))
     captcha_id = str(body.get("captcha_id", "")).strip()
-    captcha_answer = str(body.get("captcha", "")).strip()
+    captcha_x = str(body.get("captcha_x", "")).strip()
     sms_type = str(body.get("type", "register")).strip() or "register"
     if sms_type not in SMS_SEND_TYPES:
         sms_type = "register"
     ip = _client_ip(req)
     _check_login_lock("ip", ip)   # 防图形验证码暴破短信通道：IP 级锁定同样拦截
-    if not captcha_id or not captcha_answer:
+    if not captcha_id or captcha_x == "":
         raise HTTPException(401, "缺少图形验证码")
-    if not verify_captcha(captcha_id, captcha_answer):
+    if not verify_captcha(captcha_id, captcha_x):
         raise HTTPException(400, "图形验证码错误或已过期")
 
     now = int(time.time())

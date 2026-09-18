@@ -28,6 +28,7 @@ import main
 import routes as routes_module
 import sms as sms_module
 import verification as verification_module
+from verification import TOLERANCE
 
 
 def _seed_sms(phone, expected_type="register"):
@@ -90,10 +91,10 @@ class BillingTestCase(unittest.TestCase):
         self._sms_patch.stop()
 
     def _get_captcha(self):
-        """获取 (captcha_id, answer)。直接生成验证码拿到答案（测试专用）。"""
-        answer = "abcd"
-        cid = verification_module.new_captcha_id(answer)
-        return cid, answer
+        """获取 (captcha_id, 正确 captcha_x)。滑块验证码：target 坐标字符串（测试专用）。"""
+        target = 150                       # 确定值便于断言
+        cid = verification_module.new_captcha_id(str(target))
+        return cid, str(target)
 
     # ---------------- 注册 ----------------
 
@@ -141,21 +142,37 @@ class BillingTestCase(unittest.TestCase):
         self.assertEqual(r.status_code, 401)
 
     def test_sms_send_wrong_captcha_400(self):
+        # captcha_id 不存在 / captcha_x 错误坐标均 400
         r = self.client.post(
             "/api/sms/send",
-            json={"phone": "13800000004", "captcha_id": "nope", "captcha": "xxxx"},
+            json={"phone": "13800000004", "captcha_id": "nope", "captcha_x": "150"},
         )
         self.assertEqual(r.status_code, 400)
+        cid, _ = self._get_captcha()
+        r2 = self.client.post(
+            "/api/sms/send",
+            json={"phone": "13800000004", "captcha_id": cid, "captcha_x": "10"},
+        )
+        self.assertEqual(r2.status_code, 400)
 
     def test_sms_send_cooldown_429(self):
-        cid, answer = self._get_captcha()
-        body = {"phone": "13800000005", "captcha_id": cid, "captcha": answer}
+        cid, captcha_x = self._get_captcha()
+        body = {"phone": "13800000005", "captcha_id": cid, "captcha_x": captcha_x}
         self.assertEqual(self.client.post("/api/sms/send", json=body).status_code, 200)
-        cid2, answer2 = self._get_captcha()
+        cid2, captcha_x2 = self._get_captcha()
         r2 = self.client.post(
-            "/api/sms/send", json={"phone": "13800000005", "captcha_id": cid2, "captcha": answer2}
+            "/api/sms/send", json={"phone": "13800000005", "captcha_id": cid2, "captcha_x": captcha_x2}
         )
         self.assertEqual(r2.status_code, 429)
+
+    def test_sms_send_tolerance_ok(self):
+        """容差内坐标（target±TOLERANCE）应通过，验证滑块容差语义（函数级，避免短信冷却）。"""
+        target = 150
+        for dx in (-TOLERANCE, 0, TOLERANCE):
+            cid = verification_module.new_captcha_id(str(target))
+            self.assertTrue(verification_module.verify_captcha(cid, str(target + dx)), f"容差 {dx} 应通过")
+        cid_out = verification_module.new_captcha_id(str(target))
+        self.assertFalse(verification_module.verify_captcha(cid_out, str(target + TOLERANCE + 1)), "超容差应拒绝")
 
     # ---------------- 计费 ----------------
 
