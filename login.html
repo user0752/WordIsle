@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1e4a3c">
+<title>登录 · 词屿 WordIsle · 顽固词疗养岛</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Noto+Serif+SC:wght@500;600;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ==========================================================
+     登录页 · 词屿 WordIsle
+     与落地页同一套「手绘岛屿图鉴」设计语言：
+     暖纸底 + 岛屿背景透出 + 居中纸质卡片
+     ========================================================== */
+  :root {
+    --paper: #f5efe2;
+    --card: #fdfaf3;
+    --ink: #23402f;
+    --ink-deep: #182e23;
+    --ink-soft: #4c6355;
+    --accent: #3a7d6a;
+    --accent-deep: #1e4a3c;
+    --gold: #b8953a;
+    --gold-light: #d4aa4a;
+    --gold-soft: rgba(184, 149, 58, 0.14);
+    --accent-soft: rgba(58, 125, 106, 0.09);
+    --line: rgba(35, 64, 47, 0.14);
+    --line-strong: rgba(35, 64, 47, 0.24);
+    --danger: #c24a3a;
+    --danger-soft: rgba(194, 74, 58, 0.07);
+    --danger-line: rgba(194, 74, 58, 0.16);
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --serif: "Noto Serif SC", "Playfair Display", Georgia, "Songti SC", serif;
+    --english: "Playfair Display", Georgia, serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color: var(--ink);
+    /* 岛屿背景透出 → 暖纸渐隐，与落地页一脉相承 */
+    background:
+      linear-gradient(180deg,
+        rgba(246, 241, 230, 0.46) 0%,
+        rgba(246, 241, 230, 0.88) 34%,
+        var(--paper) 62%,
+        var(--paper) 100%),
+      url('/static/images/login-bg.jpg') center 0% / cover no-repeat,
+      var(--paper);
+    background-attachment: local;
+    position: relative;
+  }
+  /* 水彩纸颗粒肌理 */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  }
+  ::selection { background: var(--gold-light); color: var(--ink-deep); }
+  a { color: inherit; }
+
+  .login-page {
+    position: relative; z-index: 1;
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    padding: 0 20px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  /* ============ 顶栏 · 与落地页导航同款 ============ */
+  .topbar {
+    max-width: 1080px; width: 100%; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 22px 4px 18px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
+  .brand .brand-icon {
+    width: 38px; height: 38px; flex: none; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center; font-size: 19px;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+    box-shadow: 0 6px 16px rgba(30, 74, 60, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  }
+  .brand .brand-icon.brand-logo {
+    background: transparent; box-shadow: none;
+    object-fit: cover; display: block;
+    box-shadow: 0 6px 16px rgba(30, 74, 60, 0.24);
+  }
+  .brand .brand-text { font-family: var(--serif); font-weight: 700; font-size: 17px; letter-spacing: .5px; color: var(--ink-deep); line-height: 1.2; }
+  .brand .brand-text small { display: block; font-size: 10.5px; letter-spacing: 3px; color: var(--ink-soft); font-weight: 600; }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13.5px; font-weight: 500; color: var(--ink-soft);
+    text-decoration: none; padding: 8px 14px; border-radius: 999px;
+    border: 1px solid transparent;
+    transition: color .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
+  }
+  .back-link:hover { color: var(--accent-deep); background: rgba(253, 250, 243, 0.9); border-color: var(--line); }
+  .back-link svg { width: 14px; height: 14px; }
+  .top-actions { display: flex; align-items: center; gap: 4px; }
+  .gh-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 999px;
+    color: var(--ink-soft);
+    transition: color .2s var(--ease), background .2s var(--ease);
+  }
+  .gh-icon svg { width: 17px; height: 17px; }
+  .gh-icon:hover { color: #24292f; background: rgba(253, 250, 243, 0.9); }
+
+  /* ============ 主舞台 · 居中卡片 ============ */
+  .stage {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 12px 0 30px;
+  }
+  .card {
+    width: 100%; max-width: 404px;
+    background: var(--card);
+    border: 1px solid rgba(35, 64, 47, 0.10);
+    border-radius: 24px;
+    padding: 34px 32px 28px;
+    box-shadow: 0 28px 64px rgba(30, 74, 60, 0.14), 0 4px 14px rgba(30, 74, 60, 0.06);
+    animation: cardIn .55s var(--ease) both;
+  }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(18px) scale(.985); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .card-stamp {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--serif); font-weight: 700; font-size: 12px; letter-spacing: 2px;
+    color: var(--accent-deep);
+    border: 2px dashed rgba(58, 125, 106, 0.5);
+    padding: 4px 12px 3px; border-radius: 9px;
+    transform: rotate(-2deg);
+    margin-bottom: 18px;
+    background: rgba(255, 255, 255, 0.6);
+  }
+  .card h1 {
+    font-family: var(--serif); font-size: 23px; font-weight: 900; letter-spacing: .5px;
+    color: var(--ink-deep);
+  }
+  .card-subtitle { font-size: 13px; color: var(--ink-soft); margin: 6px 0 22px; }
+
+  label { display: block; font-size: 13px; color: var(--ink-soft); margin: 16px 0 7px; font-weight: 600; }
+  .field { position: relative; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 12px 14px; font-size: 15px;
+    border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.10);
+    outline: none; background: #fff; color: var(--ink-deep);
+    transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+  }
+  input::placeholder { color: #b9b3a4; }
+  input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(58, 125, 106, 0.13);
+  }
+  .field .eye {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    border: none; background: transparent; cursor: pointer;
+    width: 38px; height: 38px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    color: #a29b8b; transition: color .15s, background .15s;
+  }
+  .field .eye:hover { color: var(--accent); background: var(--accent-soft); }
+  .field .eye svg { width: 18px; height: 18px; }
+
+  .btn-primary {
+    width: 100%; margin-top: 22px; padding: 13px; font-size: 15.5px; font-weight: 700;
+    font-family: var(--serif); letter-spacing: 2px;
+    border: none; border-radius: 12px; cursor: pointer; color: #f7f2e6;
+    background: linear-gradient(140deg, var(--accent-deep), var(--accent));
+    box-shadow: 0 10px 24px rgba(30, 74, 60, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    transition: transform .15s var(--ease), box-shadow .15s var(--ease), opacity .15s;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 14px 30px rgba(30, 74, 60, 0.36); }
+  .btn-primary:active { transform: translateY(0); }
+
+  .divider { display: flex; align-items: center; gap: 12px; color: #a29b8b; font-size: 12px; margin: 20px 0 4px; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: rgba(35, 64, 47, 0.08); }
+
+  .btn-guest {
+    width: 100%; margin-top: 12px; padding: 12px; font-size: 14.5px; font-weight: 700;
+    font-family: var(--serif); letter-spacing: 1px;
+    border-radius: 12px; cursor: pointer;
+    color: var(--accent-deep); background: var(--gold-soft);
+    border: 1px solid rgba(184, 149, 58, 0.35);
+    transition: transform .15s var(--ease), background .15s, box-shadow .15s;
+  }
+  .btn-guest:hover { background: rgba(212, 170, 74, 0.22); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(140, 105, 30, 0.14); }
+  .btn-guest:active { transform: translateY(0); }
+
+  .btn-primary:disabled, .btn-guest:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+  .err {
+    display: none; margin-top: 12px; padding: 10px 13px;
+    font-size: 13px; color: var(--danger);
+    background: var(--danger-soft);
+    border: 1px solid var(--danger-line);
+    border-radius: 10px; line-height: 1.6;
+  }
+
+  .guest-tip {
+    margin-top: 18px; padding: 11px 13px;
+    font-size: 12px; line-height: 1.7; color: var(--ink-soft);
+    border-left: 3px solid var(--gold);
+    background: rgba(246, 241, 230, 0.8);
+    border-radius: 8px;
+  }
+
+  /* ============ 响应式 ============ */
+  @media (max-width: 480px) {
+    .login-page { padding: 0 14px calc(20px + env(safe-area-inset-bottom)); }
+    .topbar { padding: 16px 2px 10px; }
+    .card { padding: 28px 22px 24px; border-radius: 20px; }
+    .stage { padding: 6px 0 20px; }
+  }
+  @media (max-height: 640px) and (orientation: landscape) {
+    .topbar { padding: 12px 4px 8px; }
+    .brand .brand-text small { display: none; }
+    .card { padding: 24px 28px 20px; }
+    .stage { padding: 4px 0 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="login-page">
+  <!-- 顶栏：品牌 + 返回 -->
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="词屿 WordIsle 首页">
+      <img class="brand-icon brand-logo" src="/static/images/logo.png" alt="词屿 WordIsle 品牌 logo">
+      <div class="brand-text">词屿 WordIsle<small>顽固词疗养岛</small></div>
+    </a>
+    <div class="top-actions">
+      <a class="gh-icon" href="https://github.com/user0752/WordIsle" target="_blank" rel="noopener noreferrer" aria-label="GitHub 开源仓库" title="GitHub 开源仓库">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      </a>
+      <a class="back-link" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        返回介绍页
+      </a>
+    </div>
+  </header>
+
+  <!-- 主舞台 -->
+  <main class="stage">
+    <section class="card" aria-label="登录">
+      <span class="card-stamp">顽固词 · 上岛处</span>
+      <h1>欢迎回来</h1>
+      <p class="card-subtitle">开发者 / 管理员请使用账号密码登录</p>
+
+      <form id="form-account" onsubmit="return doLogin(event)">
+        <label for="username">账号</label>
+        <div class="field">
+          <input type="text" id="username" autocomplete="username" placeholder="请输入账号" required>
+        </div>
+        <label for="password">密码</label>
+        <div class="field">
+          <input type="password" id="password" autocomplete="current-password" placeholder="请输入密码" required>
+          <button type="button" class="eye" id="btn-eye" onclick="togglePassword()" aria-label="显示/隐藏密码" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <button class="btn-primary" id="btn-account" type="submit">登 录</button>
+        <div class="err" id="err-account"></div>
+      </form>
+
+      <div class="divider">或</div>
+      <button class="btn-guest" id="btn-guest" type="button" onclick="guestLogin()">🌴 游客直接进入</button>
+      <div class="err" id="err-guest"></div>
+      <p class="guest-tip">⚠ 游客数据保存在当前浏览器（Cookie 30 天有效），清除缓存或更换设备后将无法找回，重要数据请使用开发者 / 管理员账号。</p>
+    </section>
+  </main>
+</div>
+
+<script>
+// ---- 密码可见性切换 ----
+function togglePassword() {
+  const input = document.getElementById('password')
+  const btn = document.getElementById('btn-eye')
+  const hidden = input.type === 'password'
+  input.type = hidden ? 'text' : 'password'
+  btn.style.color = hidden ? 'var(--accent)' : '#a29b8b'
+  btn.setAttribute('aria-label', hidden ? '隐藏密码' : '显示密码')
+}
+
+function showErr(id, msg) {
+  const el = document.getElementById(id);
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+function setLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  btn.disabled = loading;
+  btn.textContent = loading ? '请稍候…' : (btnId === 'btn-account' ? '登 录' : '🌴 游客直接进入');
+}
+
+async function doLogin(e) {
+  e.preventDefault();
+  setLoading('btn-account', true);
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value.trim(),
+        password: document.getElementById('password').value,
+      }),
+    });
+    if (resp.ok) { location.href = '/app'; return; }
+    const data = await resp.json().catch(() => ({}));
+    showErr('err-account', data.detail || '登录失败，请稍后重试');
+  } catch (err) {
+    showErr('err-account', '网络错误，请稍后重试');
+  } finally {
+    setLoading('btn-account', false);
+  }
+}
+
+async function guestLogin() {
+  setLoading('btn-guest', true);
+  try {
+    const resp = await fetch('/api/login-guest', { method: 'POST' });
+    if (resp.ok) { location.href = '/app'; return; }
+    const data = await resp.json().catch(() => ({}));
+    showErr('err-guest', data.detail || '进入失败，请稍后重试');
+  } catch (err) {
+    showErr('err-guest', '网络错误，请稍后重试');
+  } finally {
+    setLoading('btn-guest', false);
+  }
+}
+</script>
+</body>
+</html>
