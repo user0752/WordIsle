@@ -96,6 +96,15 @@ async def lifespan(app: FastAPI):
         _migrate_legacy_dev_db()
     init_system_db()        # 全局库：users / quotas + 开发者/管理员种子
     init_db(DEV_USERNAME)   # 开发者库（含旧数据迁移后的种子/表结构）
+    # 启动自检：把危险配置显式喊出来，避免“以为关了其实没关”
+    if AUTH_DISABLED:
+        print("[warn] AUTH_DISABLED=1：认证已整体关闭，仅限本地开发，切勿用于线上！")
+    try:
+        from sms import sms_configured
+        if not sms_configured():
+            print("[warn] 阿里云短信未配置：仅本机/测试客户端可用固定验证码，线上注册与找回将返回 503")
+    except Exception:
+        pass
     yield
 
 app = FastAPI(title="WordIsle MVP", docs_url=None, redoc_url=None, lifespan=lifespan)

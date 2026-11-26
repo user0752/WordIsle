@@ -18,6 +18,7 @@ from dashscope.audio.http_tts import HttpSpeechSynthesizer
 from fastapi import HTTPException
 
 from config import *
+from cost_guard import consume_image_budget
 from db import record_model_usage, setup_stream_logger
 
 # 统一日志：如实记录每次模型调用与失败原因（用户侧只显示兜底话术，后台看这里定位问题）。
@@ -1198,14 +1199,20 @@ async def stream_llm_with_fallback(
 
     # 1) 尝试该调用点选定的模型（流式）
     cfg = get_route_llm(route_key)
+    emitted = False
     if cfg.get("api_key"):
         logger.info("LLM 流式调用开始 [%s] model=%s(%s) route=%s", feature, cfg["model"], cfg["value"], route_key)
         try:
             async for evt in _emit_stream(cfg):
+                emitted = emitted or evt.get("type") == "delta"
                 yield evt
             return
         except Exception as e:
             logger.warning("LLM 流式调用失败 [%s] model=%s error=%r，准备降级", feature, cfg["model"], e)
+            if emitted:
+                # 已经吐字给前端了，再降级重试会重复输出，直接结束（前端保留已收到的部分）
+                logger.warning("LLM 流式已输出部分内容 [%s]，放弃降级以避免重复", feature)
+                return
 
     # 2) 降级到该调用点的默认模型（流式）
     default_value = LLM_ROUTE_DEFAULT.get(route_key)
@@ -1214,10 +1221,14 @@ async def stream_llm_with_fallback(
         logger.warning("LLM 降级 [%s] model=%s -> 默认兜底模型 %s（流式）", feature, cfg["model"], default_cfg["model"])
         try:
             async for evt in _emit_stream(default_cfg):
+                emitted = emitted or evt.get("type") == "delta"
                 yield evt
             return
         except Exception as e:
             logger.error("LLM 流式调用失败 [%s] 默认兜底模型 %s error=%r", feature, default_cfg["model"], e)
+            if emitted:
+                logger.warning("LLM 流式已输出部分内容 [%s]，放弃非流式兜底以避免重复", feature)
+                return
 
     # 3) 非流式兜底（两种模型都流式失败时，保证可用）
     data = await _call_llm_with_fallback(messages, route_key, temperature=temperature,
@@ -1521,6 +1532,7 @@ async def call_image_generation(prompt: str, model: str = None, feature: str = "
     feature: 调用来源的编译功能名（如「批量编译/单点深耕/场景编译」），
              用于用量明细的「说明」字段，缺省为空（前端兜底展示「文生图」）。"""
     model_name = model or IMAGE_MODEL
+    consume_image_budget(1)   # 全站每日图片成本熔断：真正发请求前先占预算
     cfg = _get_image_model_config(model_name)
     endpoint = cfg.get("endpoint", "t2i")
     provider = cfg.get("provider", "dashscope")

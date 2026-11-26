@@ -119,13 +119,13 @@ class AuthTestCase(unittest.TestCase):
             for i in range(5):
                 r = self.client.post(
                     "/api/generate",
-                    json={"words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo",
+                    json={"words": "accommodate", "panel_count": 3, "image_model": "qwen-image-2.1-turbo",
                           "generate_audio_immediately": False},
                 )
                 self.assertEqual(r.status_code, 502, f"第{i + 1}次应进入流程")
             r6 = self.client.post(
                 "/api/generate",
-                json={"words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo"},
+                json={"words": "accommodate", "panel_count": 3, "image_model": "qwen-image-2.1-turbo"},
             )
         self.assertEqual(r6.status_code, 429)
         self.assertIn("上限", r6.json()["detail"])
@@ -183,7 +183,7 @@ class AuthTestCase(unittest.TestCase):
             for i in range(7):
                 r = self.client.post(
                     "/api/generate",
-                    json={"words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo",
+                    json={"words": "accommodate", "panel_count": 3, "image_model": "qwen-image-2.1-turbo",
                           "generate_audio_immediately": False},
                 )
                 self.assertEqual(r.status_code, 502, f"第{i + 1}次不应被配额拦截（dev 不限量）")

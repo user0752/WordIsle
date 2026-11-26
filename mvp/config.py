@@ -72,109 +72,50 @@ def default_tts_voice(model: str) -> str:
     """返回某 TTS 模型的默认音色；未知名则回退到全局默认音色。"""
     return TTS_DEFAULT_VOICE.get(model, TTS_VOICE)
 
+
+def normalize_tts_voice(model: str, voice: str = "") -> str:
+    """把音色收敛到该模型支持的集合：非法/跨系列音色回退默认音色，避免上游 500。"""
+    allowed = set(TTS_MODEL_VOICES.get(model, [])) | {default_tts_voice(model)}
+    return voice if voice in allowed else default_tts_voice(model)
+
 # ========================================================================
 # 文生图（阿里云百炼，复用 TTS_API_KEY）
 # ========================================================================
 
 IMAGE_API_KEY  = os.getenv("IMAGE_API_KEY", TTS_API_KEY)
 IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
-IMAGE_MODEL    = os.getenv("IMAGE_MODEL", "wan2.7-image")
+IMAGE_MODEL    = os.getenv("IMAGE_MODEL", "qwen-image-2.1-turbo")
 
-# 文生图模型多档阶梯（用户可在前端自由选择，价格依据《阿里云百炼图像生成价格文档》）
+# 文生图模型两档（用户可在前端自由选择，价格依据阿里云百炼图像生成价格页）
 # 各档 endpoint：
 #   multimodal -> 千问图像系列（同步 generation 端点）
-#   t2i        -> 万相文生图（异步轮询 image-synthesis 端点）
-#   openai     -> TokenRhythm 平台（OpenAI 兼容协议）
+#   t2i        -> 万相文生图（异步轮询 image-synthesis 端点，当前图像档未使用）
 IMAGE_MODELS = [
-    # ============ 旗舰档（复杂版面/文字渲染） ============
+    # ============ 性价比档（默认推荐） ============
     {
-        "value": "qwen-image-3.0-pro",
-        "label": "旗舰 · Qwen-Image 3.0 Pro (文本渲染最强)",
-        "tier": "旗舰",
-        "price": "0.25 元/张 (1k)",
-        "note": "千问3.0旗舰版，agent prompt智能改写，擅长中英文文本渲染；复杂版面首选；10张免费额度",
-        "features": "agent prompt智能改写；中英文本渲染最强；复杂版面/小字/多语言字体；旗舰画质",
-        "scenarios": "画面需出现准确中英文文字、复杂密集版面时首选",
-        "endpoint": "multimodal",
-        "size": "1024*1024",
-        "prompt_extend": True,
-    },
-    {
-        "value": "qwen-image-2.0-pro-2026-06-22",
-        "label": "旗舰 · Qwen-Image 2.0 Pro 0622 (限时免费100张)",
-        "tier": "旗舰",
-        "price": "0.50 元/张",
-        "note": "千问2.0 Pro 2026-06-22 版本，能力同 qwen-image-2.0-pro；限时免费 100 张",
-        "features": "千问2.0 Pro能力均衡；文本渲染与复杂版面表现好；限时免费100张",
-        "scenarios": "想用Pro画质又省额度时首选；常规高质量记忆插图",
-        "endpoint": "multimodal",
-        "size": "1024*1024",
-        "prompt_extend": True,
-    },
-    # ============ 高清档（通用高质量） ============
-    {
-        "value": "qwen-image-3.0",
-        "label": "高清 · Qwen-Image 3.0 (均衡)",
-        "tier": "高清",
-        "price": "0.18 元/张 (2k)",
-        "note": "千问3.0标准版，速度快于Pro；文本渲染与复杂版面同样出色；10张免费额度",
-        "features": "千问3.0标准；速度快于Pro；文本渲染与复杂版面同样出色；10张免费",
-        "scenarios": "通用高质量需求，兼顾速度与画质的默认选择",
+        "value": "qwen-image-2.1-turbo",
+        "label": "性价比 · Qwen-Image 2.1 Turbo (默认推荐)",
+        "tier": "性价比",
+        "price": "0.10 元/张",
+        "note": "8 步去噪的 7B 模型，原生 2K，支持透明底/局部编辑/最多10张参考图；单价 0.10 元，日常插画首选",
+        "features": "0.10元/张；原生2K；8步快速出图；透明底；最多10张参考图；支持局部编辑",
+        "scenarios": "批量编译、单点深耕、场景编译的默认选择",
         "endpoint": "multimodal",
         "size": "1944*1032",
         "prompt_extend": True,
     },
-    # ============ 性价比档（快速低成本） ============
+    # ============ 质量档（画面内文字/复杂版面） ============
     {
-        "value": "z-image-turbo",
-        "label": "性价比 · Z-Image Turbo (最快·低价)",
-        "tier": "性价比",
-        "price": "0.10 元/张 (关改写)",
-        "note": "快速低成本，速度比wan2.7快10倍；写实人像和产品照片；仅文生图不支持编辑",
-        "features": "速度比wan2.7快约10倍；价格约1/5；写实人像/产品照片表现出色；仅文生图不支持编辑",
-        "scenarios": "追求最快与最低成本，或要写实人像、产品照片时",
+        "value": "qwen-image-3.0",
+        "label": "质量 · Qwen-Image 3.0 (文字/复杂版面)",
+        "tier": "质量",
+        "price": "0.18 元/张",
+        "note": "画面内需要出现准确英文单词、复杂版面时选它；1K/2K 同价 0.18 元",
+        "features": "文字渲染强；复杂版面；1K/2K 同价",
+        "scenarios": "画面需出现英文单词、海报式构图时",
         "endpoint": "multimodal",
-        "size": "1024*1024",
-        "prompt_extend": False,
-    },
-    # ============ 万相·连环画档（角色一致性，适合多画面） ============
-    {
-        "value": "wan2.7-image",
-        "label": "万相 · Wan 2.7 Image (连环画首选)",
-        "tier": "万相",
-        "price": "0.20 元/张",
-        "note": "角色一致性多图生成，连环画人物统一；2K分辨率",
-        "features": "角色一致性多图生成；连环画人物统一；2K分辨率",
-        "scenarios": "多画面连环画、需要同一角色贯穿全程时首选",
-        "endpoint": "multimodal",
-        "size": "1280*720",
-    },
-    # ============ 免费档（TokenRhythm 平台免费调用） ============
-    {
-        "value": "qwen-image-2.0",
-        "api_model": "qwen-image-2.0",
-        "label": "免费 · Qwen-Image 2.0 (TokenRhythm·免费)",
-        "tier": "免费",
-        "price": "免费",
-        "note": "TokenRhythm 平台免费调用（OpenAI 兼容协议）；千问图像2.0，文生图最高 2048x2048",
-        "features": "TokenRhythm免费；千问图像2.0；文生图最高2048x2048",
-        "scenarios": "免费场景、常规记忆插图，成本敏感时首选",
-        "endpoint": "openai",
-        "provider": "tokenrhythm",
-        "size": "1024x1024",
-    },
-    {
-        "value": "wan2.7-image-free",
-        "api_model": "wan2.7-image",
-        "label": "免费 · Wan 2.7 Image (TokenRhythm·免费)",
-        "tier": "免费",
-        "price": "免费",
-        "note": "TokenRhythm 平台免费调用（OpenAI 兼容协议）；万相2.7，角色一致，适合连环画",
-        "features": "TokenRhythm免费；万相2.7；角色一致适合连环画",
-        "scenarios": "免费多画面连环画、角色一致性需求",
-        "endpoint": "openai",
-        "provider": "tokenrhythm",
-        "size": "1024x1024",
+        "size": "1944*1032",
+        "prompt_extend": True,
     },
 ]
 
@@ -299,8 +240,7 @@ BAILIAN_LLM_BASE_URL = os.getenv("BAILIAN_LLM_BASE_URL", "https://dashscope.aliy
 
 # ========================================================================
 # LLM 模型路由（设置页可切换每个调用点使用的模型）
-# 五个候选：百炼 Qwen3.7-Flash（默认/兜底）/ 百炼 Qwen3.7-Plus 2026-05-26 / 百炼 Qwen3.7-Plus
-#          / 百炼 DeepSeek-V4-Flash / DeepSeek 官方
+# 两档：Qwen3.7-Flash（默认/兜底，0.2/0.8）+ Qwen3.8-Flash（创作质量档，0.8/2.7）
 # value 为内部标识；base_url/api_key/model 为该模型实际调用参数。
 # ========================================================================
 
@@ -311,58 +251,22 @@ LLM_MODELS = [
         "channel": "bailian",
         "base_url": BAILIAN_LLM_BASE_URL,
         "api_key": IMAGE_API_KEY,
-        "model": "qwen3.7-flash-2026-07-15",
+        "model": "qwen3.7-flash",
         "tier": "默认",
-        "price": "输入 0.2 / 输出 0.8 元(每百万token)",
-        "note": "千问3.7 Flash（2026-07-15），支持 JSON 结构化输出；免费额度 100 万 token（华北2）；全站默认与兜底降级模型",
+        "price": "输入 0.2 / 输出 0.8 元(每百万token，≤32K)",
+        "note": "别名当前等同于 qwen3.7-flash-2026-07-15，但别名有 100 万免费额度（快照无）；≤32K 按 0.2/0.8，32K-256K 为 0.6/2.4；全站默认与兜底降级模型",
         "recommended": True,
     },
     {
-        "value": "bailian-qwen3.7-plus-2026-05-26",
-        "label": "百炼 · Qwen3.7 Plus 2026-05-26",
+        "value": "bailian-qwen3.8-flash",
+        "label": "百炼 · Qwen3.8 Flash（创作质量档）",
         "channel": "bailian",
         "base_url": BAILIAN_LLM_BASE_URL,
         "api_key": IMAGE_API_KEY,
-        "model": "qwen3.7-plus-2026-05-26",
-        "tier": "旗舰",
-        "price": "输入 3 / 输出 8 元(每百万token)",
-        "note": "千问3.7 Plus 2026-05-26；免费额度即将到期，请留意",
-        "recommended": False,
-    },
-    {
-        "value": "bailian-qwen3.7-plus",
-        "label": "百炼 · Qwen3.7 Plus",
-        "channel": "bailian",
-        "base_url": BAILIAN_LLM_BASE_URL,
-        "api_key": IMAGE_API_KEY,
-        "model": "qwen3.7-plus",
-        "tier": "旗舰",
-        "price": "输入 3 / 输出 8 元(每百万token)",
-        "note": "千问3.7 Plus；免费额度截止到 9.1",
-        "recommended": False,
-    },
-    {
-        "value": "bailian-deepseek-v4-flash",
-        "label": "百炼 · DeepSeek V4 Flash",
-        "channel": "bailian",
-        "base_url": BAILIAN_LLM_BASE_URL,
-        "api_key": IMAGE_API_KEY,
-        "model": "deepseek-v4-flash",
-        "tier": "旧价",
-        "price": "输入 1 / 输出 2 元(每百万token)",
-        "note": "百炼渠道 DeepSeek-V4-Flash（旧版快照价），英文文本能力强；注意 8/17 后是否并价",
-        "recommended": False,
-    },
-    {
-        "value": "deepseek-official",
-        "label": "DeepSeek 官方 · V4 Flash",
-        "channel": "deepseek",
-        "base_url": DEEPSEEK_BASE,
-        "api_key": DEEPSEEK_API_KEY,
-        "model": DEEPSEEK_MODEL,
-        "tier": "官方",
-        "price": "涨后 闲时输入 1.5 / 输出 4.5 · 高峰 3 / 9 元(每百万token)",
-        "note": "官方直连，2026-08-17 起峰谷计费（高峰 9-12、14-18 点）",
+        "model": "qwen3.8-flash",
+        "tier": "质量",
+        "price": "输入 0.8 / 输出 2.7 元(每百万token)",
+        "note": "新一代 Flash，文笔与指令遵循更好；比 3.7 贵约 4 倍，建议只给批量编译/单点深耕；100 万免费额度",
         "recommended": False,
     },
 ]
@@ -439,13 +343,14 @@ for _pair in os.getenv("ADMIN_USERS", "").split(","):
 GUEST_LIMITS = {
     "video": 2, "batch": 5, "single": 5, "scene": 5,
     "polysemy": 5, "morpheme": 5, "extract": 5, "enrich": 5,
+    "tts": 20,        # 单词/文本发音合成（缓存命中不计次）
     "assistant": 50,  # 词小屿每日对话上限（FAQ 命中与 LLM 回复均计入；dev/admin 不限）
 }
 # bucket → 中文名（用于前端提示 / 后端 429 文案）
 QUOTA_BUCKET_LABELS = {
     "video": "视频编译", "batch": "批量编译", "single": "单点深耕", "scene": "场景检测/编译",
     "polysemy": "熟词僻意检测", "morpheme": "构词拆解", "extract": "文章提词", "enrich": "单词补充",
-    "assistant": "智能助手对话",
+    "tts": "语音合成", "assistant": "智能助手对话",
 }
 
 # 每日复习量上限（防堆积，Anki 式，routes 与词小屿共用）
@@ -454,6 +359,8 @@ REVIEW_DAILY_LIMIT = 20
 # 会话 Cookie
 AUTH_COOKIE = "wordisle_session"
 AUTH_MAX_AGE = 30 * 24 * 3600  # 30 天
+# 上 HTTPS 后设为 1：Cookie 加 Secure，只走加密连接（HTTP 下必须为 0，否则登录态写不进去）
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 
 # 本地开发/回归测试可整体关闭认证（中间件放行、/api/me 返回默认开发者身份）
 AUTH_DISABLED = os.getenv("AUTH_DISABLED", "") == "1"
@@ -468,7 +375,7 @@ AUTH_DISABLED = os.getenv("AUTH_DISABLED", "") == "1"
 # bucket → 单价（岛屿币/次）。VIDEO 等重操作单价高
 BUCKET_PRICES = {
     "video": 10, "scene": 5, "batch": 2, "single": 2,
-    "polysemy": 1, "morpheme": 1, "extract": 1, "enrich": 1, "assistant": 1,
+    "polysemy": 1, "morpheme": 1, "extract": 1, "enrich": 1, "tts": 1, "assistant": 1,
 }
 
 # 新用户注册赠送 / 游客升级追加赠送（岛屿币）
@@ -505,3 +412,38 @@ SMS_SEND_TYPES = ("register", "guest_upgrade", "reset", "rebind")
 
 # 达到累计失败次数 → 锁定时长（秒）。5 次锁 5 分钟 → 10 次锁 30 分 → 20 次锁 2 小时
 LOGIN_LOCK_THRESHOLDS = [(5, 300), (10, 1800), (20, 7200)]
+
+# ========================================================================
+# 防刷与限流（单进程内存态；重启清零）
+# ========================================================================
+
+# 游客创建：单 IP 每日上限 + 全站每日上限（后者是成本熔断，防止换 IP 无限刷）
+GUEST_DAILY_PER_IP = int(os.getenv("GUEST_DAILY_PER_IP", "30"))
+GUEST_DAILY_TOTAL = int(os.getenv("GUEST_DAILY_TOTAL", "500"))
+
+# HTTP 限流：单 IP 每分钟请求数（仅 /api/，本地回环与测试客户端豁免）
+# 注意：nginx 已在网关层做 30r/s 限流，这里是应用层兜底，阈值放宽避免 NAT 后多用户误伤
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "1200"))
+# 验证码生成是 CPU 密集操作，单独收紧
+RATE_LIMIT_CAPTCHA_PER_MINUTE = int(os.getenv("RATE_LIMIT_CAPTCHA_PER_MINUTE", "20"))
+
+# 跨域来源（默认空 = 只允许同源；需要跨域调用时用逗号分隔配置）
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+
+# 输入体积上限（防单请求烧钱 / 占内存）
+MAX_WORDS_PER_IMPORT = int(os.getenv("MAX_WORDS_PER_IMPORT", "200"))
+MAX_EXTRACT_TEXT_CHARS = int(os.getenv("MAX_EXTRACT_TEXT_CHARS", "20000"))
+MAX_ASSISTANT_MESSAGE_CHARS = int(os.getenv("MAX_ASSISTANT_MESSAGE_CHARS", "4000"))
+# 批量导入时最多预生成多少个单词发音（其余按需懒生成）
+MAX_PREFETCH_AUDIO = int(os.getenv("MAX_PREFETCH_AUDIO", "10"))
+
+# ========================================================================
+# 成本熔断
+# ========================================================================
+
+# 视频生成默认关闭（单价高、当前产品未启用）；需要时显式 VIDEO_ENABLED=1
+VIDEO_ENABLED = os.getenv("VIDEO_ENABLED", "0") == "1"
+
+# 全站每日文生图张数上限（所有用户合计，单进程内存态；重启清零）。
+# 按 0.10 元/张估算，300 张 ≈ 30 元/日的硬上限，防止被刷爆。
+DAILY_IMAGE_LIMIT = int(os.getenv("DAILY_IMAGE_LIMIT", "300"))

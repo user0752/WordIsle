@@ -56,9 +56,9 @@
 | 数据库 | SQLite 每用户分库 + system 库                        | 个人项目零运维；**天然的多租户隔离**，避免单库权限纠葛            |
 | LLM | DeepSeek / 阿里云百炼 qwen 系列                       | 多路由 + 设置页切换，成本与质量按需权衡                    |
 | TTS | 阿里云百炼 CosyVoice / Qwen-Audio-TTS               | 多音色英文语音，高质量听力音频                          |
-| 文生图 | 百炼 wan2.7-image / qwen-image + TokenRhythm 免费档 | 连环画角色一致性 + 免费/付费多档成本阶梯                   |
+| 文生图 | 百炼 qwen-image-2.1-turbo（0.10 元/张）/ qwen-image-3.0（0.18 元/张） | 性价比默认 + 文字/复杂版面质量档，两档覆盖全部编译场景 |
 | 视频  | ffmpeg（drawtext 字幕烧录）                          | 本地合成，零外部服务依赖                             |
-| 部署  | systemd + Nginx（Basic Auth / 限源 IP / SSH 隧道）   | 2C2G 小服务器即可常驻运行                          |
+| 部署  | systemd + Nginx（gzip / 限流 / 安全响应头）              | 2C2G 小服务器即可常驻运行；每日 SQLite 在线备份               |
 
 ## 🏗️ 架构设计
 

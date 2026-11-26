@@ -25,6 +25,9 @@ logger = setup_stream_logger("wordisle.routes")
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
+# 单词入库白名单：小写字母开头，允许连字符/撇号，2-64 字符（防超长/特殊字符写库与文件名）
+WORD_RE = re.compile(r"[a-z][a-z\-']{1,63}")
+
 # ========================================================================
 # 内部辅助函数
 # ========================================================================
@@ -109,9 +112,19 @@ async def _consume_result(gen):
 
 
 async def _sse_stream(gen):
-    """把 (event, data) 生成器转成 SSE 文本流。"""
-    async for evt, data in gen:
-        yield _sse(evt, data)
+    """把 (event, data) 生成器转成 SSE 文本流。
+    流已开始后无法再改 HTTP 状态码，异常统一转成 error 事件，避免前端只看到截断流。"""
+    try:
+        async for evt, data in gen:
+            yield _sse(evt, data)
+    except HTTPException as e:
+        logger.warning("SSE 流中断（业务异常）：%s", e.detail)
+        yield _sse("error", {"msg": str(e.detail)})
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("SSE 流中断（未预期异常）")
+        yield _sse("error", {"msg": "生成中断，请稍后重试"})
 
 def _delete_generation(gen_id: str, not_found_msg: str = "记录不存在") -> dict:
     """删除生成记录及其关联的音频和图片文件（先删库记录，成功后再清理文件）。"""
@@ -145,6 +158,8 @@ def _delete_generation(gen_id: str, not_found_msg: str = "记录不存在") -> d
 
 async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str, not_found_msg: str = "记录不存在", feature: str = "音频合成") -> dict:
     """为指定生成记录合成 TTS 音频（含去重、配额检查、落盘）。feature 用于日志标注调用来源功能。"""
+    tts_model = validate_tts_model(tts_model)
+    voice = normalize_tts_voice(tts_model, voice)
     conn = get_db()
     gen = conn.execute("SELECT * FROM generations WHERE id=?", (gen_id,)).fetchone()
     conn.close()
@@ -167,8 +182,7 @@ async def _generate_audio(gen_id: str, voice: str, speed: float, tts_model: str,
             "cached": True, "tts_model": tts_model,
         }
 
-    if not consume_daily_quota("tts"):
-        raise HTTPException(429, "今日 TTS 合成已达上限")
+    require_quota("tts")   # 缓存命中已在上面直接返回，这里只为真正的新合成计费/计次
 
     audio_bytes = await call_tts(gen["body_en"], voice, speed, tts_model, feature=feature)
     # P1-2：文件名必须包含 tts_model（与去重唯一索引四字段对齐），否则切换模型重新生成会覆盖旧音频
@@ -213,8 +227,8 @@ def _parse_generate_body(body: dict) -> dict:
     theme_hint   = body.get("theme_hint", "") or ""
     image_model  = _resolve_image_model(body.get("image_model"))
     generate_audio = _to_bool(body.get("generate_audio_immediately", False))
-    tts_model    = body.get("tts_model", TTS_MODEL) if generate_audio else None
-    tts_voice    = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    tts_model    = validate_tts_model(body.get("tts_model", TTS_MODEL)) if generate_audio else None
+    tts_voice    = normalize_tts_voice(tts_model, (body.get("tts_voice") or "").strip()) if generate_audio else ""
     style        = body.get("style", "absurd")  # 缺省 'absurd'；显式传 '' 为旧版微电影
     art_style    = body.get("art_style", "")    # 可选画风，空=不指定
     track        = body.get("track", "general") # 语境赛道：general 通用 / tech 程序员
@@ -247,7 +261,7 @@ async def _run_generate(p: dict):
         raise HTTPException(429, "今日 AI 生成已达上限")
 
     yield ("step", {"step": "llm", "model": _llm_route_model("batch"), "label": "AI 生成剧情连环画", "status": "running"})
-    gen_id = str(uuid.uuid4())[:8]
+    gen_id = str(uuid.uuid4())
     result, usage = await call_deepseek(words, panel_count, theme_hint, style=style, art_style=art_style, track=track)
     actual_llm = result.pop("_llm_model", None) or _llm_route_model("batch")
     degraded = actual_llm != _llm_route_model("batch")
@@ -403,8 +417,8 @@ def _parse_single_body(body: dict) -> dict:
     theme_hint = body.get("theme_hint", "")
     image_model = _resolve_image_model(body.get("image_model"))
     generate_audio = _to_bool(body.get("generate_audio_immediately", False))
-    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
-    tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    tts_model = validate_tts_model(body.get("tts_model", TTS_MODEL)) if generate_audio else None
+    tts_voice = normalize_tts_voice(tts_model, (body.get("tts_voice") or "").strip()) if generate_audio else ""
     word_clean = _re.sub(r"[^a-zA-Z\-']", "", word_raw).lower()
     if not word_clean or len(word_clean) < 2:
         raise HTTPException(400, "请输入一个有效英文单词")
@@ -430,7 +444,7 @@ async def _run_single_compile(p: dict):
         raise HTTPException(429, "今日 AI 生成已达上限")
 
     yield ("step", {"step": "llm", "model": _llm_route_model("single"), "label": "AI 生成记忆卡片", "status": "running"})
-    gen_id = str(uuid.uuid4())[:8]
+    gen_id = str(uuid.uuid4())
     result, usage = await call_deepseek_single(word_clean, theme_hint, art_style, track)
     actual_llm = result.pop("_llm_model", None) or _llm_route_model("single")
     degraded = actual_llm != _llm_route_model("single")
@@ -1195,8 +1209,8 @@ async def list_image_models():
 
 @router.get("/api/video-models")
 async def list_video_models():
-    """返回文生视频模型列表（含免费额度标注），供前端下拉选择。"""
-    return {"models": VIDEO_MODELS}
+    """返回文生视频模型列表（含免费额度标注），供前端下拉选择。视频未启用时返回空。"""
+    return {"models": VIDEO_MODELS if VIDEO_ENABLED else []}
 
 
 # ========================================================================
@@ -1220,10 +1234,12 @@ async def get_llm_settings():
             "default": r["default"],
             "current": current,
         })
-    # 附带各模型是否已配置 key 的状态
+    # 附带各模型是否已配置 key 的状态；api_key 本身绝不下发（前端只需要 configured）
     models = []
     for m in LLM_MODELS:
-        models.append({**m, "configured": bool(m.get("api_key"))})
+        safe = {k: v for k, v in m.items() if k != "api_key"}
+        safe["configured"] = bool(m.get("api_key"))
+        models.append(safe)
     return {"models": models, "routes": routes}
 
 
@@ -1304,8 +1320,8 @@ def _parse_video_body(body: dict) -> dict:
     theme_hint  = body.get("theme_hint", "") or ""
     video_model = body.get("video_model", "")
     duration    = _clamp_int(body.get("duration", 5), 2, 15, 5)
-    tts_model   = body.get("tts_model", TTS_MODEL) or TTS_MODEL
-    voice       = body.get("voice", "") or default_tts_voice(tts_model)
+    tts_model   = validate_tts_model(body.get("tts_model", TTS_MODEL))
+    voice       = normalize_tts_voice(tts_model, (body.get("voice") or "").strip())
     art_style   = body.get("art_style", "") or ""
     track       = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
     if track not in ("general", "tech"):
@@ -1337,7 +1353,7 @@ async def _run_video_generate(p: dict):
     if not consume_daily_quota("ai"):
         raise HTTPException(429, "今日 AI 生成已达上限")
 
-    vid_id = str(uuid.uuid4())[:8]
+    vid_id = str(uuid.uuid4())
     conn = get_db()
     conn.execute(
         """INSERT INTO videos (id,words,theme_hint,model,duration,status)
@@ -1444,6 +1460,8 @@ async def _run_video_generate(p: dict):
 @router.post("/api/video/generate")
 async def video_generate(req: Request):
     """视频编译（同步）：选词 → LLM 写视频脚本 → 百炼文生视频 → 存盘入库。"""
+    if not VIDEO_ENABLED:
+        raise HTTPException(403, "视频功能暂未开放")
     body = await _safe_json(req)
     p = _parse_video_body(body)
     require_quota("video")
@@ -1453,6 +1471,8 @@ async def video_generate(req: Request):
 @router.post("/api/video/generate-stream")
 async def video_generate_stream(req: Request):
     """视频编译（SSE 流式）：逐步推送实际调用的模型与状态。"""
+    if not VIDEO_ENABLED:
+        raise HTTPException(403, "视频功能暂未开放")
     body = await _safe_json(req)
     p = _parse_video_body(body)
     require_quota("video")
@@ -1524,15 +1544,16 @@ async def list_words(page: int = 1, page_size: int = 20, search: str = ""):
 async def create_word(req: Request):
     body = await _safe_json(req)
     word = body.get("word", "").strip().lower()
-    if not word or len(word) < 2:
-        raise HTTPException(400, "无效单词")
+    if not WORD_RE.fullmatch(word):
+        raise HTTPException(400, "无效单词：只能包含英文字母、连字符和撇号（2-64 字符）")
     pos = _coerce_str(body.get("pos", ""))
     meaning_zh = _coerce_str(body.get("meaning_zh", ""))
     frequency_level = _coerce_str(body.get("frequency_level", ""))
     conn = get_db()
     try:
-        # 如果用户没填词性/释义/频率，用 LLM 自动补充
+        # 如果用户没填词性/释义/频率，用 LLM 自动补充（只有走 LLM 才计入 enrich 配额）
         if not pos or not meaning_zh or not frequency_level:
+            require_quota("enrich")
             enrich = await call_word_enrichment([word])
             if not enrich.get("skipped") and enrich.get("results"):
                 for r in enrich["results"]:
@@ -1689,8 +1710,9 @@ async def fetch_phonetic(word_id: int):
         except Exception as e:
             phonetic_error = f"词典查询失败：{e}"
 
-        # 2) 词典 API 无音标时，用 LLM 补全
+        # 2) 词典 API 无音标时，用 LLM 补全（只有走 LLM 才计入 enrich 配额）
         if not phonetic:
+            require_quota("enrich")
             try:
                 phonetic = await call_word_phonetic(word)
             except Exception as e:
@@ -1726,7 +1748,9 @@ async def _ensure_word_audio(word: str) -> str:
         return ""
     from db import get_setting
     model = get_setting("tts_word_model", "") or TTS_MODEL
-    voice = get_setting("tts_word_voice", "") or default_tts_voice(model)
+    if model not in TTS_MODEL_VALUES:
+        model = TTS_MODEL
+    voice = normalize_tts_voice(model, get_setting("tts_word_voice", "") or "")
     file_name = f"word_{word}_{voice}.mp3"
     url = f"/audios/{file_name}"
     # 已有缓存文件且数据库已记录则直接返回
@@ -1766,10 +1790,13 @@ async def fetch_word_audio(word_id: int):
         word = row["word"]
         # 按当前设置的音色解析目标文件名，命中对应音色缓存才直接返回；旧音色缓存不复用
         model = get_setting("tts_word_model", "") or TTS_MODEL
-        voice = get_setting("tts_word_voice", "") or default_tts_voice(model)
+        if model not in TTS_MODEL_VALUES:
+            model = TTS_MODEL
+        voice = normalize_tts_voice(model, get_setting("tts_word_voice", "") or "")
         file_name = f"word_{word}_{voice}.mp3"
         if (AUDIOS_DIR / file_name).exists():
             return {"url": f"/audios/{file_name}", "cached": True}
+        require_quota("tts")   # 仅新合成计次，缓存命中不计
         url = await _ensure_word_audio(word)
         if not url:
             raise HTTPException(500, f"发音生成失败：请检查 TTS_API_KEY 设置")
@@ -1878,6 +1905,9 @@ async def import_words(req: Request):
     word_list = body.get("words", [])
     if not isinstance(word_list, list):
         word_list = []
+    if len(word_list) > MAX_WORDS_PER_IMPORT:
+        raise HTTPException(400, f"单次最多导入 {MAX_WORDS_PER_IMPORT} 个单词，当前 {len(word_list)} 个")
+    require_quota("enrich")
     conn = get_db()
     imported = 0
     duplicated = 0
@@ -1886,7 +1916,7 @@ async def import_words(req: Request):
     try:
         for w in word_list:
             w = str(w).strip().lower()
-            if not w or len(w) < 2:
+            if not WORD_RE.fullmatch(w):
                 continue
             try:
                 conn.execute("INSERT INTO words (word) VALUES (?)", (w,))
@@ -1917,8 +1947,8 @@ async def import_words(req: Request):
                             )
                             enriched += 1
             conn.commit()
-            # 预生成新词发音缓存（逐词串行，失败跳过不阻断导入）
-            for w in new_words:
+            # 预生成新词发音缓存（最多前 MAX_PREFETCH_AUDIO 个，其余按需懒生成）
+            for w in new_words[:MAX_PREFETCH_AUDIO]:
                 await _ensure_word_audio(w)
     finally:
         conn.close()
@@ -1930,7 +1960,7 @@ async def _run_import_stream(word_list):
     cleaned = []
     for w in word_list:
         w = str(w).strip().lower()
-        if w and len(w) >= 2:
+        if WORD_RE.fullmatch(w):
             cleaned.append(w)
     if not cleaned:
         yield ("step", {"step": "import", "label": "写入单词", "status": "failed", "message": "未解析到有效单词"})
@@ -1983,14 +2013,15 @@ async def _run_import_stream(word_list):
                 conn.commit()
                 enriched += ok
                 yield ("step", {"step": step_key, "label": step_label, "status": "ok", "message": f"补全 {ok} 个"})
-        # 预生成新词发音缓存（逐词串行，无 TTS 配置或失败跳过不阻断导入）
+        # 预生成新词发音缓存（只预生成前 MAX_PREFETCH_AUDIO 个，其余按需懒生成，避免批量导入烧 TTS）
         if new_words:
-            yield ("step", {"step": "tts", "model": TTS_MODEL, "label": f"生成 {len(new_words)} 个单词发音", "status": "running"})
+            prefetch = new_words[:MAX_PREFETCH_AUDIO]
+            yield ("step", {"step": "tts", "model": TTS_MODEL, "label": f"生成 {len(prefetch)} 个单词发音", "status": "running"})
             audio_ok = 0
-            for w in new_words:
+            for w in prefetch:
                 if await _ensure_word_audio(w):
                     audio_ok += 1
-            yield ("step", {"step": "tts", "model": TTS_MODEL, "label": "生成单词发音", "status": "ok", "message": f"成功 {audio_ok}/{len(new_words)} 个"})
+            yield ("step", {"step": "tts", "model": TTS_MODEL, "label": "生成单词发音", "status": "ok", "message": f"成功 {audio_ok}/{len(prefetch)} 个（其余按需生成）"})
     finally:
         conn.close()
 
@@ -2004,6 +2035,8 @@ async def import_words_stream(req: Request):
     word_list = body.get("words", [])
     if not isinstance(word_list, list):
         word_list = []
+    if len(word_list) > MAX_WORDS_PER_IMPORT:
+        raise HTTPException(400, f"单次最多导入 {MAX_WORDS_PER_IMPORT} 个单词，当前 {len(word_list)} 个")
     require_quota("enrich")
     return StreamingResponse(_sse_stream(_run_import_stream(word_list)), media_type="text/event-stream")
 
@@ -2080,10 +2113,11 @@ async def island_extract_stream(req: Request):
     max_words = _clamp_int(body.get("max_words", 12), 3, 30, 12)
     if len(text.strip()) < 100:
         raise HTTPException(400, "文章太短了，至少粘贴 100 个字符的英文内容")
+    if len(text) > MAX_EXTRACT_TEXT_CHARS:
+        raise HTTPException(400, f"文章过长，最多 {MAX_EXTRACT_TEXT_CHARS} 个字符")
+    require_quota("extract")
 
     async def _run():
-        if not consume_daily_quota("ai"):
-            raise HTTPException(429, "今日 AI 生成已达上限")
         yield ("step", {"step": "llm", "model": _llm_route_model("extract"), "label": "AI 阅读文章并提词", "status": "running"})
         result = await call_word_extraction(text, max_words)
         if result.get("skipped"):
@@ -2125,12 +2159,14 @@ async def island_confirm_stream(req: Request):
     items = body.get("items", [])
     if not isinstance(items, list):
         items = []
+    if len(items) > MAX_WORDS_PER_IMPORT:
+        raise HTTPException(400, f"单次最多上岛 {MAX_WORDS_PER_IMPORT} 个单词")
     cleaned = []
     for it in items:
         if not isinstance(it, dict):
             continue
         w = _coerce_str(it.get("word", "")).strip().lower()
-        if w and len(w) >= 2 and w not in [c["word"] for c in cleaned]:
+        if WORD_RE.fullmatch(w) and w not in [c["word"] for c in cleaned]:
             cleaned.append({
                 "word": w,
                 "pos": _coerce_str(it.get("pos", ""))[:20],
@@ -2161,9 +2197,10 @@ async def island_confirm_stream(req: Request):
             yield ("step", {"step": "import", "label": f"写入 {len(cleaned)} 个单词", "status": "ok",
                             "message": f"上岛 {imported} 个，已在岛上 {duplicated} 个"})
             if new_words:
-                yield ("step", {"step": "tts", "model": TTS_MODEL, "label": f"生成 {len(new_words)} 个单词发音", "status": "running"})
+                prefetch = new_words[:MAX_PREFETCH_AUDIO]
+                yield ("step", {"step": "tts", "model": TTS_MODEL, "label": f"生成 {len(prefetch)} 个单词发音", "status": "running"})
                 audio_ok = 0
-                for w in new_words:
+                for w in prefetch:
                     if await _ensure_word_audio(w):
                         audio_ok += 1
                 yield ("step", {"step": "tts", "model": TTS_MODEL, "label": "生成单词发音", "status": "ok",
@@ -3528,6 +3565,7 @@ async def adopt_scene(request: Request):
     name_zh = str(body.get("name_zh") or "").strip()
     desc = str(body.get("description") or "").strip()
     suggested_words = body.get("suggested_words") or []
+    require_quota("scene")   # 会调用 LLM 生成场景词伙
     if not name_en:
         raise HTTPException(400, "name 必填")
 
@@ -3823,8 +3861,8 @@ async def compile_scene(scene_id: int, request: Request):
     image_model = _resolve_image_model(body.get("image_model"))
     art_style = body.get("art_style", "")  # 可选画风，空=不指定
     generate_audio = _to_bool(body.get("generate_audio_immediately", True))
-    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
-    tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    tts_model = validate_tts_model(body.get("tts_model", TTS_MODEL)) if generate_audio else None
+    tts_voice = normalize_tts_voice(tts_model, (body.get("tts_voice") or "").strip()) if generate_audio else ""
     track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
     if track not in ("general", "tech"):
         track = "general"
@@ -3842,8 +3880,8 @@ async def compile_scene_stream(scene_id: int, request: Request):
     image_model = _resolve_image_model(body.get("image_model"))
     art_style = body.get("art_style", "")  # 可选画风，空=不指定
     generate_audio = _to_bool(body.get("generate_audio_immediately", True))
-    tts_model = body.get("tts_model", TTS_MODEL) if generate_audio else None
-    tts_voice = (body.get("tts_voice") or "").strip() if generate_audio else ""
+    tts_model = validate_tts_model(body.get("tts_model", TTS_MODEL)) if generate_audio else None
+    tts_voice = normalize_tts_voice(tts_model, (body.get("tts_voice") or "").strip()) if generate_audio else ""
     track = body.get("track", "general")  # 语境赛道：general 通用 / tech 程序员
     if track not in ("general", "tech"):
         track = "general"

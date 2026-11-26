@@ -21,6 +21,7 @@ __all__ = [
     "normalize_words",
     "consume_daily_quota",
     "validate_tts_params",
+    "validate_tts_model",
     "VOICE_PATTERN",
     "_migrate_words_table",
     "upsert_feedback",
@@ -154,6 +155,10 @@ def migrate_user_db(src_uid: str, dst_uid: str) -> int:
             )
             if t == "words":
                 copied_words = cur.rowcount
+        # 会话/反馈表按 user_id 隔离：迁移后把归属改到新 uid，否则词小屿历史与反馈会“消失”
+        for t in ("assistant_conversations", "assistant_feedback"):
+            if t in tables:
+                conn.execute(f"UPDATE {t} SET user_id=? WHERE user_id=?", (dst_uid, src_uid))
         conn.commit()
         conn.execute("DETACH DATABASE src")
     except Exception:
@@ -188,7 +193,11 @@ def get_db(uid=None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(_user_db_path(uid)))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=10000")
-    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        # 高并发下切换 WAL 可能短暂拿不到锁；库已是 WAL 时忽略即可
+        pass
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -637,17 +646,23 @@ def consume_daily_quota(category: str, count: int = 1) -> bool:
     today = date.today().isoformat()
     col_map = {"ai": "ai_count", "tts": "tts_count", "image": "image_count"}
     col = col_map.get(category, "ai_count")
-    conn = get_db()
-    try:
-        conn.execute(
-            f"INSERT INTO daily_usage (day, {col}) VALUES (?, ?) "
-            f"ON CONFLICT(day) DO UPDATE SET {col} = {col} + excluded.{col}",
-            (today, count),
-        )
-        conn.commit()
-        return True
-    finally:
-        conn.close()
+    # 高并发下偶发拿不到写锁：重试 3 次，避免静默丢一次计数
+    for _ in range(3):
+        try:
+            conn = get_db()
+            try:
+                conn.execute(
+                    f"INSERT INTO daily_usage (day, {col}) VALUES (?, ?) "
+                    f"ON CONFLICT(day) DO UPDATE SET {col} = {col} + excluded.{col}",
+                    (today, count),
+                )
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+        except sqlite3.OperationalError:
+            continue
+    return False
 
 
 def record_model_usage(category: str, model: str, detail: str = "", tokens: int = 0):
@@ -1244,3 +1259,11 @@ def validate_tts_params(voice, speed):
     if not (0.5 <= speed <= 2.0):
         raise HTTPException(400, "speed 必须在 0.5 ~ 2.0 之间")
     return voice, speed
+
+
+def validate_tts_model(model) -> str:
+    """校验 TTS 模型是否在白名单内；空值回退默认模型。"""
+    m = (model or "").strip() or TTS_MODEL
+    if m not in TTS_MODEL_VALUES:
+        raise HTTPException(400, f"不支持的 TTS 模型: {m}")
+    return m

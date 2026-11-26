@@ -19,6 +19,7 @@ import json
 import re
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 from datetime import date
@@ -29,6 +30,7 @@ from fastapi.responses import HTMLResponse
 
 from config import *
 from db import current_uid, current_user, ensure_db_initialized, migrate_user_db, setup_stream_logger
+from netutil import client_ip, is_local_ip
 
 ROLE_DEV = "dev"
 ROLE_ADMIN = "admin"
@@ -42,15 +44,41 @@ logger = setup_stream_logger("wordisle.auth")
 
 
 def _client_ip(request: Request) -> str:
-    """取客户端 IP：优先 x-forwarded-for（nginx 反代场景），否则直连地址。"""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "-"
+    """取客户端 IP。优先 nginx 覆盖写入的 X-Real-IP，其次 XFF 最后一跳。
+    绝不取 XFF 第一个值（客户端可伪造），否则 IP 级锁定与审计全部失效。"""
+    return client_ip(request)
 
 # ========================================================================
 # 全局库（users / quotas）
 # ========================================================================
+
+
+# 游客创建限流（单进程内存态，重启清零）：单 IP 日限 + 全站日限（成本熔断）
+_guest_hits: dict[str, tuple[str, int]] = {}
+_guest_lock = threading.Lock()
+
+
+def _check_guest_rate(ip: str) -> None:
+    """限制游客创建：单 IP 每日 GUEST_DAILY_PER_IP，全站每日 GUEST_DAILY_TOTAL。"""
+    today = date.today().isoformat()
+    with _guest_lock:
+        if len(_guest_hits) > 20000:
+            for k, (d, _c) in list(_guest_hits.items()):
+                if d != today:
+                    _guest_hits.pop(k, None)
+        day_ip, cnt_ip = _guest_hits.get(ip, (today, 0))
+        if day_ip != today:
+            cnt_ip = 0
+        day_all, cnt_all = _guest_hits.get("__total__", (today, 0))
+        if day_all != today:
+            cnt_all = 0
+        if cnt_ip >= GUEST_DAILY_PER_IP:
+            raise HTTPException(429, "当前网络今日游客创建次数已达上限，请明天再试或注册账号")
+        if cnt_all >= GUEST_DAILY_TOTAL:
+            raise HTTPException(429, "今日游客名额已用完，请明天再试或注册账号")
+        _guest_hits[ip] = (today, cnt_ip + 1)
+        _guest_hits["__total__"] = (today, cnt_all + 1)
+
 
 def get_system_conn() -> sqlite3.Connection:
     """打开全局库连接（账号、配额跨用户维度）。"""
@@ -130,13 +158,22 @@ def _migrate_users_account_cols(conn):
             created_at TEXT DEFAULT (datetime('now','localtime')),
             status TEXT NOT NULL DEFAULT 'active',
             nickname TEXT NOT NULL DEFAULT '',
-            banned_at TEXT DEFAULT ''
+            banned_at TEXT DEFAULT '',
+            password_changed_at INTEGER NOT NULL DEFAULT 0
         );
         INSERT INTO users_new (uid, username, password_hash, role, phone, phone_verified, balance, created_at)
             SELECT uid, username, password_hash, role, phone, phone_verified, balance, created_at FROM users;
         DROP TABLE users;
         ALTER TABLE users_new RENAME TO users;
     """)
+
+
+def _migrate_users_session_cols(conn):
+    """幂等迁移：新增 password_changed_at（epoch 秒）。改密/重置后用它让旧会话令牌失效。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "password_changed_at" in cols:
+        return
+    conn.execute("ALTER TABLE users ADD COLUMN password_changed_at INTEGER NOT NULL DEFAULT 0")
 
 
 def init_system_db():
@@ -155,7 +192,8 @@ def init_system_db():
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 status TEXT NOT NULL DEFAULT 'active',
                 nickname TEXT NOT NULL DEFAULT '',
-                banned_at TEXT DEFAULT ''
+                banned_at TEXT DEFAULT '',
+                password_changed_at INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS quotas (
                 day    TEXT NOT NULL,   -- YYYY-MM-DD
@@ -207,6 +245,15 @@ def init_system_db():
         """)
         _migrate_users_table(conn)
         _migrate_users_account_cols(conn)
+        _migrate_users_session_cols(conn)
+        # 手机号唯一（空字符串不参与唯一约束）：防并发注册写出两个同号账号
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique "
+                "ON users(phone) WHERE phone IS NOT NULL AND phone <> ''"
+            )
+        except sqlite3.IntegrityError as e:
+            logger.warning("手机号唯一索引创建失败（存在重复号码，需人工清理）：%s", e)
         if DEV_PASSWORD:
             _seed_user(conn, DEV_USERNAME, DEV_PASSWORD, ROLE_DEV)
         for _username, _pwd in ADMIN_USERS:
@@ -220,7 +267,8 @@ def get_user(uid: str) -> dict | None:
     conn = get_system_conn()
     try:
         row = conn.execute(
-            "SELECT uid, username, role, phone, balance, status, nickname FROM users WHERE uid=?", (uid,)
+            "SELECT uid, username, role, phone, balance, status, nickname, password_changed_at "
+            "FROM users WHERE uid=?", (uid,)
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -300,8 +348,8 @@ def create_session_token(uid: str) -> str:
     return f"{payload}.{_sign(payload)}"
 
 
-def verify_session_token(token: str) -> str | None:
-    """校验会话令牌；有效返回 uid，否则 None。"""
+def verify_session_token_info(token: str) -> tuple[str, int] | None:
+    """校验令牌；有效返回 (uid, 签发时间戳)，否则 None。"""
     try:
         uid, ts, sig = token.split(".")
     except ValueError:
@@ -310,17 +358,25 @@ def verify_session_token(token: str) -> str | None:
     if not hmac.compare_digest(_sign(payload), sig):
         return None
     try:
-        if int(time.time()) - int(ts) > AUTH_MAX_AGE:
-            return None
+        issued = int(ts)
     except ValueError:
         return None
-    return uid
+    if int(time.time()) - issued > AUTH_MAX_AGE:
+        return None
+    return uid, issued
+
+
+def verify_session_token(token: str) -> str | None:
+    """校验会话令牌；有效返回 uid，否则 None。"""
+    info = verify_session_token_info(token)
+    return info[0] if info else None
 
 
 def _set_session_cookie(resp: Response, uid: str):
     resp.set_cookie(
         AUTH_COOKIE, create_session_token(uid),
         max_age=AUTH_MAX_AGE, httponly=True, samesite="lax", path="/",
+        secure=COOKIE_SECURE,
     )
 
 
@@ -345,12 +401,17 @@ async def get_current_user(request: Request) -> dict:
         current_user.set(_user)
         return _user
     token = request.cookies.get(AUTH_COOKIE)
-    uid = verify_session_token(token) if token else None
-    if not uid:
+    info = verify_session_token_info(token) if token else None
+    if not info:
         raise HTTPException(401, "未登录或登录已过期")
+    uid, issued_at = info
     user = get_user(uid)
     if not user:
         raise HTTPException(401, "用户不存在")
+    # 改密/重置后，签发时间早于 password_changed_at 的旧令牌全部失效
+    changed_at = int(user.get("password_changed_at") or 0)
+    if changed_at and issued_at < changed_at:
+        raise HTTPException(401, "登录已失效，请重新登录")
     require_not_banned(user)   # 封禁用户所有认证端点 403
     current_uid.set(uid)
     current_user.set(user)
@@ -636,11 +697,10 @@ def _clear_login_fail(scope: str, scope_key: str):
 
 def _check_login_lock(scope: str, scope_key: str):
     """入口锁定检查：剩余锁定时长 > 0 抛 423 + Retry-After 头。
-    锁定期间的每一次尝试也累计失败次数（防攻击者等锁期结束后从低档重新开始）。"""
+    锁期内不再累加失败次数——否则攻击者可用少量请求把他人账号永久锁死；
+    解锁后下一次失败会直接在当前次数上继续递进，不会退回低档。"""
     remaining = _lock_remaining(scope, scope_key)
     if remaining > 0:
-        _record_login_fail(scope, scope_key)  # 锁期内继续累计，递进到更高档
-        remaining = _lock_remaining(scope, scope_key)
         exc = HTTPException(423, f"尝试次数过多，已临时锁定，请 {remaining // 60 + 1} 分钟后再试")
         exc.headers = {"Retry-After": str(max(remaining, 1)), "X-Lock-Remaining": str(remaining)}
         raise exc
@@ -698,6 +758,7 @@ async def login(req: Request, resp: Response):
 @router.post("/api/login-guest")
 async def login_guest(req: Request, resp: Response):
     """游客直接进入：分配随机 uid，写会话 Cookie（数据随浏览器保存）。"""
+    _check_guest_rate(_client_ip(req))
     user = create_guest_user()
     _set_session_cookie(resp, user["uid"])
     current_uid.set(user["uid"])
@@ -728,10 +789,16 @@ async def me(request: Request):
         user = _default_dev_user()
     else:
         token = request.cookies.get(AUTH_COOKIE)
-        uid = verify_session_token(token) if token else None
-        if not uid:
+        info = verify_session_token_info(token) if token else None
+        if not info:
             raise HTTPException(401, "未登录或登录已过期")
-        user = get_user(uid) or _default_dev_user()
+        uid, issued_at = info
+        user = get_user(uid)
+        if not user:
+            raise HTTPException(401, "用户不存在")
+        changed_at = int(user.get("password_changed_at") or 0)
+        if changed_at and issued_at < changed_at:
+            raise HTTPException(401, "登录已失效，请重新登录")
         require_not_banned(user)
         ensure_db_initialized(user["uid"])
     current_uid.set(user["uid"])
@@ -776,7 +843,7 @@ async def password_change(req: Request):
         raise HTTPException(401, "旧密码错误")
     conn = get_system_conn()
     try:
-        conn.execute("UPDATE users SET password_hash=? WHERE uid=?", (_hash_password(new_password), uid))
+        conn.execute("UPDATE users SET password_hash=?, password_changed_at=strftime('%s','now') WHERE uid=?", (_hash_password(new_password), uid))
         conn.commit()
     finally:
         conn.close()
@@ -796,12 +863,14 @@ async def password_reset(req: Request, resp: Response):
         raise HTTPException(400, "新密码长度至少 8 位")
     _verify_sms_code(phone, sms_code, "reset")
     user = get_user_by_phone(phone)
+    if user and is_banned(user):
+        raise HTTPException(403, "账号已被封禁，请联系管理员")
     if not user:
         raise HTTPException(404, "该手机号未注册")
     conn = get_system_conn()
     try:
         conn.execute(
-            "UPDATE users SET password_hash=?, phone_verified=1, status='active' WHERE uid=?",
+            "UPDATE users SET password_hash=?, phone_verified=1, password_changed_at=strftime('%s','now') WHERE uid=?",
             (_hash_password(new_password), user["uid"]),
         )
         conn.commit()
@@ -898,8 +967,10 @@ def _hash_code(code: str) -> str:
 async def captcha():
     """滑块拼图验证码：返回 {captcha_id, width, height, piece_size, bg(带缺口背景), piece(拼图块)}。
     目标 x 坐标仅存服务端内存，绝不下发前端（位图无法被脚本直接解析缺口）。"""
+    from starlette.concurrency import run_in_threadpool
     from verification import generate_captcha
-    return generate_captcha()
+    # PIL 绘制是 CPU 密集同步操作，放线程池，避免阻塞事件循环拖慢全站
+    return await run_in_threadpool(generate_captcha)
 
 
 @router.post("/api/captcha/verify")
@@ -942,7 +1013,7 @@ def _sms_sent_count(phone: str, ip: str, since_ts: int) -> tuple[int, int, str]:
 @router.post("/api/sms/send")
 async def sms_send(req: Request):
     """短信验证码发送：滑块图形码校验（两阶段，先 verify 后 consume）+ 防刷（60s 冷却 / 手机日限 / IP 日限）。"""
-    from sms import send_sms_code, TEST_MODE_CODE
+    from sms import send_sms_code, sms_configured, TEST_MODE_CODE
 
     body = await _read_json(req)
     phone = _check_phone(str(body.get("phone", "")))
@@ -952,6 +1023,11 @@ async def sms_send(req: Request):
     if sms_type not in SMS_SEND_TYPES:
         sms_type = "register"
     ip = _client_ip(req)
+    # 测试模式（固定码 123456）只允许本机/测试客户端；线上未配短信直接拒绝，
+    # 否则任何人都能用 123456 注册任意手机号、重置他人密码。
+    configured = sms_configured()
+    if not configured and not is_local_ip(ip):
+        raise HTTPException(503, "短信服务未配置，暂时无法发送验证码，请联系管理员")
     _check_login_lock("ip", ip)   # 防图形验证码暴破短信通道：IP 级锁定同样拦截
     if not captcha_id or captcha_x == "":
         raise HTTPException(401, "缺少图形验证码")
@@ -978,10 +1054,9 @@ async def sms_send(req: Request):
     if not verify_captcha(captcha_id, captcha_x):
         raise HTTPException(400, "请先完成滑块验证，或验证已过期")
 
-    # 生成 6 位验证码：测试模式（未配置短信）用固定码，仍走 sms_codes 落库与校验，
+    # 生成 6 位验证码：测试模式（本机且未配置短信）用固定码，仍走 sms_codes 落库与校验，
     # 保证注册/升级必须依赖「已发送短信」记录（图形码+频率限制），无法绕开直报。
-    from sms import sms_configured
-    if sms_configured():
+    if configured:
         code = "".join(secrets.choice("0123456789") for _ in range(6))
     else:
         code = TEST_MODE_CODE
@@ -990,6 +1065,10 @@ async def sms_send(req: Request):
     except Exception as e:
         logger.warning("短信发送异常 phone=%s err=%s ip=%s", phone, e, ip)
         real_sent = False
+
+    # 配置了真实短信但发送失败：不落库，直接报错（否则会留下一个用户永远收不到的验证码）
+    if configured and not real_sent:
+        raise HTTPException(502, "短信发送失败，请稍后重试")
 
     conn = get_system_conn()
     try:
@@ -1003,7 +1082,7 @@ async def sms_send(req: Request):
         conn.close()
 
     logger.info("短信验证码已生成 phone=%s ip=%s 真实发送=%s", phone, ip, real_sent)
-    return {"ok": True, "test_mode": not real_sent, "ttl": SMS_CODE_TTL}
+    return {"ok": True, "test_mode": not configured, "ttl": SMS_CODE_TTL}
 
 
 def _verify_sms_code(phone: str, code: str, expected_type: str = "register"):

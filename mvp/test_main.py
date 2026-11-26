@@ -319,20 +319,18 @@ class MainAppTestCase(unittest.TestCase):
 
     # ================= #17: /api/image-models 返回多档模型阶梯 =================
 
-    def test_image_models_returns_three_tiers(self):
+    def test_image_models_returns_two_tiers(self):
         r = self.client.get("/api/image-models")
         self.assertEqual(r.status_code, 200)
         models = r.json()["models"]
         tiers = [m["tier"] for m in models]
-        # 各档位均存在
-        for t in ["旗舰", "高清", "万相", "性价比", "免费"]:
+        # 两档：性价比 + 质量
+        for t in ["性价比", "质量"]:
             self.assertIn(t, tiers)
-        # 模型数量（5个百炼 + 2个 TokenRhythm 免费 = 7）
-        self.assertEqual(len(models), 7)
+        self.assertEqual(len(models), 2)
         values = [m["value"] for m in models]
-        self.assertIn("wan2.7-image-free", values)
-        self.assertIn("qwen-image-3.0-pro", values)
-        self.assertIn("wan2.7-image", values)
+        self.assertIn("qwen-image-2.1-turbo", values)
+        self.assertIn("qwen-image-3.0", values)
         # 模型 value 唯一（前端 v-for :key 依赖）
         self.assertEqual(len(values), len(set(values)))
 
@@ -347,13 +345,13 @@ class MainAppTestCase(unittest.TestCase):
             r = self.client.post(
                 "/api/generate",
                 json={"words": "accommodate", "panel_count": 3, "theme_hint": "投资失败",
-                      "image_model": "z-image-turbo", "generate_audio_immediately": False},
+                      "image_model": "qwen-image-2.1-turbo", "generate_audio_immediately": False},
             )
         self.assertEqual(r.status_code, 200)
         data = r.json()
         self.assertEqual(data["story_title"], "Test Story")
         self.assertEqual(data["panel_count"], len(data["panels"]))  # panel_count 返回实际画面数（M10）
-        self.assertEqual(data["image_model"], "z-image-turbo")
+        self.assertEqual(data["image_model"], "qwen-image-2.1-turbo")
         self.assertEqual(len(data["panels"]), 1)
         self.assertEqual(data["image_success_count"], 1)
 
@@ -366,7 +364,7 @@ class MainAppTestCase(unittest.TestCase):
              _mock_image_failure():
             r = self.client.post(
                 "/api/generate",
-                json={"words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo"},
+                json={"words": "accommodate", "panel_count": 3, "image_model": "qwen-image-2.1-turbo"},
             )
         self.assertEqual(r.status_code, 502)
         self.assertIn("更换文生图模型", r.json()["detail"])
@@ -397,14 +395,14 @@ class MainAppTestCase(unittest.TestCase):
         with mock.patch.object(routes_module, "call_deepseek", fake_deepseek), \
              _mock_image_success():
             r = self.client.post("/api/generate-stream", json={
-                "words": "accommodate", "panel_count": 3, "image_model": "z-image-turbo",
+                "words": "accommodate", "panel_count": 3, "image_model": "qwen-image-2.1-turbo",
             })
         self.assertEqual(r.status_code, 200)
         self.assertIn("text/event-stream", r.headers.get("content-type", ""))
         body = r.text
         self.assertIn("event: step", body)
         self.assertIn("event: result", body)
-        self.assertIn("z-image-turbo", body)  # 步骤中应体现实际调用的文生图模型
+        self.assertIn("qwen-image-2.1-turbo", body)  # 步骤中应体现实际调用的文生图模型
         self.assertIn("Test Story", body)     # result 中包含最终结果
 
     def test_words_restore_restores_deleted_word(self):
@@ -796,7 +794,8 @@ class MainAppTestCase(unittest.TestCase):
         async def fake_script(words, theme_hint="", art_style="", track=""):
             raise HTTPException(502, "脚本生成失败(mock)")
 
-        with mock.patch.object(routes_module, "call_video_script", fake_script):
+        with mock.patch.object(routes_module, "VIDEO_ENABLED", True), \
+             mock.patch.object(routes_module, "call_video_script", fake_script):
             r = self.client.post(
                 "/api/video/generate",
                 json={"words": "accommodate", "video_model": "wan2.2-t2v-plus"},
@@ -832,7 +831,8 @@ class MainAppTestCase(unittest.TestCase):
             mux_calls.append((video_path, audio_bytes, subtitle_text, output_path))
             Path(output_path).write_bytes(b"final-video")
 
-        with mock.patch.object(routes_module, "call_video_script", fake_script), \
+        with mock.patch.object(routes_module, "VIDEO_ENABLED", True), \
+             mock.patch.object(routes_module, "call_video_script", fake_script), \
              mock.patch.object(routes_module, "call_video_generation", fake_video), \
              mock.patch.object(routes_module, "call_tts", fake_tts), \
              mock.patch.object(routes_module, "mux_video_with_audio", fake_mux):

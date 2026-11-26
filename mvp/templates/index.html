@@ -90,7 +90,7 @@
             <el-icon><List /></el-icon>
             <span class="menu-item-with-busy"><span>批量编译</span><el-icon v-if="menuBusy('compile')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
-          <el-menu-item index="video">
+          <el-menu-item index="video" v-if="videoModels.length">
             <el-icon><video-camera /></el-icon>
             <span class="menu-item-with-busy"><span>视频编译</span><el-icon v-if="menuBusy('video')" class="rotating" style="margin-left:4px;font-size:13px"><Loading /></el-icon></span>
           </el-menu-item>
@@ -2772,7 +2772,7 @@
               <el-button @click="loadLlmSettings">重置为当前值</el-button>
             </div>
             <p class="text-secondary" style="font-size:12px;margin-top:10px">
-              提示：全部调用点默认与兜底降级模型统一为百炼 · Qwen3.7 Flash（qwen3.7-flash-2026-07-15），可在此处切换其他模型；选定模型失败（如限流）时自动降级到默认模型。
+              提示：全部调用点默认与兜底降级模型统一为百炼 · Qwen3.7 Flash（qwen3.7-flash），可在此处切换其他模型；选定模型失败（如限流）时自动降级到默认模型。
             </p>
           </el-card>
 

@@ -16,7 +16,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from config import BASE_DIR, DEV_USERNAME, REVIEW_DAILY_LIMIT
+from config import BASE_DIR, DEV_USERNAME, MAX_ASSISTANT_MESSAGE_CHARS, REVIEW_DAILY_LIMIT
 from db import consume_daily_quota, current_uid, get_db, setup_stream_logger, upsert_assistant_feedback
 from services import stream_llm_with_fallback, get_route_llm
 from auth import get_current_user, require_quota
@@ -38,9 +38,18 @@ def _sse(event: str, data) -> str:
 
 
 async def _sse_stream(gen):
-    """把 (event, data) 生成器转成 SSE 文本流。"""
-    async for evt, data in gen:
-        yield _sse(evt, data)
+    """把 (event, data) 生成器转成 SSE 文本流；异常转 error 事件，避免前端只看到截断流。"""
+    try:
+        async for evt, data in gen:
+            yield _sse(evt, data)
+    except HTTPException as e:
+        logger.warning("词小屿 SSE 中断（业务异常）：%s", e.detail)
+        yield _sse("error", {"msg": str(e.detail)})
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("词小屿 SSE 中断（未预期异常）")
+        yield _sse("error", {"msg": "生成中断，请稍后重试"})
 
 
 async def _stream_text(text: str, chunk: int = 24, gap: float = 0.025):
@@ -657,6 +666,8 @@ async def assistant_chat(req: Request):
     page = str(body.get("page", "home")).strip() or "home"
     if not message:
         raise HTTPException(400, "消息不能为空")
+    if len(message) > MAX_ASSISTANT_MESSAGE_CHARS:
+        raise HTTPException(400, f"消息过长，最多 {MAX_ASSISTANT_MESSAGE_CHARS} 个字符")
 
     # 每日对话配额拦截（游客 50 条/日，dev/admin 不限）。FAQ 命中同样计一次对话。
     require_quota("assistant")
