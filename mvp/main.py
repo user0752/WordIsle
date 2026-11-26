@@ -99,6 +99,10 @@ async def lifespan(app: FastAPI):
     # 启动自检：把危险配置显式喊出来，避免“以为关了其实没关”
     if AUTH_DISABLED:
         print("[warn] AUTH_DISABLED=1：认证已整体关闭，仅限本地开发，切勿用于线上！")
+    if AUTH_SECRET == "dev-insecure-secret-change-me":
+        print("[warn] AUTH_SECRET 仍是内置默认值：任何人都能伪造会话，线上必须改为随机长串！")
+    if DEV_PASSWORD and len(DEV_PASSWORD) < 12:
+        print("[warn] DEV_PASSWORD 少于 12 位：开发者账号不限量，建议换成 20 位以上随机口令")
     try:
         from sms import sms_configured
         if not sms_configured():
@@ -126,6 +130,12 @@ app.include_router(assistant_router)
 # ========================================================================
 # 前端页面
 # ========================================================================
+
+@app.get("/healthz")
+async def healthz():
+    """极简存活探针：不查库、不暴露配置，供负载均衡/监控使用。"""
+    return {"status": "ok"}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home():

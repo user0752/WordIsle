@@ -67,6 +67,33 @@ class AuthTestCase(unittest.TestCase):
     def test_health_is_public(self):
         self.assertEqual(self.client.get("/api/health").status_code, 200)
 
+    def test_healthz_is_public(self):
+        r = self.client.get("/healthz")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"status": "ok"})
+
+    def test_capabilities_reflect_sms_state(self):
+        r = self.client.get("/api/capabilities")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        # 测试环境未配置短信：注册/找回应为关闭，游客入口保持可用
+        self.assertFalse(data["sms_enabled"])
+        self.assertFalse(data["register_enabled"])
+        self.assertTrue(data["guest_enabled"])
+        self.assertFalse(data["video_enabled"])
+
+    def test_csrf_cross_origin_post_rejected(self):
+        r = self.client.post(
+            "/api/login", json={"username": "x", "password": "y"},
+            headers={"Origin": "http://evil.example"},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_security_headers_present(self):
+        r = self.client.get("/login")
+        self.assertEqual(r.headers.get("x-content-type-options"), "nosniff")
+        self.assertIn("frame-ancestors", r.headers.get("content-security-policy", ""))
+
     def test_login_page_available(self):
         r = self.client.get("/login")
         self.assertEqual(r.status_code, 200)

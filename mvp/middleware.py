@@ -71,6 +71,38 @@ class RateLimitMiddleware:
         return await self.app(scope, receive, send)
 
 
+class SameOriginGuardMiddleware:
+    """CSRF 兜底：对写操作校验 Origin 与 Host 同源。
+
+    SameSite=Lax 已能挡住绝大多数跨站 POST；这里再加一层，防止未来改 Cookie 策略
+    或浏览器行为变化后出现空窗。无 Origin 的非浏览器客户端（curl/监控）不受影响。
+    """
+
+    _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") not in self._UNSAFE_METHODS:
+            return await self.app(scope, receive, send)
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        origin = headers.get("origin", "").strip()
+        if not origin:
+            return await self.app(scope, receive, send)
+
+        host = headers.get("host", "").strip()
+        allowed = set(CORS_ORIGINS)
+        if host:
+            allowed |= {f"http://{host}", f"https://{host}"}
+        if origin not in allowed:
+            response = JSONResponse({"detail": "跨站请求已被拒绝"}, status_code=403)
+            return await response(scope, receive, send)
+
+        return await self.app(scope, receive, send)
+
+
 class SecurityHeadersMiddleware:
     """给所有响应追加基础安全头（不改动响应体，兼容 SSE）。"""
 
@@ -79,6 +111,8 @@ class SecurityHeadersMiddleware:
         "X-Frame-Options": "SAMEORIGIN",
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+        # 只加不限制脚本/样式的部分，避免破坏 Vue 内联模板
+        "Content-Security-Policy": "frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
     }
 
     def __init__(self, app):
@@ -101,6 +135,7 @@ class SecurityHeadersMiddleware:
 def setup_middleware(app: FastAPI) -> None:
     """为应用注册所有中间件（后注册的更靠外层）。"""
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(SameOriginGuardMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,

@@ -303,6 +303,9 @@
         <button type="button" id="tab-register" onclick="switchTab('register')">注 册</button>
         <button type="button" id="tab-reset" onclick="switchTab('reset')">忘记密码</button>
       </div>
+      <p class="reg-hint" id="capability-note" style="display:none;margin:10px 2px 0;">
+        当前未开通短信服务，注册与找回密码暂不可用；可直接游客体验或使用已有账号登录。
+      </p>
 
       <!-- ============ 登录表单 ============ -->
       <div id="pane-login">
@@ -531,6 +534,22 @@ async function doReset(e) {
       isUpgrade = true
       document.getElementById('tab-register').textContent = '注 册'
       document.getElementById('tab-register').classList.add('upgrade-badge')
+    }
+  } catch (_) {}
+})()
+
+// ---- 页面加载：按后端能力开关隐藏不可用入口（短信未配置时不显示注册/找回） ----
+;(async function loadCapabilities() {
+  try {
+    const resp = await fetch('/api/capabilities')
+    if (!resp.ok) return
+    const cap = await resp.json()
+    if (!cap.register_enabled) {
+      document.getElementById('tab-register').style.display = 'none'
+      document.getElementById('tab-reset').style.display = 'none'
+      document.getElementById('capability-note').style.display = 'block'
+      const tip = document.getElementById('upgrade-tip')
+      if (tip) tip.style.display = 'none'
     }
   } catch (_) {}
 })()

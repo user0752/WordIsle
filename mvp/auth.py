@@ -675,6 +675,8 @@ def _record_login_fail(scope: str, scope_key: str):
                 "fail_count=excluded.fail_count, locked_until=excluded.locked_until, updated_at=excluded.updated_at",
                 (scope, scope_key, fail_count, locked_until, now),
             )
+            # 顺手清理 7 天前的旧记录，避免 login_fails 无限膨胀
+            conn.execute("DELETE FROM login_fails WHERE updated_at < ?", (now - 7 * 86400,))
             conn.commit()
         finally:
             conn.close()
@@ -780,6 +782,20 @@ async def logout(req: Request, resp: Response):
     logger.info("退出登录 uid=%s username=%s role=%s ip=%s",
                 uid or "-", (user or {}).get("username", "-"), (user or {}).get("role", "-"), _client_ip(req))
     return {"ok": True}
+
+
+@router.get("/api/capabilities")
+async def capabilities():
+    """公开能力开关：前端据此隐藏不可用入口（短信未配置时不显示注册/找回）。"""
+    from sms import sms_configured
+    sms_on = sms_configured()
+    return {
+        "sms_enabled": sms_on,
+        "register_enabled": sms_on,
+        "guest_enabled": True,
+        "video_enabled": VIDEO_ENABLED,
+        "password_min_length": 8,
+    }
 
 
 @router.get("/api/me")
@@ -1077,6 +1093,8 @@ async def sms_send(req: Request):
             "VALUES (?,?,?,?,0,?)",
             (phone, _hash_code(code), sms_type, now + SMS_CODE_TTL, ip),
         )
+        # 清理一天前就过期的验证码，避免表无限增长
+        conn.execute("DELETE FROM sms_codes WHERE expire_at < ?", (now - 86400,))
         conn.commit()
     finally:
         conn.close()

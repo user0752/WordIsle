@@ -5,11 +5,24 @@ After=network.target
 [Service]
 Type=simple
 User=www-data
+Group=www-data
 WorkingDirectory=/opt/wordisle/mvp
-ExecStart=/opt/wordisle/mvp/venv/bin/python /opt/wordisle/mvp/main.py
-Restart=on-failure
-RestartSec=3
 Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Shanghai
+ExecStart=/opt/wordisle/mvp/venv/bin/python /opt/wordisle/mvp/main.py
+Restart=always
+RestartSec=3
+
+# 最小权限加固：应用只写 data/ 与 logs/
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/wordisle/mvp/data /opt/wordisle/mvp/logs
+
+# 日志进 journald（应用自身另有按天 JSON 文件日志）
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
